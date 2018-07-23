@@ -1,0 +1,12 @@
+/__init__.pyc
+/_abnf.pyc
+/_app.pyc
+/_core.pyc
+/_exceptions.pyc
+/_handshake.pyc
+/_http.pyc
+/_logging.pyc
+/_socket.pyc
+/_ssl_compat.pyc
+/_url.pyc
+/_utils.pyc
