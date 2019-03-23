@@ -2,7 +2,7 @@
 '''
 All the errors specific to Dynamodb.  The goal is to mimic ActiveRecord.
 '''
-from __future__ import unicode_literals
+
 
 __all__ = ['ClientException', 'ConnectionException', 'ParameterException',
            'FieldValidationException', 'ValidationException']

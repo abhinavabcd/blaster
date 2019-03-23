@@ -4,13 +4,13 @@
 DynamoDB KeyConditionExpression and FilterExpression
 http://boto3.readthedocs.io/en/stable/reference/customizations/dynamodb.html#ref-dynamodb-conditions
 '''
-from __future__ import print_function
+
 
 from decimal import Decimal
 from boto3.dynamodb.conditions import Key, Attr
 
 from .errors import ValidationException
-from .helpers import smart_unicode
+from .helpers import smart_str
 
 __all__ = ['Expression']
 
@@ -95,7 +95,7 @@ class Expression(object):
         value_substitutions = {}
         is_first = True
         exp = ""
-        for key, val in _dict.iteritems():
+        for key, val in _dict.items():
             key_str = str(key)
             exp = exp+" %s %s.#key_%s = :val_%s"%( "" if is_first else "," , self.name, key_str, key_str)
             name_substitutions["#key_"+key_str] = key
@@ -205,11 +205,11 @@ class Expression(object):
     
 
     def typecast_for_storage(self, value):
-        return smart_unicode(value)
+        return smart_str(value)
 
     def _expression_func(self, op, *values, **kwargs):
         # for use by index ... bad
-        values = map(self.typecast_for_storage, values)
+        values = list(map(self.typecast_for_storage, values))
         self.op = op
         self.express_args = values
         use_key = kwargs.get('use_key', False)

@@ -49,7 +49,7 @@ def date2timestamp(dt):
 
 
 def timestamp2date(timestamp):
-    if not isinstance(timestamp, (int, float, long)):
+    if not isinstance(timestamp, (int, float)):
         return timestamp
     date = datetime.utcfromtimestamp(timestamp)
     return date
@@ -245,7 +245,7 @@ def validate_dict_to_dynamo_storage(val):
     ret = {}
     if(not val):
         return {}
-    for k,v in val.iteritems():
+    for k,v in val.items():
         if(isinstance(v, dict)):
             ret[k] = validate_dict_to_dynamo_storage(v)
         elif(isinstance(v, (list,))):

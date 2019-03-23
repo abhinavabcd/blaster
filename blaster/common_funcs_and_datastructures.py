@@ -3,20 +3,20 @@ Created on 04-Nov-2017
 
 @author: abhinav
 '''
-from __future__ import print_function
+
 import collections
 import random
 import string
 import socket
 import struct
-from gevent._threading import BoundedSemaphore
-from connection_pool import use_connection_pool
+from gevent.lock import BoundedSemaphore
+from .connection_pool import use_connection_pool
 import os
 from collections import namedtuple
 import datetime
 import logging
-import urllib
-import config 
+import urllib.request, urllib.parse, urllib.error
+from . import config 
 import time
 import hmac
 import base64
@@ -174,7 +174,9 @@ else:
         return result == 0
 
 
-def utf8(value):
+def utf8(value)->bytes:
+    if(isinstance(value, bytes)):
+        return value
     return value.encode("utf-8")
 
 def create_signed_value(name, value, secret_key_version="v0"):
@@ -182,7 +184,7 @@ def create_signed_value(name, value, secret_key_version="v0"):
     value = base64.b64encode(utf8(value))
     secret = config.secrets.get(secret_key_version)
     signature = _create_signature(secret, name, value, timestamp)
-    value = b"|".join([value, timestamp, signature, secret_key_version])
+    value = b"|".join([value, timestamp, signature, utf8(secret_key_version)])
     return value
 
 def decode_signed_value(name, value, max_age_days=-1):
@@ -402,7 +404,7 @@ MIME_TYPE_MAP = dict(
     
 )
 
-MIME_TYPE_TO_EXTENSION = {v.mime_type: k for k, v in MIME_TYPE_MAP.iteritems()}
+MIME_TYPE_TO_EXTENSION = {v.mime_type: k for k, v in MIME_TYPE_MAP.items()}
 
 
 def get_mime_type_from_filename(file_name):

@@ -3,18 +3,18 @@ Created on 22-Aug-2017
 
 @author: abhinav
 '''
-from gevent_aws_base.base import start_wsgi_server, write_data,\
+from .gevent_aws_base.base import start_wsgi_server, write_data,\
     start_stream_server
 import argparse 
 import ujson as json
 import collections
-from common_funcs_and_datastructures import LRUCache, create_signed_value,\
+from .common_funcs_and_datastructures import LRUCache, create_signed_value,\
     get_random_id, decode_signed_value,\
     set_socket_options,\
     Connection
-from urllib_utils import get_data
+from .urllib_utils import get_data
 import random
-from ws_handler import WebSocketServerHandler
+from .ws_handler import WebSocketServerHandler
 import time
 
 #basic session descriptions   
@@ -66,7 +66,7 @@ def get_internal_auth_key():
 #master server 
 #show all recently active sessions #lru based
 def get_sessions(sock ,query_params=None, headers=None, post_data=None):
-    recent_sessions = public_sessions.cache.viewitems()[:-100]
+    recent_sessions = public_sessions.cache.items()[:-100]
     return json.dumps( { "recent_sessions":  recent_sessions  } )
 
 

@@ -10,10 +10,10 @@ Created on 22-Aug-2017
 # protobuf==3.2.0
 # boto3==1.4.4
 
-from __future__ import print_function
+
 import ujson as json
 import re
-import urlparse
+import urllib.parse
 from gevent.server import StreamServer
 from gevent.pywsgi import WSGIServer
 import time
@@ -22,6 +22,7 @@ import gevent
 import signal
 from blaster.constants import LOG_TYPE_SERVER_INFO
 from blaster.common_funcs_and_datastructures import cur_ms
+import functools
 #http://www.gevent.org/gevent.monkey.html#patching should be first line
 
 is_server_running = True
@@ -55,6 +56,8 @@ def server_log(log_type, cur_millis=None, **kwargs):
 
 def write_data(socket, *_data):
     for data in _data:
+        if(isinstance(data, str)):
+            data = data.encode()
         n = 0
         l = len(data)
         while(n<l):
@@ -103,7 +106,7 @@ class SocketDataReader():
                     break
                 self.store.extend(data) #fetch more data
                 
-            if(self.store[n]==ord('\n')):
+            if(self.store[n]==ord(b'\n')):
                 line_found = True
             n+=1
         
@@ -116,7 +119,7 @@ class SocketDataReader():
 ####parse query string
 def parse_qs_modified(qs, keep_blank_values=0, strict_parsing=0):
     _dict = {}
-    for name, value in urlparse.parse_qsl(qs, keep_blank_values, strict_parsing):
+    for name, value in urllib.parse.parse_qsl(qs, keep_blank_values, strict_parsing):
         if name in _dict:
             _values = _dict[name]
             if(not isinstance(_values , list)):#make it a list of values
@@ -132,7 +135,7 @@ def process_post_params(func):
         post_data = kwargs.get("post_data",None)
         query_params = kwargs["query_params"]
         if(post_data):
-            query_params.update(parse_qs_modified(str(post_data)))
+            query_params.update(parse_qs_modified(post_data.decode('utf-8')))
         ret = func(*args, **kwargs)
         return ret
     
@@ -145,7 +148,7 @@ def process_post_data(func):
         post_data = kwargs.get("post_data",None)
         query_params = kwargs["query_params"]
         if(post_data):
-            query_params.update(json.loads(str(post_data)))
+            query_params.update(json.loads(post_data.decode('utf-8')))
         ret = func(*args, **kwargs)
         return ret
     
@@ -167,25 +170,26 @@ def handle_connection(socket, address):
         request_params = {}
         cur_millis = int(1000*time.time())
         try:
-            request_type , request_path , http_version = request_line.split(" ")
+            request_type , request_path , http_version = request_line.split(b" ")
+            request_path = request_path.decode("utf-8")
             query_start_index = request_path.find("?")
             if(query_start_index!=-1):
-                request_params = parse_qs_modified(str(request_path[query_start_index+1:]))
+                request_params = parse_qs_modified(request_path[query_start_index+1:])
                 request_path = request_path[:query_start_index]
         
-            server_log(LOG_TYPE_REQUEST , request_type=str(request_type) , path=str(request_path))
+            server_log(LOG_TYPE_REQUEST , request_type=request_type.decode() , path=request_path)
             headers = {}
             while(True):#keep reading headers
                 l = socket_data_reader.read_line()
-                if(l=='\r\n'):
+                if(l==b'\r\n'):
                     break
                 if( not l):
                     return
-                header_type , data  =  l.split(": ",1)
-                headers[str(header_type)] = data
+                header_type , data  =  l.split(b": ",1)
+                headers[header_type.decode()] = data
             
             if(request_type == "POST" and headers.get("Content-Length", None)):
-                n = int(headers.get("Content-Length","0").strip(" \r\n"))
+                n = int(headers.get("Content-Length",b"0").strip(b" \r\n"))
                 if(n>0):
                     post_data = bytearray()
                     while(len(post_data) < n):
@@ -284,7 +288,7 @@ def exit_handler():
         #wait for queue to flush/process
         
 def start_stream_server(port=80, handlers= []):
-    global_route_handlers.sort(cmp=lambda x, y: len(y[0])-len(x[0])) #reverse sort by length
+    global_route_handlers.sort(key=functools.cmp_to_key(lambda x, y: len(y[0])-len(x[0]))) #reverse sort by length
     global_route_handlers.extend(handlers)
     for regex, handler in global_route_handlers:
         if(isinstance(regex, str)):
@@ -312,7 +316,7 @@ def application(environ, start_response):
         func = handler[1]
         if(args!=None):
             kwargs = {}
-            kwargs["query_params"] = urlparse.parse_qs(environ['QUERY_STRING'])
+            kwargs["query_params"] = urllib.parse.parse_qs(environ['QUERY_STRING'])
 
             fargs = args.groups()
             if(fargs):
@@ -338,7 +342,7 @@ def application(environ, start_response):
         response_headers = response_headers or default_wsgi_headers
         status = status or "200 OK"
         start_response(status, response_headers)
-        if(isinstance(body, types.ListType)):
+        if(isinstance(body, list)):
             return body
         return [body]
     #close socket

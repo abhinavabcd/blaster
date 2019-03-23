@@ -21,15 +21,15 @@ def parse_list(values,message):
 def dict_to_obj(values,obj,transformations=None, excludes=None, preserve_values=True):
     if(not preserve_values):
         if(transformations):
-            for k,func in transformations.iteritems():
+            for k,func in transformations.items():
                 values[k] = func(values.get(k,None))
                 
         if(excludes):
-            for exclude, flag in excludes.iteritems():
+            for exclude, flag in excludes.items():
                 if(hasattr(values, exclude)):
                     del values[exclude]
              
-    for k,v in values.iteritems():
+    for k,v in values.items():
  
         if(preserve_values):
             if(transformations and k in transformations):

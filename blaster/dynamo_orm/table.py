@@ -1,5 +1,5 @@
 #! -*- coding: utf-8 -*-
-from __future__ import print_function
+
 
 import pprint
 
@@ -88,7 +88,7 @@ class Table(object):
 
 
         #for global indexes
-        for index_name, attribute_dict in self.instance._global_indexes.iteritems():
+        for index_name, attribute_dict in self.instance._global_indexes.items():
             field = attribute_dict["hash_key"]
             if(not _fields_indexed.get(field, None)):
                 AttributeDefinitions.append({
@@ -138,7 +138,7 @@ class Table(object):
 
     def _prepare_global_indexes(self):
         indexes = []
-        for index_name, attribute_dict in self.instance._global_indexes.iteritems():
+        for index_name, attribute_dict in self.instance._global_indexes.items():
             KeySchema = [{
                 'AttributeName': attribute_dict["hash_key"], 
                 'KeyType': 'HASH'
@@ -560,7 +560,7 @@ class Table(object):
             action_exp_dict[action] = action_exp
             _expression_attribute_values.update(eav)
             _expression_attribute_names.update(ean)
-        for action, _exp in action_exp_dict.iteritems():
+        for action, _exp in action_exp_dict.items():
             action_exp_dict[action] = '{action} {exp}'.format(action=action,
                                                               exp=_exp)
         if _expression_attribute_values:

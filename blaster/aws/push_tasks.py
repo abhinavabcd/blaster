@@ -86,7 +86,7 @@ def post_a_task(func, *args, **kwargs):
     queue = kwargs.pop("queue")
     args = list(args)
 
-    if isinstance(func, types.UnicodeType) or isinstance(func, types.StringType):
+    if isinstance(func, str) or isinstance(func, bytes):
         func_name = func
     elif isinstance(func, types.FunctionType):
         if hasattr(func, "_original"):

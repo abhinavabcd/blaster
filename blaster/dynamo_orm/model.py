@@ -24,10 +24,10 @@ def _initialize_attributes(model_class, name, bases, attrs):
     for parent in bases:
         if not isinstance(parent, ModelMetaclass):
             continue
-        for k, v in parent._attributes.iteritems():
+        for k, v in parent._attributes.items():
             model_class._attributes[k] = v
 
-    for k, v in attrs.iteritems():
+    for k, v in attrs.items():
         if isinstance(v, Attribute):
             model_class._attributes[k] = v
             v.name = v.name or k
@@ -45,12 +45,12 @@ def _initialize_indexes(model_class, name, bases, attrs):
     for parent in bases:
         if not isinstance(parent, ModelMetaclass):
             continue
-        for k, v in parent._attributes.iteritems():
+        for k, v in parent._attributes.items():
             if v.indexed:
                 model_class._local_indexed_fields.append(k)
 
-    for k, v in attrs.iteritems():
-        if isinstance(v, (Attribute,)):
+    for k, v in attrs.items():
+        if isinstance(v, Attribute):
             if v.indexed:
                 model_class._local_indexed_fields.append(k)
                 model_class._local_indexes[k] = '{table_name}_ix_{field}'.format(
@@ -65,7 +65,7 @@ def _initialize_indexes(model_class, name, bases, attrs):
     #global indexes
     #TODO: copy from all base classes
     if(model_class.__secondary_indexes__):
-        for global_index_name, index_attrs in model_class.__secondary_indexes__.iteritems():
+        for global_index_name, index_attrs in model_class.__secondary_indexes__.items():
             hash_key = index_attrs.get("hash_key")
             range_key = index_attrs.get("range_key",None)
             
@@ -95,10 +95,7 @@ class ModelMetaclass(type):
         _initialize_indexes(cls, name, bases, attrs)
 
 
-class ModelBase(object):
-
-    __metaclass__ = ModelMetaclass
-
+class ModelBase(object, metaclass=ModelMetaclass):
 
     _condition_expression = None
     _expression_attribute_values = None
@@ -170,7 +167,7 @@ class ModelBase(object):
         instance = cls()
         projections = kwargs.get("projections", None)
         if(projections):
-            kwargs["projections"] = map(lambda x: x.name , projections)
+            kwargs["projections"] = [x.name for x in projections]
             
         items = Table(instance,kwargs.get("db")).batch_get_item(*primary_keys)
         results = []
@@ -296,7 +293,7 @@ class Model(ModelBase):
     def validate_attrs(self, **kwargs):
         self._errors = []
         instance = copy.deepcopy(self)#copy all values to another object #discarded anyway
-        for attr, value in kwargs.iteritems():
+        for attr, value in kwargs.items():
             field = self.attributes.get(attr)
             if not field:
                 raise ValidationException('Field not found: %s' % attr)
@@ -530,11 +527,11 @@ class Model(ModelBase):
     @property
     def fields(self):
         """Returns the list of field names of the model."""
-        return self.attributes.values()
+        return list(self.attributes.values())
 
     def _get_values_for_read(self, values):
         read_values = {}
-        for att, value in values.iteritems():
+        for att, value in values.items():
             if att not in self.attributes:
                 continue
             descriptor = self.attributes[att]
@@ -546,7 +543,7 @@ class Model(ModelBase):
         data = {}
         if not self.is_valid():
             raise FieldValidationException(self.errors)
-        for attr, field in self.attributes.iteritems():
+        for attr, field in self.attributes.items():
             value = getattr(self, attr)
             if value is not None:
                 data[attr] = field.typecast_for_storage(value)
@@ -558,7 +555,7 @@ class Model(ModelBase):
     
     def to_son(self):
         data = {}
-        for attr, field in self.attributes.iteritems():
+        for attr, field in self.attributes.items():
             value = getattr(self, attr)
             if value is not None:
                 data[attr] = field.typecast_for_read(value)

@@ -1,13 +1,13 @@
 import traceback
 
-import config
+from . import config
 
 from gevent.queue import Queue, Empty
 
 import boto3
 from blaster.config import aws_config, IS_DEBUG
 from os import environ
-import umysql 
+#import umysql 
 
 
 conn_pools = {}
@@ -40,9 +40,9 @@ def get_from_pool(pool_id='s3'):
             conn = boto_session.resource('s3')
             # print "new connection"
         elif(pool_id.startswith("mysql")):
-            # TODO: application level sharding to which db you wanna connect
-            conn = umysql.Connection()   
-            conn.connect(config.MYSQL_DB_HOST, 3306, config.MYSQL_DB_USER, config.MYSQL_DB_PASS, config.MYSQL_DB_NAME)
+            '''TODO: application level sharding to which db you wanna connect'''
+            #conn = umysql.Connection()   
+            #conn.connect(config.MYSQL_DB_HOST, 3306, config.MYSQL_DB_USER, config.MYSQL_DB_PASS, config.MYSQL_DB_NAME)
             
         elif(pool_id.startswith("sqs")):
             conn = boto_session.client('sqs')
@@ -63,13 +63,13 @@ def use_connection_pool(**pool_args):
         def func_wrap(*args, **kwargs):
 
             conn_args = {}
-            for pool_arg, pool_id in pool_args.iteritems():
+            for pool_arg, pool_id in pool_args.items():
                 conn = get_from_pool(pool_id)
                 conn_args[pool_arg] = conn
             ret = None
             conn_args.update(kwargs)
             ret = func(*args, **conn_args)
-            for pool_arg, pool_id in pool_args.iteritems():
+            for pool_arg, pool_id in pool_args.items():
                 release_to_pool(conn_args[pool_arg], pool_id)
             return ret
 

@@ -2,8 +2,8 @@
 '''
 dynamodb model fields
 '''
-from __future__ import print_function
-from __future__ import unicode_literals
+
+
 
 import pickle
 import decimal
@@ -11,7 +11,7 @@ from datetime import datetime, date, timedelta
 
 import ujson as json
 from .errors import FieldValidationException
-from .helpers import str_time, str_to_time,  timestamp2date, smart_unicode, date2timestamp
+from .helpers import str_time, str_to_time,  timestamp2date, smart_str, date2timestamp
 from .expression import Expression
 from .helpers import validate_dict_to_dynamo_storage,\
     validate_list_to_dynamo_storage
@@ -97,13 +97,13 @@ class Attribute(Expression):
     def typecast_for_storage(self, value):
         """Typecasts the value for storing to DynamoDB."""
         # default store unicode
-        return smart_unicode(value)
+        return smart_str(value)
 
     def value_type(self):
-        return unicode
+        return str
 
     def acceptable_types(self):
-        return (basestring, dict, list, float, int, set, unicode)
+        return (str, dict, list, float, int, set)
 
     def validate(self, instance):
         val = getattr(instance, self.name)
@@ -113,7 +113,7 @@ class Attribute(Expression):
             errors.append((self.name, 'Bad type',))
         # validate first standard stuff
         if self.required:
-            if val is None or not unicode(val).strip():
+            if val is None or not str(val).strip():
                 errors.append((self.name, 'required'))
         # validate using validator
         if self.validator:
@@ -134,14 +134,14 @@ class CharField(Attribute):
     def typecast_for_read(self, value):
         if not value:
             return ''
-        return smart_unicode(value)
+        return smart_str(value)
 
     def typecast_for_storage(self, value):
         """Typecasts the value for storing to DynamoDB."""
         if value is None:
             return None
         try:
-            return unicode(value)
+            return str(value)
         except UnicodeError:
             return value.decode('utf-8')
 
@@ -193,7 +193,7 @@ class IntegerField(Attribute):
         return int
 
     def acceptable_types(self):
-        return (int, long)
+        return (int,)
 
     def validate(self, instance):
         errors = []
@@ -233,7 +233,7 @@ class FloatField(Attribute):
         return float
 
     def acceptable_types(self):
-        return (int, long, float)
+        return (int, float)
 
     def validate(self, instance):
         errors = []
@@ -291,7 +291,7 @@ class DateTimeField(Attribute):
             return None
 
     def typecast_for_storage(self, value):
-        if isinstance(value, (str, unicode)):
+        if isinstance(value, str):
             try:
                 value = str_to_time(value)
             except TypeError:
@@ -304,7 +304,7 @@ class DateTimeField(Attribute):
         return str_time(value)
 
     def value_type(self):
-        return (datetime, str, unicode)
+        return (datetime, str)
 
     def acceptable_types(self):
         return self.value_type()
@@ -385,7 +385,7 @@ class TimeField(Attribute):
         return time
 
     def value_type(self):
-        return (datetime, str, unicode, date)
+        return (datetime, str, date)
 
     def acceptable_types(self):
         return self.value_type()
