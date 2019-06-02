@@ -6,6 +6,7 @@ import dateutil.parser
 from decimal import Decimal
 from datetime import datetime, date, time
 import decimal
+from _datetime import timezone
 
 
 # http://stackoverflow.com/questions/24856643/unexpected-results-converting-timezones-in-python
@@ -44,8 +45,12 @@ def date2timestamp(dt):
     # datetime to timestamp
     if not isinstance(dt, datetime):
         return dt
-    timestamp = time.mktime(dt.timetuple()) + dt.microsecond/1e6
-    return timestamp
+    
+    if(six.PY34):
+        return dt.replace(tzinfo=timezone.utc).timestamp()
+    else:
+        timestamp = time.mktime(dt.timetuple()) + dt.microsecond/1e6
+        return timestamp
 
 
 def timestamp2date(timestamp):

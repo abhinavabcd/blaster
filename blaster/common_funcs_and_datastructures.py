@@ -13,7 +13,7 @@ from gevent.lock import BoundedSemaphore
 from .connection_pool import use_connection_pool
 import os
 from collections import namedtuple
-import datetime
+from datetime import datetime
 import logging
 import urllib.request, urllib.parse, urllib.error
 from . import config 
@@ -27,9 +27,11 @@ from blaster.urllib_utils import get_data
 from gevent.threading import Lock
 import re
 from blaster.config import IS_DEBUG
+from _datetime import timezone
+import six
 
 
-EPOCH = datetime.datetime(1970, 1, 1)
+EPOCH = datetime(1970, 1, 1)
 
 
 
@@ -104,16 +106,36 @@ def from_kwargs(cls, **kwargs):
         setattr(ret, key, kwargs[key])
     return ret
 
+def get_by_key_list(d , *keyList):
+    for key in keyList:
+        if(not d):
+            return None
+        d= d.get(key,None)
+    return d
 
 def date2string(date):
     return date.isoformat()
 
 def date2timestamp(dt):
     # datetime to timestamp
-    if not isinstance(dt, datetime.datetime): 
+    if not isinstance(dt, datetime):
         return dt
-    timestamp = time.mktime(dt.timetuple()) + dt.microsecond/1e6
-    return timestamp
+    if(six.PY34):
+        return dt.replace(tzinfo=timezone.utc).timestamp()
+    else:
+        timestamp = time.mktime(dt.timetuple()) + dt.microsecond/1e6
+        return timestamp
+
+def timestamp2date(timestamp):
+    if not isinstance(timestamp, (int, float)):
+        return timestamp
+    date = datetime.utcfromtimestamp(timestamp)
+    return date
+
+###############EPOCH
+EPOCH = timestamp2date(0)
+
+
 
 
 def find_index(a_list, value):
@@ -191,12 +213,12 @@ def decode_signed_value(name, value, max_age_days=-1):
     if not value:
         return None
     parts = utf8(value).split(b"|")
-    secret_key_version = "v0"
+    secret_key_version = b"v0"
     if len(parts) == 4:
         secret_key_version = parts[3]
     if(len(parts)<3):
         return None
-    secret = config.secrets.get(secret_key_version)
+    secret = config.secrets.get(secret_key_version.decode())
     signature = _create_signature(secret, name, parts[0], parts[1])
     if not _time_independent_equals(parts[2], signature):
         return None

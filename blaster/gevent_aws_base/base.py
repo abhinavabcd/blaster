@@ -23,6 +23,7 @@ import signal
 from blaster.constants import LOG_TYPE_SERVER_INFO
 from blaster.common_funcs_and_datastructures import cur_ms
 import functools
+import six
 #http://www.gevent.org/gevent.monkey.html#patching should be first line
 
 is_server_running = True
@@ -56,7 +57,7 @@ def server_log(log_type, cur_millis=None, **kwargs):
 
 def write_data(socket, *_data):
     for data in _data:
-        if(isinstance(data, str)):
+        if(isinstance(data, six.text_type)):
             data = data.encode()
         n = 0
         l = len(data)
@@ -170,14 +171,13 @@ def handle_connection(socket, address):
         request_params = {}
         cur_millis = int(1000*time.time())
         try:
-            request_type , request_path , http_version = request_line.split(b" ")
-            request_path = request_path.decode("utf-8")
+            request_type , request_path , http_version = request_line.decode("utf-8").split(" ")
             query_start_index = request_path.find("?")
             if(query_start_index!=-1):
                 request_params = parse_qs_modified(request_path[query_start_index+1:])
                 request_path = request_path[:query_start_index]
         
-            server_log(LOG_TYPE_REQUEST , request_type=request_type.decode() , path=request_path)
+            server_log(LOG_TYPE_REQUEST , request_type=request_type , path=request_path) 
             headers = {}
             while(True):#keep reading headers
                 l = socket_data_reader.read_line()
@@ -239,12 +239,12 @@ def handle_connection(socket, address):
             
             
                 if(body!=None):#if body doesn't exist , the handler function is holding the connection and handling it manually 
-                    status = status or "200 OK"
+                    status = status or b"200 OK"
                     response_headers = response_headers or default_stream_headers
-                    is_okay = write_data(socket, "HTTP/1.1 ", status, "\r\n")
+                    is_okay = write_data(socket, b"HTTP/1.1 ", status, b"\r\n")
                     for header in response_headers:
-                        is_okay = is_okay and write_data(socket, header, "\r\n")
-                    is_okay = is_okay and write_data(socket, "Content-Length: ",str(len(body)), "\r\n\r\n")            
+                        is_okay = is_okay and write_data(socket, header, b"\r\n")
+                    is_okay = is_okay and write_data(socket, b"Content-Length: ",str(len(body)), b"\r\n\r\n")            
                     is_okay = is_okay and write_data(socket, body)
                 
                 

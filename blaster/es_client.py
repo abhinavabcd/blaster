@@ -7,21 +7,21 @@ Created on 19-Jan-2018
 
 from elasticsearch import  Elasticsearch, RequestsHttpConnection
 from requests_aws4auth.aws4auth import AWS4Auth
-from blaster.config import aws_config, ES_AWS_HOST, ES_HTTP_HOST
+from blaster.config import aws_config, es_aws_host, es_http_host
 import urllib3
 urllib3.disable_warnings()
 
 es_conn = None
 
 
-if(ES_HTTP_HOST):
-    es_conn = Elasticsearch([ES_HTTP_HOST])
+if(es_http_host):
+    es_conn = Elasticsearch([es_http_host])
 
         
-elif(ES_AWS_HOST):
+elif(es_aws_host):
     es_awsauth = AWS4Auth( aws_config["aws_access_key_id"] ,  aws_config["aws_secret_access_key"] , aws_config["region_name"], 'es')
     es_conn = Elasticsearch(
-                hosts=[{'host': ES_AWS_HOST, 'port': 443}],
+                hosts=[{'host': es_aws_host, 'port': 443}],
                 http_auth=es_awsauth,
                 use_ssl=True,
                 verify_certs=False,

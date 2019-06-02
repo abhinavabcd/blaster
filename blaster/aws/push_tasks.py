@@ -9,7 +9,7 @@ import base64
 import logging
 import ujson as json
 import gevent
-from blaster.config import IS_DEBUG, SQS_URL
+from blaster.config import IS_DEBUG, sqs_url
 from blaster.constants import LOG_TYPE_PROCESSED_SQS_MESSAGE, LOG_TYPE_SERVER_INFO, LOG_TYPE_EXCEPTION
 from blaster.gevent_aws_base import base
 from blaster.gevent_aws_base.base import push_tasks, server_log
@@ -31,7 +31,7 @@ def start_boto_sqs_readers(queue=None):
         server_log(LOG_TYPE_SERVER_INFO, data="Not starting sqs readers in DEBUG mode")
         return
         
-    queue_url = SQS_URL
+    queue_url = sqs_url
     
     def process_from_sqs():
         while(base.is_server_running):
@@ -107,7 +107,7 @@ def post_a_task(func, *args, **kwargs):
     task_id = get_random_id()
     message_body_json = {"args": args, "kwargs": kwargs, "func": func_name, "task_id": task_id, "created_at": now}
     message_body = json.dumps(message_body_json)
-    queue_url = SQS_URL
+    queue_url = sqs_url
     response = queue.send_message(
             QueueUrl=queue_url,
             MessageBody=message_body,

@@ -21,8 +21,8 @@ aws_config = {
     'region_name': "ap-south-1"
 }
 
+es_http_host =  None
+es_aws_host = None
 
-ES_HTTP_HOST =  "http://SOMEIP_ADDRESESORHOST_NAME:9200" if not IS_DEBUG else "http://localhost:9200"
-ES_AWS_HOST = None
 
-SQS_URL = "https://sqs.ap-south-1.amazonaws.com/***/SOMENAME" if not IS_DEBUG else None
+sqs_url = None

@@ -291,7 +291,7 @@ class DateTimeField(Attribute):
             return None
 
     def typecast_for_storage(self, value):
-        if isinstance(value, str):
+        if isinstance(value, (str, bytes)):
             try:
                 value = str_to_time(value)
             except TypeError:
@@ -304,7 +304,7 @@ class DateTimeField(Attribute):
         return str_time(value)
 
     def value_type(self):
-        return (datetime, str)
+        return (datetime, str, bytes)
 
     def acceptable_types(self):
         return self.value_type()
@@ -385,7 +385,7 @@ class TimeField(Attribute):
         return time
 
     def value_type(self):
-        return (datetime, str, date)
+        return (datetime, str, bytes, date)
 
     def acceptable_types(self):
         return self.value_type()
