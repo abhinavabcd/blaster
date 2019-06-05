@@ -10,12 +10,10 @@ import string
 import socket
 import struct
 from gevent.lock import BoundedSemaphore
-from .connection_pool import use_connection_pool
 import os
 from collections import namedtuple
 from datetime import datetime
 import logging
-import urllib.request, urllib.parse, urllib.error
 from . import config 
 import time
 import hmac
@@ -23,7 +21,6 @@ import base64
 import hashlib
 import threading
 from blaster.websocket._core import WebSocket
-from blaster.urllib_utils import get_data
 from gevent.threading import Lock
 import re
 from blaster.config import IS_DEBUG
@@ -286,49 +283,7 @@ def list_diff(first, second):
     return [item for item in first if item not in second]
 
 
-@use_connection_pool(ses_client="ses")
-def send_email(sender, to_list, subject, body_text=None, body_html=None, ses_client=None):
-    """
-    Send email.
-    Note: The emails of sender and receiver should be verified.
-    PARAMS
-    @sender: sender's email, string
-    @to: list of receipient emails eg ['a@b.com', 'c@d.com']
-    @subject: subject of the email
-    @body: body of the email
-    """
-    try:
-        body_data = {}
-        if(body_text):
-            body_data['Text'] = {
-                'Data': body_text,
-                'Charset': 'UTF-8'
-            }
-        if(body_html):
-            body_data['Html'] = {
-                'Data': body_html,
-                'Charset': 'UTF-8'
-            }
-        
-        response = ses_client.send_email(
-            Source=sender,
-            Destination={
-                'ToAddresses': to_list
-            },
-            Message={
-                'Subject': {
-                    'Data': subject,
-                    'Charset': 'UTF-8'
-                },
-                'Body': body_data
-            }
-        )
-        if response['ResponseMetadata']['HTTPStatusCode'] == 200:
-            return True
-        else:
-            return False
-    except Exception as ex:
-        return False
+
 
 ####################################websocket connection and send function , gevent compatible
 #gevent _GetPrecompileRelatedFiles
@@ -433,35 +388,6 @@ def get_mime_type_from_filename(file_name):
     ext = os.path.splitext(file_name)[1][1:]
     return MIME_TYPE_MAP.get(ext, None)
 
-
-@use_connection_pool(s3="s3")
-def generate_upload_url(file_name, base_folder, s3=None , bucket=None, redirect_url=None, mime_type=None):
-    if(not mime_type):
-        #just in case
-        extension = os.path.splitext(file_name)[1][1:]
-        mime_type = MIME_TYPE_MAP.get(extension)
-
-    fields = {"acl": "public-read", "Content-Type": mime_type, "success_action_status": "200"}
-
-    conditions = [
-        {"acl": "public-read"},
-        {"Content-Type": mime_type},
-        {"success_action_status": "200"}
-    ]
-    if(redirect_url):
-        conditions.append({"redirect": redirect_url})
-
-
-    # Generate the POST attributes
-    s3_key = base_folder + "/" + file_name
-    post = s3.meta.client.generate_presigned_post(
-        Bucket=bucket,
-        Key=s3_key,
-        Fields=fields,
-        Conditions=conditions,
-        ExpiresIn=604800
-    )
-    return post
 
 
 
