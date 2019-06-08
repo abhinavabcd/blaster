@@ -11,6 +11,7 @@ import os
 from queue import Queue
 import time
 import ujson as json
+import six
 
 
 url_loaders_queue = Queue()
@@ -45,6 +46,8 @@ def get_data(url,post=None,headers={}, method = None, url_loader=None):
     headers['Accept-encoding'] ='gzip'
     ret= None
     try:
+        if(post and isinstance(post, six.text_type)):
+            post = post.encode()
         req=urllib.request.Request(url,post,headers)
         if(method!=None):
             req.get_method = lambda : method
