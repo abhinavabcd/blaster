@@ -60,7 +60,7 @@ def get_data(url,post=None,headers={}, method = None, url_loader=None):
             
     except urllib.error.HTTPError as e: 
         ret = None
-        print((-4 ,  int(time.time()*1000), json.dumps(data=e.read())))
+        print(-4 ,  int(time.time()*1000), json.dumps({"err": str(e)}))
     return ret
 
 
