@@ -40,7 +40,7 @@ def get_url_loader(actual_func):
     return ret_func
 
 
-
+'''returns Io'''
 @get_url_loader
 def get_data(url,post=None,headers={}, method = None, url_loader=None):
     headers['Accept-encoding'] ='gzip'
@@ -55,15 +55,16 @@ def get_data(url,post=None,headers={}, method = None, url_loader=None):
         if ret.info().get('Content-Encoding') == 'gzip':
             ret2 = ret
             try:
-                ret = StringIO(zlib.decompress(ret2.read(),16+zlib.MAX_WBITS))
+                ret = StringIO(zlib.decompress(ret2.read(),16+zlib.MAX_WBITS).decode())
             except:
                 decompressor = zlib.decompressobj()
-                ret = StringIO(decompressor.decompress(ret2.read()))
+                ret = StringIO(decompressor.decompress(ret2.read()).decode())
             ret2.close()
             
     except urllib.error.HTTPError as e: 
         ret = None
-        print(-4 ,  int(time.time()*1000), json.dumps({"err": str(e)}))
+        err_body = e.read()
+        print(-4 ,  int(time.time()*1000), json.dumps({"err": str(e), "body": err_body.decode() if err_body else ""}))
     return ret
 
 
