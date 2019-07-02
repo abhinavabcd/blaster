@@ -55,9 +55,9 @@ def set_socket_options(sock):
     sock.setdefaulttimeout(60) #every 1 min timeout
 
 class LRUCache:
-    def __init__(self, capacity):
+    def __init__(self, capacity, items=None):
         self.capacity = capacity
-        self.cache = collections.OrderedDict()
+        self.cache = collections.OrderedDict(items)
 
     def get(self, key, default=None):
         try:

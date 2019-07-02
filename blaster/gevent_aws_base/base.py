@@ -287,7 +287,7 @@ def exit_handler():
     stream_server.stop()#should handle all connections fgracefully
         #wait for queue to flush/process
         
-def start_stream_server(port=80, handlers= []):
+def start_stream_server(port=80, handlers= [], **ssl_args):
     global_route_handlers.sort(key=functools.cmp_to_key(lambda x, y: len(y[0])-len(x[0]))) #reverse sort by length
     global_route_handlers.extend(handlers)
     for regex, handler in global_route_handlers:
@@ -299,7 +299,7 @@ def start_stream_server(port=80, handlers= []):
     #request_handlers.sort(key = lambda x:x[0] , reverse=True)
     global stream_server
     stream_server = StreamServer(
-    ('', port), handle_connection)
+    ('', port), handle_connection, **ssl_args)
     
     gevent.signal(signal.SIGINT, exit_handler)
 
