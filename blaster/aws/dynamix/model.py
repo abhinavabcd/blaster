@@ -2,13 +2,13 @@
 import copy
 
 from botocore.exceptions import ClientError
+from blaster.connection_pool import use_connection_pool
 
 from .table import Table
 from .query import Query
 from .fields import Attribute
 from .errors import FieldValidationException, ValidationException, ClientException
 from .helpers import get_items_for_storage
-from blaster.connection_pool import use_connection_pool
 from .fields import ListField, SetField, DictField,\
     CharField
 

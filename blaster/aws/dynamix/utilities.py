@@ -3,9 +3,9 @@ Created on 29-Dec-2017
 
 @author: abhinav
 '''
-from blaster.dynamo_orm.model import Model
-from blaster.dynamo_orm.fields import CharField, IntegerField
-from blaster.common_funcs_and_datastructures import cur_ms
+from .model import Model
+from .fields import CharField, IntegerField
+from ..common_funcs_and_datastructures import cur_ms
 
 
 class InboxMessage(Model):

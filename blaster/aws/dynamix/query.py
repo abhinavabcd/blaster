@@ -2,12 +2,12 @@
 
 
 import copy
+from blaster.connection_pool import use_connection_pool
 
 from .table import Table
 from .fields import Fields
 from .errors import FieldValidationException
 import ujson as json
-from blaster.connection_pool import use_connection_pool
 
 
 class Paginator(object):
@@ -314,8 +314,8 @@ class Query(object):
     def get_items(self, requery_for_all_projections=False):
         resp = self.all()
         items = resp["Items"]
-        cursor = resp.get("LastEvaluatedKey",None)
-        if(self.use_index_type!=0 and requery_for_all_projections and items):
+        cursor = resp.get("LastEvaluatedKey", None)
+        if(self.use_index_type != 0 and requery_for_all_projections and items):
             _items = self.model_class.batch_get(*map(lambda x : x.get_primary_key_dict() , items))
             #re-ordering back shit
             _items_map = {}
@@ -323,5 +323,4 @@ class Query(object):
                 _items_map[_item.get_primary_key_tuple()] = _item
             
             items = [_items_map[item.get_primary_key_tuple()] for item in items]
-        return items, cursor 
-
+        return items, cursor

@@ -1,20 +1,41 @@
-import traceback
+from gevent.queue import Queue, Empty
+import boto3
 
 from . import config
-
-from gevent.queue import Queue, Empty
-
-import boto3
-from blaster.config import aws_config, IS_DEBUG
-from os import environ
-#import umysql 
-
+from .config import aws_config, IS_DEBUG
+#import umysql
 
 conn_pools = {}
 boto_session = boto3.session.Session(**aws_config)
 
+def get_dynamodb_conn():
+    if(IS_DEBUG):
+        return boto3.resource('dynamodb', endpoint_url='http://{endpoint}:{port}'.format(endpoint="127.0.0.1", port="8000"), aws_access_key_id=" ", aws_secret_access_key=" ", region_name="ap-south-1")
+    else:
+        return boto_session.resource('dynamodb')
 
-def get_from_pool(pool_id='s3'):
+def get_s3_conn():
+    return boto_session.resource('s3')
+
+def get_sqs_conn():
+    return boto_session.client('sqs')
+
+def get_ses_conn():
+    return boto_session.client('ses', region_name="eu-west-1")
+
+
+connection_generators = {
+    "dynamodb": get_dynamodb_conn,
+    "s3" : get_s3_conn,
+    "sqs": get_sqs_conn,
+    "ses": get_ses_conn
+}
+
+connection_generators.update(**config.connection_generators)
+
+
+
+def get_from_pool(pool_id):
     conn = None
 
     conn_pool = conn_pools.get(pool_id, None)
@@ -28,32 +49,14 @@ def get_from_pool(pool_id='s3'):
     # print "reusing from pool"
     except Empty:
         #if queue is empty create a connection for use.
-        if(pool_id.startswith("dynamodb")):
-            #table_name = pool_id.split("_")[1]
-            #create new session
-            if(IS_DEBUG):
-                conn = boto3.resource('dynamodb', endpoint_url='http://{endpoint}:{port}'.format(endpoint="127.0.0.1",port="8000"), aws_access_key_id=" ", aws_secret_access_key=" ", region_name="ap-south-1" )
-            else:
-                conn = boto_session.resource('dynamodb')
+        if(pool_id in connection_generators):
+            conn = connection_generators[pool_id]()
 
-        elif(pool_id.startswith("s3")):
-            conn = boto_session.resource('s3')
-            # print "new connection"
-        elif(pool_id.startswith("mysql")):
-            '''TODO: application level sharding to which db you wanna connect'''
-            #conn = umysql.Connection()   
-            #conn.connect(config.MYSQL_DB_HOST, 3306, config.MYSQL_DB_USER, config.MYSQL_DB_PASS, config.MYSQL_DB_NAME)
-            
-        elif(pool_id.startswith("sqs")):
-            conn = boto_session.client('sqs')
-        
-        elif(pool_id.startswith("ses")):
-            conn = boto_session.client('ses', region_name="eu-west-1")
             
     return conn
 
 
-def release_to_pool(conn, pool_id='es'):
+def release_to_pool(conn, pool_id):
     # print "releasing to pool"
     conn_pools[pool_id].put(conn)
 

@@ -3,10 +3,12 @@ Created on 05-Jun-2019
 
 @author: abhinav
 '''
-from blaster.connection_pool import use_connection_pool
+from ..connection_pool import use_connection_pool
+from ..aws.push_tasks import push_task
+from ..base import server_log
 
 
-
+@push_task
 @use_connection_pool(ses_client="ses")
 def send_email(sender, to_list, subject, body_text=None, body_html=None, ses_client=None):
     """
@@ -45,8 +47,9 @@ def send_email(sender, to_list, subject, body_text=None, body_html=None, ses_cli
             }
         )
         if response['ResponseMetadata']['HTTPStatusCode'] == 200:
-            return True
+            return response
         else:
-            return False
+            return None
     except Exception as ex:
-        return False
+        server_log('ses_error', data=str(ex))
+        return None

@@ -128,7 +128,7 @@ class Table(object):
             field_object = self.instance.attributes[field]
             if(field_object.projections):
                 index_properties['Projection'] = {'ProjectionType': 'INCLUDE',
-                                                  'NonKeyAttributes': field_object.projections                                                  
+                                                  'NonKeyAttributes': field_object.projections                                                 
                                                  }
             else:
                 index_properties['Projection'] = {'ProjectionType': 'KEYS_ONLY'}
@@ -143,19 +143,33 @@ class Table(object):
                 'AttributeName': attribute_dict["hash_key"], 
                 'KeyType': 'HASH'
             }]
-            if attribute_dict.get("range_key",None):
+            if attribute_dict.get("range_key", None):
                 KeySchema.append({
                         'AttributeName': attribute_dict.get("range_key"), 
                         'KeyType': 'RANGE'
                 })
             index_properties = {
                 'IndexName': index_name,
-                'KeySchema': KeySchema,
-                'ProvisionedThroughput': {
-                    'ReadCapacityUnits': attribute_dict.get("read_capacity"),
-                    'WriteCapacityUnits': attribute_dict.get("write_capacity")
-                }
+                'KeySchema': KeySchema
             }
+
+            read_capacity_units = attribute_dict.get("read_capacity")
+            write_capacity_units = attribute_dict.get("write_capacity")
+
+            if(read_capacity_units and write_capacity_units):
+                index_properties['ProvisionedThroughput'] = {
+                    'ReadCapacityUnits': read_capacity_units,
+                    'WriteCapacityUnits': write_capacity_units
+                }
+                index_properties['BillingMode'] = "PROVISIONED"
+            else:
+                #this should not appear but due to a bug we are forced to user this
+                # index_properties['ProvisionedThroughput'] = {
+                #     'ReadCapacityUnits': 1,
+                #     'WriteCapacityUnits': 1
+                # }
+                #assuming billing is pay per request
+                #index_properties['BillingMode'] = "PAY_PER_REQUEST"
             
             if("projections" in attribute_dict):
                 index_properties['Projection'] = {'ProjectionType': 'INCLUDE',
@@ -184,10 +198,19 @@ class Table(object):
         if global_indexes:
             table_params['GlobalSecondaryIndexes'] = global_indexes
         # ProvisionedThroughput
-        table_params['ProvisionedThroughput'] = {
-            'ReadCapacityUnits': self.instance.ReadCapacityUnits,
-            'WriteCapacityUnits': self.instance.WriteCapacityUnits
-        }
+
+        read_capacity_units = getattr(self.instance, 'ReadCapacityUnits', None)
+        write_capacity_units = getattr(self.instance, 'WriteCapacityUnits', None)
+        if(read_capacity_units and write_capacity_units):
+            table_params['ProvisionedThroughput'] = {
+                'ReadCapacityUnits': read_capacity_units,
+                'WriteCapacityUnits': write_capacity_units
+            }
+            table_params['BillingMode'] = "PROVISIONED"
+        else:
+            #assuming billing is pay per request
+            table_params['BillingMode'] = "PAY_PER_REQUEST"
+
         return table_params
 
     def create(self):
@@ -277,13 +300,17 @@ class Table(object):
             raise ConnectionException('Connection refused')
 
     def _update_throughput(self, ProvisionedThroughput):
-        ReadCapacityUnits = ProvisionedThroughput['ReadCapacityUnits']
-        WriteCapacityUnits = ProvisionedThroughput['WriteCapacityUnits']
-        if (ReadCapacityUnits != self.instance.ReadCapacityUnits or
-                WriteCapacityUnits != self.instance.WriteCapacityUnits):
+        ReadCapacityUnits = ProvisionedThroughput.get('ReadCapacityUnits', None)
+        WriteCapacityUnits = ProvisionedThroughput.get('WriteCapacityUnits', None)
+
+        read_capacity_units = getattr(self.instance, 'ReadCapacityUnits', None)
+        write_capacity_units = getattr(self.instance, 'WriteCapacityUnits', None)
+
+        if (read_capacity_units != ReadCapacityUnits or
+                write_capacity_units != WriteCapacityUnits):
             self.table.update(ProvisionedThroughput={
-                'ReadCapacityUnits': self.instance.ReadCapacityUnits,
-                'WriteCapacityUnits': self.instance.WriteCapacityUnits
+                'ReadCapacityUnits': read_capacity_units,
+                'WriteCapacityUnits': write_capacity_units
             })
 
     def _update_streams(self):
@@ -292,6 +319,9 @@ class Table(object):
 
     def _update_global_indexes(self):
         # TODO
+        pass
+
+    def _update_billing_mode(self):
         pass
 
     def update(self):
@@ -315,58 +345,103 @@ class Table(object):
 
         # Request Syntax
 
-        {
-           "AttributeDefinitions": [
-              {
-                 "AttributeName": "string",
-                 "AttributeType": "string"
-              }
-           ],
-           "GlobalSecondaryIndexUpdates": [
-              {
-                 "Create": {
-                    "IndexName": "string",
-                    "KeySchema": [
-                       {
-                          "AttributeName": "string",
-                          "KeyType": "string"
-                       }
+        AttributeDefinitions=[
+            {
+                'AttributeName': 'string',
+                'AttributeType': 'S'|'N'|'B'
+            },
+        ],
+        BillingMode='PROVISIONED'|'PAY_PER_REQUEST',
+        ProvisionedThroughput={
+            'ReadCapacityUnits': 123,
+            'WriteCapacityUnits': 123
+        },
+        GlobalSecondaryIndexUpdates=[
+            {
+                'Update': {
+                    'IndexName': 'string',
+                    'ProvisionedThroughput': {
+                        'ReadCapacityUnits': 123,
+                        'WriteCapacityUnits': 123
+                    }
+                },
+                'Create': {
+                    'IndexName': 'string',
+                    'KeySchema': [
+                        {
+                            'AttributeName': 'string',
+                            'KeyType': 'HASH'|'RANGE'
+                        },
                     ],
-                    "Projection": {
-                       "NonKeyAttributes": [ "string" ],
-                       "ProjectionType": "string"
+                    'Projection': {
+                        'ProjectionType': 'ALL'|'KEYS_ONLY'|'INCLUDE',
+                        'NonKeyAttributes': [
+                            'string',
+                        ]
                     },
-                    "ProvisionedThroughput": {
-                       "ReadCapacityUnits": number,
-                       "WriteCapacityUnits": number
+                    'ProvisionedThroughput': {
+                        'ReadCapacityUnits': 123,
+                        'WriteCapacityUnits': 123
                     }
-                 },
-                 "Delete": {
-                    "IndexName": "string"
-                 },
-                 "Update": {
-                    "IndexName": "string",
-                    "ProvisionedThroughput": {
-                       "ReadCapacityUnits": number,
-                       "WriteCapacityUnits": number
-                    }
-                 }
-              }
-           ],
-           "ProvisionedThroughput": {
-              "ReadCapacityUnits": number,
-              "WriteCapacityUnits": number
-           },
-           "StreamSpecification": {
-              "StreamEnabled": boolean,
-              "StreamViewType": "string"
-           },
-           "TableName": "string"
-        }
+                },
+                'Delete': {
+                    'IndexName': 'string'
+                }
+            },
+        ],
+        StreamSpecification={
+            'StreamEnabled': True|False,
+            'StreamViewType': 'NEW_IMAGE'|'OLD_IMAGE'|'NEW_AND_OLD_IMAGES'|'KEYS_ONLY'
+        },
+        SSESpecification={
+            'Enabled': True|False,
+            'SSEType': 'AES256'|'KMS',
+            'KMSMasterKeyId': 'string'
+        },
+        ReplicaUpdates=[
+            {
+                'Create': {
+                    'RegionName': 'string',
+                    'KMSMasterKeyId': 'string',
+                    'ProvisionedThroughputOverride': {
+                        'ReadCapacityUnits': 123
+                    },
+                    'GlobalSecondaryIndexes': [
+                        {
+                            'IndexName': 'string',
+                            'ProvisionedThroughputOverride': {
+                                'ReadCapacityUnits': 123
+                            }
+                        },
+                    ]
+                },
+                'Update': {
+                    'RegionName': 'string',
+                    'KMSMasterKeyId': 'string',
+                    'ProvisionedThroughputOverride': {
+                        'ReadCapacityUnits': 123
+                    },
+                    'GlobalSecondaryIndexes': [
+                        {
+                            'IndexName': 'string',
+                            'ProvisionedThroughputOverride': {
+                                'ReadCapacityUnits': 123
+                            }
+                        },
+                    ]
+                },
+                'Delete': {
+                    'RegionName': 'string'
+                }
+            },
+        ]
         '''
         table_info = self.info()
-        ProvisionedThroughput = table_info['ProvisionedThroughput']
+        ProvisionedThroughput = table_info.get('ProvisionedThroughput')
         self._update_throughput(ProvisionedThroughput)
+
+        self._update_billing_mode(table_info.get('BillingMode'))
+
 
     def delete(self):
         # delete table
@@ -497,18 +572,6 @@ class Table(object):
                 'string': 'string'|123|Binary(b'bytes')|True|None|set(['string'])|set([123])|set([Binary(b'bytes')])|[]|{}
             }
         )
-        ExclusiveStartKey: 起始查询的key，也就是上一页的最后一条数据
-        ConsistentRead: 是否使用强制一致性 默认False
-        ScanIndexForward: 索引的排序方式 True 为正序 False 为倒序 默认True
-        ReturnConsumedCapacity: DynamoDB 写入期间使用的写入容量单位
-            TOTAL 会返回由表及其所有global secondary index占用的写入容量；
-            INDEXES 仅返回由global secondary index占用的写入容量；
-            NONE 表示您不需要返回任何占用容量统计数据。
-        ProjectionExpression: 用于指定要在扫描结果中包含的属性
-        FilterExpression: 指定一个条件，以便仅返回符合条件的项目
-        KeyConditionExpression: 要查询的键值
-        ExpressionAttributeNames: 提供名称替换功能
-        ExpressionAttributeValues: 提供值替换功能
         """
         try:
             #print(kwargs)

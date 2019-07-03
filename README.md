@@ -1,4 +1,4 @@
-# High performance gevent based python server with minimal string copy operations.
+# High performance gevent based python3 server with minimal string copy operations.
 Very simplistic API, Best suited for API servers, websocket handling. Fastest in the python town you could say ; ). 
 
 
@@ -6,9 +6,14 @@ See examples in the examples folder
 
 
 # Additional Utilitites:
-## DynamoDb
+## AWS - send email via SES
+## AWS - Push tasks ( Defered processing function calls using sqs)
+## AWS - DynamoDb orm - blaster/aws_utils/dynamix
+## A 300 line mongoorm that support 
+   - supports client level sharding using jumphash, but you might never need it.
 
-## Push tasks ( Defered processing function calls using sqs) 
+
+
 
 
 
