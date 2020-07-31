@@ -647,8 +647,8 @@ class Model(object):
 
 				self._id = _id
 				committed = True
-				# set original doc
-				self._original_doc = self.to_dict()
+				# set original doc and custom dict and set fields
+				self.reinitialize_from_doc(self._set_query_updates)
 				cls.__cache__.set(self.pk_tuple(), self)
 
 			except DuplicateKeyError as ex:
