@@ -62,7 +62,6 @@ def start_boto_sqs_readers(queue=None):
 
             except Exception as ex:
                 server_log(LOG_TYPE_EXCEPTION, data=str(ex), _type="sqs_exception")
-                traceback.print_exc()
         
     for i in range(5):
         sqs_reader_greenlets.append(gevent.spawn(process_from_sqs))

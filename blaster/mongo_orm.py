@@ -370,16 +370,19 @@ class Model(object):
 	@classmethod
 	def get_collections_from_shard_key(cls, shard_key):
 		if(isinstance(shard_key, (str, int))):
-				return [cls.get_collection(shard_key)]
-		if(isinstance(shard_key, dict)):
+			return [cls.get_collection(shard_key)]
+		elif(isinstance(shard_key, dict)):
 			_in_values = shard_key.get("$in", [])
 			collections_to_update = {}
 			for shard_key in _in_values:
 				_collection = cls.get_collection(shard_key)
 				collections_to_update[id(_collection)] = _collection
 			return collections_to_update.values()
+		elif(shard_key == None):
+			IS_DEBUG and print("None type shard keys will be ignored and wont be available for query! Let me know feedback!")
+			return []
 		else:
-			raise Exception("Shard keys must be integers or strings")
+			raise Exception("Shard keys must be integers or strings: got %s"%(str(shard_key),))
 
 	@classmethod
 	def get_collections_from_query(cls, _query):
@@ -418,7 +421,7 @@ class Model(object):
 			**kwargs
 		)
 		IS_DEBUG and print("#MONGO: updated before and after",
-			cls, self._original_doc, _update_query, updated_doc
+			cls, _query, self._original_doc, _update_query, updated_doc
 		)
 		if(not updated_doc):
 			#update was unsuccessful
@@ -616,11 +619,12 @@ class Model(object):
 
 			IS_DEBUG and print("#MONGO: new object values", cls, self._set_query_updates)
 			self.__is_new = False
+			_collection_shard = cls.get_collection(
+				str(getattr(self, shard_key_name))
+			)
 			try:
 				#find which shard we should insert to and insert into that
-				self._insert_result = cls.get_collection(
-					str(getattr(self, shard_key_name))
-				).insert_one(
+				self._insert_result = _collection_shard.insert_one(
 					self._set_query_updates
 				)
 
@@ -652,7 +656,18 @@ class Model(object):
 				if(not force):
 					raise(ex) # re reaise
 
-				# because "in this orm" primary keys should not be updated for an existing document, we remove them from pending updates
+				#get original doc from mongo shard
+				# and update any other fields
+				self.reinitialize_from_doc(
+					_collection_shard.find_one(self.pk())
+				)
+				IS_DEBUG and print("#MONGO: created a duplicate, refetching and updating",
+					self.pk()
+				)
+
+				# try removing all primary keys
+				# although this unnecessary it's good
+				# to mongo ?
 				if("_id" in self._set_query_updates):
 					del self._set_query_updates["_id"]
 
@@ -682,7 +697,7 @@ class Model(object):
 		#update in the id_cache
 		_pk_tuple = self.pk_tuple()
 		existing_cache_entry = cls.__cache__.get(_pk_tuple, None)
-		if(existing_cache_entry == self): # if someone has already overridden ignore this object
+		if(existing_cache_entry == self): # if someone has already overridden ignore this object setting in cache
 			cls.__cache__.set(_pk_tuple, self)
 
 		return self
@@ -777,7 +792,9 @@ class Connection:
 			if(isinstance(v, Attribute)):
 				_model_attrs[k] = v
 				attrs_to_name[v] = k
-				attrs_to_name[k] = k # dumb , but it's one time thing and also helps converting if any given attributes as strings
+				# dumb , but it's one time thing
+				# and also helps converting if any given attributes as strings
+				attrs_to_name[k] = k
 
 		# ensure indexes created and all collections loaded to memory
 		#Ex: _index_ = [( (a, ASCENDING), (b, DESCENDING), {"unique": False})]
@@ -891,6 +908,9 @@ class Connection:
 		
 		#create secondary shards
 		for _seconday_shard_key, _seconday_shard in Model._secondary_shards_.items():
+			if(not Model._pk_is_unique_index):
+				raise Exception("Cannot have secondary shard keys for non unique indexes! %s"%(Model,))
+
 			class_attrs = {
 				"_index_": _seconday_shard.indexes,
 				"_collection_name_": _model_collection_name_,
@@ -901,7 +921,10 @@ class Connection:
 
 			for attr_name in Model._pk_attrs:
 				_seconday_shard.attributes[attr_name] = getattr(Model, attr_name)
-			_seconday_shard.attributes['_id'] = getattr(Model, '_id')
+
+			secondary_id_attr = getattr(Model, '_id', None)
+			if(secondary_id_attr):
+				_seconday_shard.attributes['_id'] = secondary_id_attr
 
 			class_attrs.update(_seconday_shard.attributes)
 			#also include the primary key of the primary shard

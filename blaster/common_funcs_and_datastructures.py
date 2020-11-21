@@ -14,6 +14,8 @@ import string
 import socket
 import struct
 import gevent
+import fcntl
+
 from gevent.lock import BoundedSemaphore
 from collections import namedtuple
 from datetime import timezone
@@ -708,44 +710,52 @@ def run_shell(cmd, output_parser=None, interactive=True, shell=False, max_buf=50
 	class Object(object):
 		pass
 	
+	orig_fl = fcntl.fcntl(sys.stdin, fcntl.F_GETFL)
+	fcntl.fcntl(sys.stdin, fcntl.F_SETFL, orig_fl | os.O_NONBLOCK)
+	orig_fl = fcntl.fcntl(sys.stdout, fcntl.F_GETFL)
+	fcntl.fcntl(sys.stdout, fcntl.F_SETFL, orig_fl | os.O_NONBLOCK)
+
+
 	state = Object()
 	state.total_output = ""
 	state.total_err = ""
 
-	def connect_input(input_file, out_file):
+	def connect_input(input_file):
 		while(state.is_running):
 			wait_read(sys.stdin.fileno())
 			user_inp = sys.stdin.readline()
-			
 			input_file.write(user_inp.encode())
-			try:
-				input_file.flush()
-				out_file.flush()
-			except Exception as ex:
-				pass
-
+			input_file.flush()
 
 	#keep parsing output
 	def process_output(out_file, input_file):
 		while(state.is_running):
-			_out = out_file.read(1024)
-			_out = _out.decode()
-			if(_out == ''): # file closed
-				break
-			state.total_output += _out
-			if(len(state.total_output) > max_buf):
-				state.total_output = state.total_output[-max_buf:]
+			try:
+				wait_read(out_file.fileno())
+				_out = out_file.read(1024)
+				_out = _out.decode()
+				if(_out == ''): # file closed
+					break
+				state.total_output += _out
+				if(len(state.total_output) > max_buf):
+					state.total_output = state.total_output[-max_buf:]
 
-			if(output_parser):
-				_inp = output_parser(state.total_output, state.total_err)
-				if(_inp):
-					input_file.write(_inp)
-			else:
-				print(_out, end="", flush=True)
+				if(output_parser):
+					#parse the output and if it returns something
+					#we write that to input file(generally stdin)
+					_inp = output_parser(state.total_output, state.total_err)
+					if(_inp):
+						input_file.write(_inp)
+						input_file.flush()
+				else:
+					print(_out, end="", flush=True)
+			except Exception as ex:
+				print(ex, end="", flush=True)
 
 	def print_stderr(err_file, input_file):
 		while(state.is_running):
 			try:
+				wait_read(err_file.fileno())
 				_err = err_file.read(1024)
 				_err = _err.decode()
 				if(_err == ''): # file closed
@@ -755,9 +765,12 @@ def run_shell(cmd, output_parser=None, interactive=True, shell=False, max_buf=50
 					state.total_err = state.total_err[-max_buf:]
 
 				if(output_parser):
+					#parse the error message and if it returns something
+					#we write that to inputfile to automate
 					_inp = output_parser(state.total_output, state.total_err)
 					if(_inp):
 						input_file.write(_inp)
+						input_file.flush()
 				else:
 					print(_err, end="", flush=True)
 			except Exception as ex:
@@ -779,7 +792,7 @@ def run_shell(cmd, output_parser=None, interactive=True, shell=False, max_buf=50
 	state.is_running = True
 	#keep reading input from stdin ?
 	if(interactive):
-		input_reader_thread = gevent.spawn(connect_input, proc.stdin, proc.stdout)
+		input_reader_thread = gevent.spawn(connect_input, proc.stdin)
 	#process output
 	output_parser_thread = gevent.spawn(process_output, proc.stdout, proc.stdin)
 	#just keep printing error
