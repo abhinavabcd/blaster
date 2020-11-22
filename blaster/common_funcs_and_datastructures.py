@@ -709,12 +709,6 @@ def static_file_handler(_base_folder_path_, default_file_path="index.html", file
 def run_shell(cmd, output_parser=None, interactive=True, shell=False, max_buf=5000):
 	class Object(object):
 		pass
-	
-	orig_fl = fcntl.fcntl(sys.stdin, fcntl.F_GETFL)
-	fcntl.fcntl(sys.stdin, fcntl.F_SETFL, orig_fl | os.O_NONBLOCK)
-	orig_fl = fcntl.fcntl(sys.stdout, fcntl.F_GETFL)
-	fcntl.fcntl(sys.stdout, fcntl.F_SETFL, orig_fl | os.O_NONBLOCK)
-
 
 	state = Object()
 	state.total_output = ""
@@ -725,7 +719,6 @@ def run_shell(cmd, output_parser=None, interactive=True, shell=False, max_buf=50
 			wait_read(sys.stdin.fileno())
 			user_inp = sys.stdin.readline()
 			input_file.write(user_inp.encode())
-			input_file.flush()
 
 	#keep parsing output
 	def process_output(out_file, input_file):
@@ -746,7 +739,6 @@ def run_shell(cmd, output_parser=None, interactive=True, shell=False, max_buf=50
 					_inp = output_parser(state.total_output, state.total_err)
 					if(_inp):
 						input_file.write(_inp)
-						input_file.flush()
 				else:
 					print(_out, end="", flush=True)
 			except Exception as ex:
@@ -770,7 +762,6 @@ def run_shell(cmd, output_parser=None, interactive=True, shell=False, max_buf=50
 					_inp = output_parser(state.total_output, state.total_err)
 					if(_inp):
 						input_file.write(_inp)
-						input_file.flush()
 				else:
 					print(_err, end="", flush=True)
 			except Exception as ex:

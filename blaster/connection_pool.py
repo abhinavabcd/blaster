@@ -6,7 +6,9 @@ from .config import aws_config, IS_DEBUG
 #import umysql
 
 conn_pools = {}
-boto_session = boto3.session.Session(**aws_config)
+boto_session = None
+if(aws_config):
+    boto_session = boto3.session.Session(**aws_config)
 
 def get_dynamodb_conn():
     if(IS_DEBUG):
@@ -101,3 +103,21 @@ def use_connection_pool(**pool_args):
         return func_wrap
 
     return use_db_connection
+
+'''
+uses gevent.Queue to maintain pools
+
+@use_connection_pool(arg="pool_name")
+def func(arg=None):
+    # arg is automatically populated from pool_name,
+    # and after function is executed it is put back to pool
+    pass
+
+or
+
+def func():
+    get_from_pool("pool_name")
+    release_to_pool("pool_name")
+
+
+'''

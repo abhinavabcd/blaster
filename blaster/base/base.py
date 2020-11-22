@@ -25,7 +25,6 @@ from requests_toolbelt.multipart import decoder
 
 
 from .. import config
-from ..constants import LOG_TYPE_SERVER_INFO
 from ..common_funcs_and_datastructures import cur_ms
 
 _is_server_running = True
@@ -182,9 +181,6 @@ class LowerKeyDict(dict):
     def get(self, k, default=None):
         return super().get(k.lower(), default)
 
-
-LOG_TYPE_REQUEST = 0
-LOG_TYPE_REQUEST_ERROR = -1
 
 #contains all running apps
 _all_apps = set()
@@ -424,13 +420,15 @@ class App:
                 else: # return value is None => manually handling
                     is_okay = False
 
-                server_log(LOG_TYPE_REQUEST , request_type=request_type , path=request_path, wallclockms=int(1000 * time.time()) - cur_millis)
+                server_log("http" , request_type=request_type , path=request_path, wallclockms=int(1000 * time.time()) - cur_millis)
 
             except Exception as ex:
                 stracktrace_string = traceback.format_exc()
+                body = None
                 if(config.server_error_page):
                     body = config.server_error_page(request_type, request_path, request_params, headers, stracktrace_string=stracktrace_string)
-                body = body or b'Internal server error'
+                if(not body):
+                    body = b'Internal server error'
                 write_data(socket,
                         b'HTTP/1.1 ', b'502 Server error', b'\r\n',
                         b'Connection: close', b'\r\n',
@@ -438,14 +436,14 @@ class App:
                         body
                 )
                 socket.close()
-                server_log(LOG_TYPE_REQUEST_ERROR , cur_millis, exception_str=str(ex), stracktrace_string=stracktrace_string)
+                server_log("http_error" , cur_millis, exception_str=str(ex), stracktrace_string=stracktrace_string)
                 if(config.IS_DEBUG):
                     traceback.print_exc()
                 return
 
 
 def stop_all_apps():
-    server_log(LOG_TYPE_SERVER_INFO, data="exiting all servers")
+    server_log("server_info", data="exiting all servers")
     global _is_server_running
     
     _is_server_running = False

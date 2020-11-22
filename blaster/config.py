@@ -5,20 +5,18 @@ Created on 04-Nov-2017
 '''
 from os import environ
 
-
-
-secrets = {"v0": "something_random_secret_here"}
+secrets = {
+	"v0": "something_random_secret_here"
+}
 
 IS_DEBUG = True
 if(environ.get('PROD') == "1"):
-    IS_DEBUG = False
-
-
+	IS_DEBUG = False
 
 aws_config = {
-    'aws_access_key_id': "A*****",
-    'aws_secret_access_key': "G*****",
-    'region_name': "ap-south-1"
+	# 'aws_access_key_id': "A*****",
+	# 'aws_secret_access_key': "G*****",
+	# 'region_name': "ap-south-1"
 }
 
 es_http_host = None
