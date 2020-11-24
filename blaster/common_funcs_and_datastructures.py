@@ -719,6 +719,10 @@ def run_shell(cmd, output_parser=None, interactive=True, shell=False, max_buf=50
 			wait_read(sys.stdin.fileno())
 			user_inp = sys.stdin.readline()
 			input_file.write(user_inp.encode())
+			try:
+				input_file.flush()
+			except Exception:
+				pass
 
 	#keep parsing output
 	def process_output(out_file, input_file):

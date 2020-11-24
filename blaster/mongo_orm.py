@@ -884,10 +884,10 @@ class Connection:
 			if(not ignore_index_creation):
 				_pymongo_indexes_to_create.append((pymongo_index, mongo_index_args))
 
-		#indexes are already created, but if nothing was specified just specify _id for local use
+		# but if nothing was specified we set the default _id
+		# for index, pk and shard key
 		if(not _model_indexes):
 			_model_indexes = [('_id', pymongo.ASCENDING)]
-			Model._pk_attrs = OrderedDict(_id=1)
 
 		if(not Model._pk_attrs): # create default _pk_attrs
 			Model._pk_attrs = OrderedDict(_id=True)

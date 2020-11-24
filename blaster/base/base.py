@@ -31,9 +31,6 @@ _is_server_running = True
 
 exit_listeners = []
 
-
-push_tasks = {} # name: func
-
 default_wsgi_headers = [
                             ('Content-Type', 'text/html; charset=utf-8')
                     ]

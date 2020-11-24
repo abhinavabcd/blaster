@@ -5,11 +5,13 @@ Created on 27-Feb-2017
 import types
 from datetime import datetime
 
+import base64
+import pickle
 import traceback
 import ujson as json
 import gevent
 from .. import config
-from ..base import push_tasks, server_log, is_server_running
+from ..base import server_log, is_server_running
 from ..common_funcs_and_datastructures import get_random_id,\
     cur_ms
 from ..connection_pool import get_from_pool,\
@@ -17,10 +19,11 @@ from ..connection_pool import get_from_pool,\
 from ..base import base
 
 
+push_tasks = {}
 sqs_reader_greenlets = []
 
 @use_connection_pool(queue="sqs")
-def start_boto_sqs_readers(num_readers=5, queue=None):
+def start_boto_sqs_readers(num_readers=5, msgs_per_batch=10, queue=None):
     if(not config.sqs_url):
         server_log("server_info", data="No sqs queue url provided, not starting readers")
         return
@@ -33,18 +36,20 @@ def start_boto_sqs_readers(num_readers=5, queue=None):
                 response = queue.receive_message(
                         QueueUrl=queue_url,
                         MessageAttributeNames=['All'],
-                        MaxNumberOfMessages=10,
+                        MaxNumberOfMessages=msgs_per_batch,
                         VisibilityTimeout=60,
                         WaitTimeSeconds=20 # long polling gevent safe
                         # ,ReceiveRequestAttemptId=''   , make it unique for each instance , probably when bootup with an ip ?
                 )
                     
                 for sqs_message in response.get("Messages", []):
-                    message_payload = json.loads(sqs_message.get("Body", "{}"))
+                    message_payload = pickle.loads(
+                        base64.a85decode(sqs_message.get("Body").encode())
+                    )
                     kwargs = message_payload.get("kwargs", {})
                     args = message_payload.get("args", [])
-                    func_name = message_payload.get("func", "")
-                    task_id = message_payload.get("task_id", "")
+                    func_name = message_payload.get("func_v2", "")
+                    #task_id = message_payload.get("task_id", "")
                     #TODO use task_id for logging
                     func = push_tasks.get(func_name, None)
                     if func:
@@ -60,7 +65,7 @@ def start_boto_sqs_readers(num_readers=5, queue=None):
                     server_log("sqs_processed" , data=json.dumps(_temp))
 
             except Exception as ex:
-                server_log("server_exception", data=str(ex), _type="sqs_exception")
+                server_log("sqs_exception", stack_trace=traceback.format_exc())
         
     for i in range(num_readers):
         sqs_reader_greenlets.append(gevent.spawn(process_from_sqs))
@@ -105,17 +110,17 @@ def post_a_task(func, *args, **kwargs):
 
     now = datetime.utcnow().isoformat()
     task_id = get_random_id()
-    message_body_json = {
+    message_body = {
         "args": args,
         "kwargs": kwargs,
-        "func": func_name,
+        "func_v2": func_name,
         "task_id": task_id,
         "created_at": now
     }
-    message_body = json.dumps(message_body_json)
+    message_body = pickle.dumps(message_body)
     response = queue.send_message(
             QueueUrl=config.sqs_url,
-            MessageBody=message_body,
+            MessageBody=base64.a85encode(message_body).decode(),# to utf-8 string
             DelaySeconds=1
     )
     return response
