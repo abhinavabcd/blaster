@@ -673,7 +673,7 @@ def static_file_handler(_base_folder_path_, default_file_path="index.html", file
 
 		if(not file_data or time.time() * 1000 - file_data[2] > 1000 if IS_DEBUG else 2 * 60 * 1000): # 1 millis
 			gevent_lock.acquire()
-			file_hash_key = path + urlencode(query_params)[:400]
+			file_hash_key = path + urlencode(query_params._get)[:400]
 			file_data = cached_file_data.get(file_hash_key, None)
 			if(not file_data or time.time() * 1000 - file_data[2] > 1000): # 1 millis
 				#put a lock here

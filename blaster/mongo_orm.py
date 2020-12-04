@@ -220,7 +220,7 @@ class Model(object):
 						v = self.get_custom_list(new_path, v)
 				super(ListObj, this).__setitem__(k, v)
 
-			def remove(this, item):
+			def remove(this, item): # can raise value exception
 				super(ListObj, this).remove(item)
 				# reset full array very inefficient : (
 				self._set_query_updates[path] = this

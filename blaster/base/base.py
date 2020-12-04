@@ -136,8 +136,9 @@ def parse_qs_modified(qs, keep_blank_values=True, strict_parsing=False):
 #process data as json
 def process_post_data(func):
     def new_func(*args, **kwargs):
-        post_data = kwargs.get("post_data", None)
         query_params = kwargs["query_params"]
+        post_data = query_params._post
+        _post_params = {}
         headers = kwargs["headers"]
         content_type_header = headers.get("Content-Type", b'')
         if(headers and content_type_header.startswith(b'multipart/form-data') and post_data):
@@ -151,19 +152,21 @@ def process_post_data(func):
                         val = key_val[1].strip(b'"\'').decode()
                         parsed_part_headers[key] = val
                 if(b'name' in parsed_part_headers):
-                    query_params[parsed_part_headers[b'name']] = {
-                                                                      "additional_part_headers": parsed_part_headers,
-                                                                      "data": part.content or part.text,
-                                                                      "part_headers": part.headers
-                                                                }
+                    _post_params[parsed_part_headers[b'name']] = {
+                          "additional_part_headers": parsed_part_headers,
+                          "data": part.content or part.text,
+                          "part_headers": part.headers
+                    }
 
 
         elif(post_data):
             post_data_str = post_data.decode('utf-8')
             if(post_data_str[0] == '{'):
-                query_params.update(json.loads(post_data_str))
+                _post_params.update(json.loads(post_data_str))
             else:
-                query_params.update(parse_qs_modified(post_data_str))
+                _post_params.update(parse_qs_modified(post_data_str))
+        #update post params
+        query_params._post = _post_params
         ret = func(*args, **kwargs)
         return ret
     
@@ -177,6 +180,59 @@ class LowerKeyDict(dict):
 
     def get(self, k, default=None):
         return super().get(k.lower(), default)
+
+
+SOME_OBJ = object()
+class RequestParams:
+    _post = None
+    _get = None
+    _cookies = None
+
+
+    def __init__(self):
+        self._get = {} # empty params by default
+
+    #searches in post and get
+    def get(self, key, default=None):
+        val = SOME_OBJ
+        #try post params first
+        if(self._post):
+            val = self._post.get(key, SOME_OBJ)
+        #try get param next
+        if(val == SOME_OBJ and self._get):
+            val = self._get.get(key, SOME_OBJ)
+        if(val == SOME_OBJ):
+            return default
+        return val
+
+    def __setitem__(self, key, val):
+        self._get[key] = val
+
+    def __getitem__(self, key):
+        ret = self.get(key, SOME_OBJ)
+        if(ret == SOME_OBJ):
+            raise LookupError()
+        return ret
+
+    def __getattr__(self, key):
+        ret = self.get(key, SOME_OBJ)
+        if(ret == SOME_OBJ):
+            raise AttributeError()
+        return ret
+
+    def update(self, more_params):
+        self._get.update(more_params)
+
+    def GET(self, key, default=None):
+        return self._get.get(key, default)
+
+    def POST(self, key, default=None):
+        if(self._post):
+            return self._post.get(key, default)
+        return None
+
+    def COOKIES(self, key):
+        return self._cookies.get(key)
 
 
 #contains all running apps
@@ -222,11 +278,11 @@ class App:
                 if(fargs):
                     ret = func(*fargs , **kwargs)
                 else:
-                    ret = func(**kwargs)  
+                    ret = func(**kwargs)
                 
                 break
             
-        status = response_headers = body = None        
+        status = response_headers = body = None
         if(ret != None):
             if(isinstance(ret, tuple)):
                 l = len(ret)
@@ -293,16 +349,21 @@ class App:
             if(not request_line):
                 return
             post_data = None
-            request_params = {}
+            request_params = RequestParams()
             cur_millis = int(1000 * time.time())
             request_type = None
             request_path = None
             headers = None
             try:
-                request_type , request_path , http_version = request_line.decode("utf-8").split(" ")
+                request_line = request_line.decode("utf-8")
+                request_type, _request_line = request_line.split(" ", 1)
+                _http_protocol_index = _request_line.rfind(" ")
+                request_path = _request_line[: _http_protocol_index]
+                http_version = _request_line[_http_protocol_index + 1:]
+
                 query_start_index = request_path.find("?")
                 if(query_start_index != -1):
-                    request_params = parse_qs_modified(request_path[query_start_index + 1:])
+                    request_params._get = parse_qs_modified(request_path[query_start_index + 1:])
                     request_path = request_path[:query_start_index]
             
                 headers = LowerKeyDict()
@@ -324,7 +385,7 @@ class App:
                             if(not bts):
                                 break
                             post_data.extend(bts)
-                        #request_params.update(urlparse.parse_qs(str(post_data)))
+                        #request_params._get.update(urlparse.parse_qs(str(post_data)))
                 ##app specific headers
                 ret = status = response_headers = body = None
                 for handler in self.request_handlers:
@@ -343,11 +404,10 @@ class App:
                             _temp = cookie_header.strip().decode().split(";")
                             for i in _temp:
                                 decoded_cookies.update(parse_qs_modified(i.strip()))
-                        request_params["__cookies"] = decoded_cookies
+                        request_params._cookies = decoded_cookies
                         #process cookies end
 
-                        if(post_data):
-                            kwargs["post_data"] = post_data
+                        request_params._post = post_data
 
                         fargs = args.groups()
                         if(fargs):
@@ -423,7 +483,13 @@ class App:
                 stracktrace_string = traceback.format_exc()
                 body = None
                 if(config.server_error_page):
-                    body = config.server_error_page(request_type, request_path, request_params, headers, stracktrace_string=stracktrace_string)
+                    body = config.server_error_page(
+                        request_type,
+                        request_path,
+                        request_params,
+                        headers,
+                        stracktrace_string=stracktrace_string
+                    )
                 if(not body):
                     body = b'Internal server error'
                 write_data(socket,
