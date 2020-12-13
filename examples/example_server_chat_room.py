@@ -29,7 +29,7 @@ from blaster.common_funcs_and_datastructures import cur_ms
 import gevent
 from gevent.time import sleep
 import urllib
-from elasticsearch.client.utils import query_params
+from elasticsearch.client.utils import request_params
 
 
 
@@ -83,8 +83,8 @@ def need_user(func):
 	
 def decode_user(func):
 	def new_func(sock, *args , **kwargs):
-		query_params = kwargs.get("query_params",None)
-		auth_key = query_params.get("auth_key", None)
+		request_params = kwargs.get("request_params",None)
+		auth_key = request_params.get("auth_key", None)
 		if(not auth_key):
 			#try reading from headers
 			headers =  kwargs.get("headers",None)
@@ -142,7 +142,7 @@ def update_stats_on_main():
 @route_handler('^/get_sessions')
 @decode_user
 @need_user
-def get_sessions(sock ,query_params=None, headers=None, post_data=None, user=None):
+def get_sessions(sock ,request_params=None, headers=None, post_data=None, user=None):
 	recent_sessions = public_sessions.cache.items()[:-100]
 	return {"type": TYPE_SESSIONS, "sessions":  [session_obj for session_id, session_obj in recent_sessions]  } 
 
@@ -151,8 +151,8 @@ def get_sessions(sock ,query_params=None, headers=None, post_data=None, user=Non
 @route_handler('^/get_session/(.*)')
 @decode_user
 @need_user
-def get_session(sock, session_id, query_params=None, headers=None, post_data=None, user=None):
-	session_id = query_params.get("session_id", session_id)
+def get_session(sock, session_id, request_params=None, headers=None, post_data=None, user=None):
+	session_id = request_params.get("session_id", session_id)
 	session = None
 	if(session_id and session_id.startswith("private__")):
 		session = private_sessions.cache.get(session_id,None)#returns empty string
@@ -162,7 +162,7 @@ def get_session(sock, session_id, query_params=None, headers=None, post_data=Non
 	if(session):
 		return {"type": TYPE_SESSION , "session" : session }
 	else:
-		return create_new_session._original(sock, query_params, headers, post_data, user, session_id=session_id)
+		return create_new_session._original(sock, request_params, headers, post_data, user, session_id=session_id)
 		
 	return {"type": TYPE_ERROR, "error_message": "not found"} #empty body
 
@@ -170,7 +170,7 @@ def get_session(sock, session_id, query_params=None, headers=None, post_data=Non
 @route_handler('^/update_session_data')
 @decode_user
 @need_user
-def update_session_data(sock, session_id, query_params=None, headers=None, post_data=None, user=None):
+def update_session_data(sock, session_id, request_params=None, headers=None, post_data=None, user=None):
 	if(user["user_id"] != "internal"):
 		return {"type": TYPE_ERROR, "error_message": "not authorized"} #empty body
 	if(session_id):
@@ -182,7 +182,7 @@ def update_session_data(sock, session_id, query_params=None, headers=None, post_
 @route_handler('^/send_session_message/(.*)')
 @decode_user
 @need_user
-def send_session_message(sock, session_id, query_params=None, headers=None, post_data=None, user=None):
+def send_session_message(sock, session_id, request_params=None, headers=None, post_data=None, user=None):
 	if(user["user_id"] != "internal"):
 		return {"type": TYPE_ERROR, "error_message": "not authorized"} #empty body
 	
@@ -227,8 +227,8 @@ def send_session_message(sock, session_id, query_params=None, headers=None, post
 @route_handler('^/update_server_stats')
 @decode_user
 @need_user
-def update_server_stats(sock, query_params=None, headers=None, post_data=None, user=None):
-	server_addr = urllib.request.unquote(query_params.get("server_addr", None))
+def update_server_stats(sock, request_params=None, headers=None, post_data=None, user=None):
+	server_addr = urllib.request.unquote(request_params.get("server_addr", None))
 	if(user["user_id"] == "internal"):
 		server_info = json.loads(post_data.decode())
 		server_info["last_updated"] = cur_ms()
@@ -243,11 +243,11 @@ def update_server_stats(sock, query_params=None, headers=None, post_data=None, u
 @process_post_params
 @decode_user
 @need_user
-def create_new_session(sock, query_params=None, headers=None, post_data=None, user=None, session_id=None):
+def create_new_session(sock, request_params=None, headers=None, post_data=None, user=None, session_id=None):
 	#create on some random server a
-	description = query_params.get("description", None)
-	image = query_params.get("image", None)
-	is_public = query_params.get("is_public", "true")
+	description = request_params.get("description", None)
+	image = request_params.get("image", None)
+	is_public = request_params.get("is_public", "true")
 	available_servers = []
 	for i, server in servers.cache.items():
 		if(server["load"]< 1 and server["last_updated"] > cur_ms() - 10*60*1000):#updates less than 10 minutes
@@ -288,7 +288,7 @@ session_data = LRUCache(10000)
 @route_handler('^/after_new_session_created')
 @decode_user
 @need_user
-def after_new_session_created(sock,query_params=None, headers=None, post_data=None, user=None):
+def after_new_session_created(sock,request_params=None, headers=None, post_data=None, user=None):
 	if(user["user_id"]!="internal"):
 		return {"type": TYPE_ERROR, "error_message": "invalid user"} #empty body
 	
@@ -306,8 +306,8 @@ def after_new_session_created(sock,query_params=None, headers=None, post_data=No
 
 @route_handler('^/create_or_update_user')
 @decode_user
-def create_or_update_user(sock,query_params=None, headers=None, post_data=None, user=None):
-	user_name = query_params.get("name", None) or get_random_name()
+def create_or_update_user(sock,request_params=None, headers=None, post_data=None, user=None):
+	user_name = request_params.get("name", None) or get_random_name()
 	user_id = None
 	if(user):
 		user_id = user["user_id"]
@@ -317,8 +317,8 @@ def create_or_update_user(sock,query_params=None, headers=None, post_data=None, 
 @route_handler('^/join_session/(.*)')
 @decode_user
 @need_user
-def join_session(sock, session_id, query_params=None, headers=None, post_data=None, user=None):
-	session_id = session_id or query_params.get("session_id", None)
+def join_session(sock, session_id, request_params=None, headers=None, post_data=None, user=None):
+	session_id = session_id or request_params.get("session_id", None)
 	session_obj = session_data.exists(session_id)
 	if(not session_obj):
 		return {"type": TYPE_ERROR, "error_message": "not found"} #empty body

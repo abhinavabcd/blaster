@@ -201,6 +201,20 @@ class Model(object):
 
 				super(DictObj, this).__setitem__(k, v)
 
+			def pop(this, k, default=None):
+				#not in initializing mode
+				popped_val = super(DictObj, this).pop(k, SOME_OBJ)
+				if(popped_val == SOME_OBJ):
+					popped_val = default
+				#if not initializing and has value set remove it form mongo
+				elif(not _initializing):
+					new_path = path + "." + str(k)
+					_unset = self._other_query_updates.get("$unset")
+					if(not _unset):
+						_unset = self._other_query_updates["$unset"] = {}
+					_unset[new_path] = ""
+
+				return popped_val
 
 		ret = DictObj(**_obj)
 		_initializing = False

@@ -15,8 +15,11 @@ import socket
 import struct
 import gevent
 import fcntl
+import html
 
 from gevent.lock import BoundedSemaphore
+from gevent.fileobject import FileObject
+from gevent.socket import wait_read
 from collections import namedtuple
 from datetime import timezone
 from datetime import datetime
@@ -34,11 +37,14 @@ from queue import Queue
 from threading import Thread
 import traceback
 
-from gevent.socket import wait_read
 from . import config
 from .websocket._core import WebSocket
 from .config import IS_DEBUG
+from .utils.xss_html import XssHtml
 from .utils.phone_number_utils import PhoneNumberObj
+
+
+SOME_OBJ = object()
 
 def cur_ms():
 	return int(1000 * time.time())
@@ -493,6 +499,15 @@ def de_normalize(id1):
 		return '0'
 	return id1[i:]
 
+def set_non_blocking(fd):
+	"""
+	Set the file description of the given file descriptor to non-blocking.
+	"""
+	flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+	flags = flags | os.O_NONBLOCK
+	fcntl.fcntl(fd, fcntl.F_SETFL, flags)
+
+
 #generic thread pool to submit tasks which will be
 #picked up wokers and processed
 class Worker(Thread):
@@ -536,6 +551,85 @@ class ThreadPool:
 		self.tasks.join()
 
 
+##### custom containers ##########
+#SanitizedList and SanitizedDict are used for HTML safe operation
+class SanitizedList(list):
+	def __getitem__(self, k):
+		val = super().__getitem__(k)
+		if(isinstance(val, str)):
+			return html.escape(val)
+		return val
+
+	def append(self, val):
+		if(isinstance(val, dict)):
+			new_val = SanitizedDict()
+			for k, v in val.items():
+				new_val[k] = v # calls __setitem__ nested way
+			super().append(new_val)
+
+		elif(isinstance(val, list)):
+			new_val = SanitizedList()
+			for i in val:
+				new_val.append(i)
+			super().append(new_val)
+		else:
+			super().append(val)
+
+def make_xss_safe(html):
+	parser = XssHtml()
+	parser.feed(html)
+	parser.close()
+	return parser.getHtml()
+
+
+#intercepts all values setting and
+class SanitizedDict(dict):
+	#can pass escape_html=false if you want raw data
+	def get(self, key, default=None, **kwargs):
+		try:
+			val = self.__getitem__(key, **kwargs)
+			return val
+		except KeyError:
+			return default
+
+	#always html sanitized by default
+	def __getitem__(self, k, escape_html=True):
+		val = super().__getitem__(k)
+		if(isinstance(val, str)):
+			if(escape_html):
+				return html.escape(val)
+		return val
+
+	#assignment eq(=) operator, nested resanitize
+	def __setitem__(self, key, val):
+		if(isinstance(val, dict)):
+			new_val = SanitizedDict()
+			for k, v in val.items():
+				new_val[k] = v # calls __setitem__ nested way
+			super().__setitem__(key, new_val)
+
+		elif(isinstance(val, list)):
+			new_val = SanitizedList()
+			for i in val:
+				new_val.append(i)
+			super().__setitem__(key, new_val)
+		else:
+			super().__setitem__(key, val)
+
+	def update(self, another):
+		for k, v in another.items():
+			#calls __setitem__ again
+			self[k] = v
+
+
+class LowerKeyDict(dict):
+	def __getitem__(self, k):
+		return super().__getitem__(k.lower())
+
+	def get(self, k, default=None):
+		return super().get(k.lower(), default)
+
+
 # milli seconds
 # TCP_USER_TIMEOUT kernel setting
 _tcp_user_timeout = 30 * 1000
@@ -556,7 +650,6 @@ def set_socket_options(sock):
 
 #wraps send method of websocket which keeps a buffer of messages for 20 seconds
 #if the connection closes
-
 class WebsocketConnection(WebSocket):
 	queue = None# to keep track of how many greenlets are waiting on semaphore to send 
 	msg_assumed_sent = None# queue for older sent messages in case of reset we try to retransmit
@@ -663,7 +756,7 @@ def static_file_handler(_base_folder_path_, default_file_path="index.html", file
 	cached_file_data = {}
 	gevent_lock = Lock()
 
-	def file_handler(sock, path, query_params=None, headers=None, post_data=None):
+	def file_handler(sock, path, request_params=None, headers=None, post_data=None):
 		if(not path):
 			path = default_file_path
 		#from given base_path
@@ -673,7 +766,7 @@ def static_file_handler(_base_folder_path_, default_file_path="index.html", file
 
 		if(not file_data or time.time() * 1000 - file_data[2] > 1000 if IS_DEBUG else 2 * 60 * 1000): # 1 millis
 			gevent_lock.acquire()
-			file_hash_key = path + urlencode(query_params._get)[:400]
+			file_hash_key = path + urlencode(request_params._get)[:400]
 			file_data = cached_file_data.get(file_hash_key, None)
 			if(not file_data or time.time() * 1000 - file_data[2] > 1000): # 1 millis
 				#put a lock here
@@ -691,7 +784,7 @@ def static_file_handler(_base_folder_path_, default_file_path="index.html", file
 				except Exception as ex:
 					if(file_not_found_page_cb):
 						file_data = (
-										file_not_found_page_cb(path, query_params=None, headers=None, post_data=None),
+										file_not_found_page_cb(path, request_params=None, headers=None, post_data=None),
 										None,
 										time.time() * 1000
 									)
@@ -705,75 +798,61 @@ def static_file_handler(_base_folder_path_, default_file_path="index.html", file
 	
 	return file_handler
 
-
 def run_shell(cmd, output_parser=None, interactive=True, shell=False, max_buf=5000):
-	class Object(object):
-		pass
 
-	state = Object()
+	state = DummyObject()
 	state.total_output = ""
 	state.total_err = ""
 
-	def connect_input(input_file):
+	#connects stdin to process input
+	def connect_input(proc_in):
 		while(state.is_running):
-			wait_read(sys.stdin.fileno())
-			user_inp = sys.stdin.readline()
-			input_file.write(user_inp.encode())
-			try:
-				input_file.flush()
-			except Exception:
-				pass
+			if(gevent.select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], [])):
+				user_inp = sys.stdin.read(1024)
+				try:
+					proc_in.write(user_inp)
+					proc_in.flush()
+				except Exception as ex:
+					print("flushing proc_in exception", str(ex), flush=True)
 
 	#keep parsing output
-	def process_output(out_file, input_file):
+	def process_output(proc_out, proc_in):
 		while(state.is_running):
-			try:
-				wait_read(out_file.fileno())
-				_out = out_file.read(1024)
-				_out = _out.decode()
-				if(_out == ''): # file closed
-					break
-				state.total_output += _out
-				if(len(state.total_output) > max_buf):
-					state.total_output = state.total_output[-max_buf:]
+			_out = proc_out.read(1024)
+			if(not _out):
+				break
+			#add to our input
+			state.total_output += _out
+			if(len(state.total_output) > max_buf):
+				state.total_output = state.total_output[-max_buf:]
 
-				if(output_parser):
-					#parse the output and if it returns something
-					#we write that to input file(generally stdin)
-					_inp = output_parser(state.total_output, state.total_err)
-					if(_inp):
-						input_file.write(_inp)
-				else:
-					print(_out, end="", flush=True)
-			except Exception as ex:
-				print(ex, end="", flush=True)
+			if(output_parser):
+				#parse the output and if it returns something
+				#we write that to input file(generally stdin)
+				_inp = output_parser(state.total_output, state.total_err)
+				if(_inp):
+					proc_in.write(_inp)
+			else:
+				print(_out, end="", flush=True)
 
-	def print_stderr(err_file, input_file):
+	def process_error(proc_err, proc_in):
 		while(state.is_running):
-			try:
-				wait_read(err_file.fileno())
-				_err = err_file.read(1024)
-				_err = _err.decode()
-				if(_err == ''): # file closed
-					break
-				state.total_err += _err
-				if(len(state.total_err) > max_buf):
-					state.total_err = state.total_err[-max_buf:]
+			_err = proc_err.read(1024)
+			if(not _err):
+				break
+			#add to our input
+			state.total_err += _err
+			if(len(state.total_err) > max_buf):
+				state.total_err = state.total_output[-max_buf:]
+			if(output_parser):
+				#parse the output and if it returns something
+				#we write that to input file(generally stdin)
+				_inp = output_parser(state.total_output, state.total_err)
+				if(_inp):
+					proc_in.write(_inp)
+			else:
+				print(_err, end="", flush=True)
 
-				if(output_parser):
-					#parse the error message and if it returns something
-					#we write that to inputfile to automate
-					_inp = output_parser(state.total_output, state.total_err)
-					if(_inp):
-						input_file.write(_inp)
-				else:
-					print(_err, end="", flush=True)
-			except Exception as ex:
-				print(ex, end="", flush=True)
-
-	input_reader_thread = None
-	output_parser_thread = None
-	error_parser_thread = None
 	
 	if(isinstance(cmd, str) and not shell):
 		cmd = shlex.split(cmd)
@@ -782,23 +861,49 @@ def run_shell(cmd, output_parser=None, interactive=True, shell=False, max_buf=50
 		stdin=subprocess.PIPE,
 		stdout=subprocess.PIPE,
 		stderr=subprocess.PIPE,
-		shell=shell
+		shell=shell,
+		env=os.environ.copy()
 	)
 	state.is_running = True
-	#keep reading input from stdin ?
+
+	proc_stdin = FileObject(proc.stdin)
+	proc_stdout = FileObject(proc.stdout)
+	proc_stderr = FileObject(proc.stderr)
+	set_non_blocking(sys.stdin.fileno())
+	input_reader_thread = None
 	if(interactive):
-		input_reader_thread = gevent.spawn(connect_input, proc.stdin)
+		input_reader_thread = None # gevent.spawn(connect_input, proc_stdin)
 	#process output
-	output_parser_thread = gevent.spawn(process_output, proc.stdout, proc.stdin)
+	output_parser_thread = gevent.spawn(
+		process_output,
+		proc_stdout,
+		proc_stdin
+	)
+	err_parser_thread = gevent.spawn(
+		process_error,
+		proc_stderr,
+		proc_stdin
+	)
+
 	#just keep printing error
-	error_parser_thread = gevent.spawn(print_stderr, proc.stderr, proc.stdin)
+	#wait for process to terminate
+	
+	state.return_code = proc.wait()
+	state.is_running = False
+	
+	if(input_reader_thread):
+		input_reader_thread.join()
+	output_parser_thread.join()
+	err_parser_thread.join()
+	return state
+
 	#wait for process to terminate
 	proc.wait()
 	state.is_running = False
 	state.return_code = proc.returncode
 	if(input_reader_thread):
-		input_reader_thread.kill()
+		input_reader_thread.join()
 
-	output_parser_thread.kill()
-	error_parser_thread.kill()
+	output_parser_thread.join()
+	err_parser_thread.join()
 	return state

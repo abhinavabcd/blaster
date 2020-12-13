@@ -103,7 +103,7 @@ class Query(object):
         self.Limit = None
         self.scaned_count = 0
         self.count = 0
-        self.query_params = {}
+        self.request_params = {}
         self.filter_args = []   # filter expression args
         self.filter_index_field = None  # index field name
         self.use_index_type = 0 #0=>primary, 1=>local secondary, 2=>global
@@ -121,13 +121,13 @@ class Query(object):
     def start_key_str(self, _str):
         if(_str):
             self.ExclusiveStartKey = json.loads(_str)
-            self.query_params['ExclusiveStartKey'] = self.ExclusiveStartKey
+            self.request_params['ExclusiveStartKey'] = self.ExclusiveStartKey
         return self
     
     def start_key(self, cursor=None):
         if(cursor):
             self.ExclusiveStartKey = cursor
-            self.query_params['ExclusiveStartKey'] = self.ExclusiveStartKey
+            self.request_params['ExclusiveStartKey'] = self.ExclusiveStartKey
         return self
     
 
@@ -201,8 +201,8 @@ class Query(object):
             params['ConsistentRead'] = self.ConsistentRead
         if self.ReturnConsumedCapacity:
             params['ReturnConsumedCapacity'] = self.ReturnConsumedCapacity
-        self.query_params.update(params)
-        return self.query_params
+        self.request_params.update(params)
+        return self.request_params
 
     def where(self, *args):
         # Find by any number of matching criteria... though presently only
@@ -212,7 +212,7 @@ class Query(object):
 
     def limit(self, limit):
         self.Limit = limit
-        self.query_params['Limit'] = limit
+        self.request_params['Limit'] = limit
         return self
 
     def _get_item_params(self):
@@ -249,17 +249,17 @@ class Query(object):
                 raise FieldValidationException('index not found')
             self.filter_index_field = name
             if index_name:
-                self.query_params['IndexName'] = index_name
-            self.query_params['ScanIndexForward'] = asc
+                self.request_params['IndexName'] = index_name
+            self.request_params['ScanIndexForward'] = asc
             self.use_index_type = 1
         elif isinstance(index_field_or_name, str):
-            self.query_params['IndexName'] = index_field_or_name
-            self.query_params['ScanIndexForward'] = asc
+            self.request_params['IndexName'] = index_field_or_name
+            self.request_params['ScanIndexForward'] = asc
             index_name = self.model_class._global_indexes.get(index_field_or_name)
             if(index_name):
                 self.use_index_type = 2
         elif(index_field_or_name==None):
-            self.query_params['ScanIndexForward'] = asc
+            self.request_params['ScanIndexForward'] = asc
  
         return self
 
@@ -271,7 +271,7 @@ class Query(object):
         else:
             return
         result_count = 0
-        response = func(**self.query_params)
+        response = func(**self.request_params)
         while True:
             metadata = response.get('ResponseMetadata', {})
             for item in response['Items']:
@@ -281,8 +281,8 @@ class Query(object):
                     return
             LastEvaluatedKey = response.get('LastEvaluatedKey')
             if LastEvaluatedKey:
-                self.query_params['ExclusiveStartKey'] = LastEvaluatedKey
-                response = func(**self.query_params)
+                self.request_params['ExclusiveStartKey'] = LastEvaluatedKey
+                response = func(**self.request_params)
             else:
                 break
 
@@ -300,7 +300,7 @@ class Query(object):
             #return self._yield_all('scan', db)
         else:
             func = getattr(Table(self.instance, db), 'query')
-        response = func(**self.query_params)
+        response = func(**self.request_params)
         items = response['Items']
         results = []
         for item in items:
