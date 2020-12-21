@@ -5,10 +5,12 @@ Created on 19-Jan-2018
 '''
 
 
+import urllib3
+import json
 from elasticsearch import Elasticsearch, RequestsHttpConnection
 from requests_aws4auth.aws4auth import AWS4Auth
-from .config import aws_config, es_aws_host, es_http_host
-import urllib3
+from .config import aws_config, es_aws_host, es_http_host, IS_DEBUG
+from .common_funcs_and_datastructures import cur_ms
 urllib3.disable_warnings()
 
 es_conn = None
@@ -28,21 +30,32 @@ elif(es_aws_host):
                 connection_class=RequestsHttpConnection
     )
 
+#es_indexes_to_create = [{"index": name, "mapping": {}, "config": {}}...]
+def create_indexes_and_mappings(es_indexes_to_create, recreate_indexes=False):
+    #create items index
+    #create communities index
+    for index_to_create in es_indexes_to_create:
+        index = index_to_create["index"]
+        index_config = index_to_create.get("config")
+        if(not index_config):
+            index_config = {
+                "settings": {
+                    "number_of_shards": 1,
+                    "number_of_replicas": 1,
+                    "index.requests.cache.enable": True
+                }
+            }
 
-def create_indexes_and_mappings(index_name, index_config=None, recreate_index=False, mappings = None):
-    if recreate_index:
-        es_conn.indices.delete(index_name, ignore=[400, 404])
-        
-        
-    index_config = index_config or {
-        "settings": {
-            "number_of_shards": 5,
-            "number_of_replicas": 1,
-            "index.requests.cache.enable": False
+        index_config["mappings"] = {
+            "data": {
+                "properties" : index_to_create["mappings"]
+            }
         }
-    }
-    
-    if(mappings):
-        index_config["mappings"] = mappings
-    
-    return es_conn.indices.create(index=index_name, body=index_config, ignore=400)
+
+        if(recreate_indexes):
+            if(not isinstance(recreate_indexes, list) or (index in recreate_indexes)):
+                es_conn.indices.delete(index, ignore=[400, 404])
+
+
+        ret = es_conn.indices.create(index=index, body=index_config, ignore=400)
+        IS_DEBUG and print("es_index_create", cur_ms(), {"index": index, "status": ret})

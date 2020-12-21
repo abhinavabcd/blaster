@@ -812,7 +812,16 @@ class Connection:
 
 		# ensure indexes created and all collections loaded to memory
 		#Ex: _index_ = [( (a, ASCENDING), (b, DESCENDING), {"unique": False})]
-		_model_indexes = getattr(Model, "_index_", [])
+		_model_primary_indexes = getattr(Model, "_primary_index_", None) or []
+		if(not _model_primary_indexes):
+			#if there are no primary indexes default is _id
+			_model_primary_indexes = [('_id',)]
+		#secondary indexes
+		_model_secondary_indexes = getattr(Model, "_secondary_index_", None) or []
+
+		#we create a single list and pass through all indexes and create primary/secondary
+		#automatically
+		_model_indexes = _model_primary_indexes + _model_secondary_indexes
 		# You can specify simple shard key or we take first unique index as the shard_key
 		Model._shard_key_ = None
 		Model._secondary_shards_ = {}
@@ -891,11 +900,12 @@ class Connection:
 
 			#check for indexes to ignore
 			ignore_index_creation = False
-			if(len(pymongo_index) == 1 and pymongo_index[0][0] == "_id"):
+			if(pymongo_index[0][0] == "_id"):
 				ignore_index_creation = True
 
 			#create the actual index
 			if(not ignore_index_creation):
+				IS_DEBUG and print("#MONGO: creating_indexes", pymongo_index, mongo_index_args)
 				_pymongo_indexes_to_create.append((pymongo_index, mongo_index_args))
 
 		# but if nothing was specified we set the default _id
@@ -926,7 +936,8 @@ class Connection:
 				raise Exception("Cannot have secondary shard keys for non unique indexes! %s"%(Model,))
 
 			class_attrs = {
-				"_index_": _seconday_shard.indexes,
+				"_primary_index_": _seconday_shard.indexes,
+				"_secondary_index_": None,
 				"_collection_name_": _model_collection_name_,
 				"_is_secondary_shard": True
 			}

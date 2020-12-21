@@ -156,7 +156,6 @@ def deserialize_post_data(post_data_bytes, headers):
 					"part_headers": part.headers
 				}
 
-
 	else:
 		post_data_str = post_data_bytes.decode('utf-8')
 		if(post_data_str[0] == '{'
@@ -180,14 +179,15 @@ class RequestParams:
 		self._get = SanitizedDict() # empty params by default
 
 	#searches in post and get
-	def get(self, key, default=None):
+	def get(self, key, default=None, **kwargs):
 		val = SOME_OBJ
 		#try post params first
 		if(self._post):
-			val = self._post.get(key, SOME_OBJ)
+			val = self._post.get(key, default=SOME_OBJ, **kwargs)
 		#try get param next
 		if(val == SOME_OBJ and self._get):
-			val = self._get.get(key, SOME_OBJ)
+			val = self._get.get(key, default=SOME_OBJ, **kwargs)
+
 		if(val == SOME_OBJ):
 			return default
 		return val
@@ -196,30 +196,27 @@ class RequestParams:
 		self._get[key] = val
 
 	def __getitem__(self, key):
-		ret = self.get(key, SOME_OBJ)
+		ret = self.get(key, default=SOME_OBJ)
 		if(ret == SOME_OBJ):
 			raise LookupError()
 		return ret
 
 	def __getattr__(self, key):
-		ret = self.get(key, SOME_OBJ)
+		ret = self.get(key, default=SOME_OBJ)
 		if(ret == SOME_OBJ):
 			raise AttributeError()
 		return ret
 
-	def update(self, more_params):
-		self._get.update(more_params)
-
-	def GET(self, key=None, default=None):
+	def GET(self, key=None, **kwargs):
 		if(key == None):
 			return self._get
-		return self._get.get(key, default)
+		return self._get.get(key, **kwargs)
 
-	def POST(self, key=None, default=None):
+	def POST(self, key=None, **kwargs):
 		if(key == None):
 			return self._post
 		if(self._post):
-			return self._post.get(key, default)
+			return self._post.get(key, **kwargs)
 		return None
 
 	def COOKIES(self, key):
@@ -381,7 +378,6 @@ class App:
 							if(not bts):
 								break
 							post_data.extend(bts)
-						#request_params._get.update(urlparse.parse_qs(str(post_data)))
 				##app specific headers
 				ret = status = response_headers = body = None
 				for handler in self.request_handlers:
@@ -475,7 +471,7 @@ class App:
 				server_log("http" , request_type=request_type , path=request_path, wallclockms=int(1000 * time.time()) - cur_millis)
 
 			except Exception as ex:
-				stracktrace_string = traceback.format_exc()
+				stacktrace_string = traceback.format_exc()
 				body = None
 				if(config.server_error_page):
 					body = config.server_error_page(
@@ -483,7 +479,7 @@ class App:
 						request_path,
 						request_params,
 						headers,
-						stracktrace_string=stracktrace_string
+						stacktrace_string=stacktrace_string
 					)
 				if(not body):
 					body = b'Internal server error'
@@ -497,7 +493,7 @@ class App:
 				server_log("http_error",
 					cur_millis,
 					exception_str=str(ex),
-					stracktrace_string=stracktrace_string,
+					stacktrace_string=stacktrace_string,
 					query_params=request_params.to_dict()
 				)
 				if(config.IS_DEBUG):

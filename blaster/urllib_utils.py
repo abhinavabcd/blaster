@@ -15,10 +15,10 @@ from queue import Queue
 import time
 import ujson as json
 import six
+from .config import IS_DEBUG
 #enable any header format
 import http.client
 http.client._is_legal_header_name = re.compile(rb'[^\s][^:\r\n]*').fullmatch
-
 
 url_loaders_queue = Queue()
 
@@ -37,8 +37,8 @@ def get_url_loader(actual_func):
         try:
             url_loader = url_loaders_queue.get(block=False)
         except Exception as ex:
-            http_logger = urllib.request.HTTPHandler(debuglevel=0)
-            https_logger = urllib.request.HTTPSHandler(debuglevel=0)
+            http_logger = urllib.request.HTTPHandler(debuglevel=(1 if IS_DEBUG else 0))
+            https_logger = urllib.request.HTTPSHandler(debuglevel=(1 if IS_DEBUG else 0))
             url_loader = urllib.request.build_opener(http_logger, urllib.request.HTTPCookieProcessor(), urllib.request.ProxyHandler(), https_logger, urllib.request.HTTPRedirectHandler())
             urllib.request.install_opener(url_loader)
         
@@ -55,13 +55,14 @@ def get_url_loader(actual_func):
 
 '''returns Io'''
 @get_url_loader
-def get_data(url, post=None, headers={}, method=None, url_loader=None, as_string_buffer=True):
+def get_data(url, post=None, headers=None, method=None, url_loader=None, as_string_buffer=True):
+    headers = headers or {}
     headers['Accept-encoding'] = 'gzip'
     ret = None
     try:
         if(post and isinstance(post, six.text_type)):
             post = post.encode()
-        req = urllib.request.Request(url, post, headers)
+        req = urllib.request.Request(url, data=post, headers=headers)
         if(method != None):
             req.get_method = lambda : method
         ret = url_loader.open(req)
@@ -73,16 +74,17 @@ def get_data(url, post=None, headers={}, method=None, url_loader=None, as_string
                 decompressor = zlib.decompressobj()
                 ret = BytesIO(decompressor.decompress(ret2.read()))
             ret2.close()
+        #return as string
+        if(as_string_buffer):
+            return StringIO(ret.read().decode())
             
     except urllib.error.HTTPError as e:
         ret = None
         err_body = e.read()
-        print(-4 , int(time.time() * 1000), json.dumps({"err": str(e), "body": err_body.decode() if err_body else ""}))
+        print("error_http_fetch", int(time.time() * 1000), json.dumps({"err": str(e), "url": url, "body": err_body.decode() if err_body else ""}))
     except Exception as e:
         ret = None
-        print(-5 , int(time.time() * 1000), json.dumps({"err": str(e)}))
-    if(as_string_buffer):
-        return StringIO(ret.read().decode())
+        print("error_http_fetch_error" , int(time.time() * 1000), json.dumps({"err": str(e), "url": url}))
     return ret
 
 

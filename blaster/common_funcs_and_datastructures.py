@@ -550,15 +550,32 @@ class ThreadPool:
 		""" Wait for completion of all the tasks in the queue """
 		self.tasks.join()
 
+def make_xss_safe(_html):
+	if(not _html):
+		return _html
+	parser = XssHtml()
+	parser.feed(_html)
+	parser.close()
+	return parser.getHtml()
 
 ##### custom containers ##########
 #SanitizedList and SanitizedDict are used for HTML safe operation
+#the idea is to wrap them to sanitizeContainers while inserting
+#rather than retrieving
+
 class SanitizedList(list):
-	def __getitem__(self, k):
+	def __getitem__(self, k, escape_quotes=True, escape_html=True):
 		val = super().__getitem__(k)
 		if(isinstance(val, str)):
-			return html.escape(val)
+			if(escape_html):
+				return html.escape(val, quote=escape_quotes)
 		return val
+
+	def at(self, k, escape_quotes=True, escape_html=True):
+		self.__getitem__(k,
+			escape_quotes=escape_quotes,
+			escape_html=escape_html
+		)
 
 	def append(self, val):
 		if(isinstance(val, dict)):
@@ -574,30 +591,28 @@ class SanitizedList(list):
 			super().append(new_val)
 		else:
 			super().append(val)
-
-def make_xss_safe(html):
-	parser = XssHtml()
-	parser.feed(html)
-	parser.close()
-	return parser.getHtml()
-
+		#allow chaining
+		return self
 
 #intercepts all values setting and
 class SanitizedDict(dict):
 	#can pass escape_html=false if you want raw data
-	def get(self, key, default=None, **kwargs):
+	def get(self, key, default=None, escape_html=True, escape_quotes=True):
 		try:
-			val = self.__getitem__(key, **kwargs)
+			val = self.__getitem__(key,
+				escape_html=escape_html,
+				escape_quotes=escape_quotes
+			)
 			return val
 		except KeyError:
 			return default
 
 	#always html sanitized by default
-	def __getitem__(self, k, escape_html=True):
+	def __getitem__(self, k, escape_html=True, escape_quotes=True):
 		val = super().__getitem__(k)
 		if(isinstance(val, str)):
 			if(escape_html):
-				return html.escape(val)
+				return html.escape(val, quote=escape_quotes)
 		return val
 
 	#assignment eq(=) operator, nested resanitize
@@ -620,6 +635,8 @@ class SanitizedDict(dict):
 		for k, v in another.items():
 			#calls __setitem__ again
 			self[k] = v
+		#allow chaining
+		return self
 
 
 class LowerKeyDict(dict):
