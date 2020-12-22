@@ -563,7 +563,7 @@ def make_xss_safe(_html):
 #the idea is to wrap them to sanitizeContainers while inserting
 #rather than retrieving
 
-class SanitizedList(list):
+class SanitizedSetterGetter(object):
 	def __getitem__(self, k, escape_quotes=True, escape_html=True):
 		val = super().__getitem__(k)
 		if(isinstance(val, str)):
@@ -571,11 +571,43 @@ class SanitizedList(list):
 				return html.escape(val, quote=escape_quotes)
 		return val
 
+	def __setitem__(self, key, val):
+		if(isinstance(val, dict)):
+			new_val = SanitizedDict()
+			for k, v in val.items():
+				new_val[k] = v # calls __setitem__ nested way
+			super().__setitem__(key, new_val)
+
+		elif(isinstance(val, list)):
+			new_val = SanitizedList()
+			for i in val:
+				new_val.append(i)
+			super().__setitem__(key, new_val)
+		else:
+			super().__setitem__(key, val)
+
+class SanitizedList(SanitizedSetterGetter, list):
+
+	def __iter__(self):
+		#unoptimized but for this it's okay, always returns sanitized one
+		def sanitized(val):
+			if(isinstance(val, str)):
+				return html.escape(val, quote=True)
+			return val
+		return map(sanitized, list.__iter__(self))
+
 	def at(self, k, escape_quotes=True, escape_html=True):
 		self.__getitem__(k,
 			escape_quotes=escape_quotes,
 			escape_html=escape_html
 		)
+
+	def extend(self, _list):
+		for val in _list:
+			#calls __setitem__ again
+			self.append(val)
+		#allow chaining
+		return self
 
 	def append(self, val):
 		if(isinstance(val, dict)):
@@ -595,7 +627,7 @@ class SanitizedList(list):
 		return self
 
 #intercepts all values setting and
-class SanitizedDict(dict):
+class SanitizedDict(SanitizedSetterGetter, dict):
 	#can pass escape_html=false if you want raw data
 	def get(self, key, default=None, escape_html=True, escape_quotes=True):
 		try:
@@ -607,29 +639,14 @@ class SanitizedDict(dict):
 		except KeyError:
 			return default
 
-	#always html sanitized by default
-	def __getitem__(self, k, escape_html=True, escape_quotes=True):
-		val = super().__getitem__(k)
-		if(isinstance(val, str)):
-			if(escape_html):
-				return html.escape(val, quote=escape_quotes)
-		return val
-
-	#assignment eq(=) operator, nested resanitize
-	def __setitem__(self, key, val):
-		if(isinstance(val, dict)):
-			new_val = SanitizedDict()
-			for k, v in val.items():
-				new_val[k] = v # calls __setitem__ nested way
-			super().__setitem__(key, new_val)
-
-		elif(isinstance(val, list)):
-			new_val = SanitizedList()
-			for i in val:
-				new_val.append(i)
-			super().__setitem__(key, new_val)
-		else:
-			super().__setitem__(key, val)
+	def items(self):
+		#unoptimized but for this it's okay, always returns sanitized one
+		def sanitized(key_val):
+			key, val = key_val
+			if(isinstance(val, str)):
+				return (key, html.escape(val, quote=True))
+			return key_val
+		return map(sanitized, dict.items(self))
 
 	def update(self, another):
 		for k, v in another.items():
@@ -815,22 +832,11 @@ def static_file_handler(_base_folder_path_, default_file_path="index.html", file
 	
 	return file_handler
 
-def run_shell(cmd, output_parser=None, interactive=True, shell=False, max_buf=5000):
+def run_shell(cmd, output_parser=None, shell=False, max_buf=5000):
 
 	state = DummyObject()
 	state.total_output = ""
 	state.total_err = ""
-
-	#connects stdin to process input
-	def connect_input(proc_in):
-		while(state.is_running):
-			if(gevent.select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], [])):
-				user_inp = sys.stdin.read(1024)
-				try:
-					proc_in.write(user_inp)
-					proc_in.flush()
-				except Exception as ex:
-					print("flushing proc_in exception", str(ex), flush=True)
 
 	#keep parsing output
 	def process_output(proc_out, proc_in):
@@ -860,7 +866,7 @@ def run_shell(cmd, output_parser=None, interactive=True, shell=False, max_buf=50
 			#add to our input
 			state.total_err += _err
 			if(len(state.total_err) > max_buf):
-				state.total_err = state.total_output[-max_buf:]
+				state.total_err = state.total_err[-max_buf:]
 			if(output_parser):
 				#parse the output and if it returns something
 				#we write that to input file(generally stdin)
@@ -886,10 +892,6 @@ def run_shell(cmd, output_parser=None, interactive=True, shell=False, max_buf=50
 	proc_stdin = FileObject(proc.stdin)
 	proc_stdout = FileObject(proc.stdout)
 	proc_stderr = FileObject(proc.stderr)
-	set_non_blocking(sys.stdin.fileno())
-	input_reader_thread = None
-	if(interactive):
-		input_reader_thread = None # gevent.spawn(connect_input, proc_stdin)
 	#process output
 	output_parser_thread = gevent.spawn(
 		process_output,
@@ -904,23 +906,10 @@ def run_shell(cmd, output_parser=None, interactive=True, shell=False, max_buf=50
 
 	#just keep printing error
 	#wait for process to terminate
-	
-	state.return_code = proc.wait()
+	ret_code = proc.wait()
+	state.return_code = ret_code
 	state.is_running = False
 	
-	if(input_reader_thread):
-		input_reader_thread.join()
-	output_parser_thread.join()
-	err_parser_thread.join()
-	return state
-
-	#wait for process to terminate
-	proc.wait()
-	state.is_running = False
-	state.return_code = proc.returncode
-	if(input_reader_thread):
-		input_reader_thread.join()
-
 	output_parser_thread.join()
 	err_parser_thread.join()
 	return state

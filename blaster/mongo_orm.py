@@ -7,7 +7,7 @@ from itertools import chain
 from collections import OrderedDict
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
-from pymongo import ReturnDocument
+from pymongo import ReturnDocument, ReadPreference
 from .common_funcs_and_datastructures import jump_hash, LRUCache
 from .config import IS_DEBUG
 
@@ -380,7 +380,7 @@ class Model(object):
 		cluster_nodes = _mongo_clusters[Model._cluster_]
 		return map(lambda _conn: _conn.get_collection(Model), cluster_nodes)
 
-	#give a shard key we return multiple connect
+	#give a shard key from query we return multiple connect
 	@classmethod
 	def get_collections_from_shard_key(cls, shard_key):
 		if(isinstance(shard_key, (str, int))):
@@ -498,6 +498,7 @@ class Model(object):
 		offset=None,
 		limit=None,
 		_no_requery=False,
+		read_preference=ReadPreference.PRIMARY,
 		**kwargs
 	):
 		queries = None
