@@ -351,6 +351,8 @@ class Model(object):
 			setattr(self, k, v)
 		self._initializing = False
 		self._original_doc = doc
+		#renew the pk!
+		self.pk(True)
 		cls.__cache__.set(self.pk_tuple(), self)
 
 	@classmethod
@@ -660,11 +662,12 @@ class Model(object):
 						_secondary_insert_values
 					)
 
-				self._id = _id
+				#set _id updates
+				self._id = self._set_query_updates["_id"] = _id
 				committed = True
 				# set original doc and custom dict and set fields
-				self.reinitialize_from_doc(self._set_query_updates)
-				cls.__cache__.set(self.pk_tuple(), self)
+				#copy the dict to another
+				self.reinitialize_from_doc(dict(self._set_query_updates))
 
 			except DuplicateKeyError as ex:
 
