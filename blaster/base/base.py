@@ -494,6 +494,7 @@ class App:
 					cur_millis,
 					exception_str=str(ex),
 					stacktrace_string=stacktrace_string,
+					path=request_path,
 					query_params=request_params.to_dict()
 				)
 				if(config.IS_DEBUG):

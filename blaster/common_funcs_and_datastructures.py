@@ -52,18 +52,38 @@ def cur_ms():
 
 #genetic LRU cache
 class LRUCache:
-	def __init__(self, capacity, items=None):
+	expire_after = None
+	cache = None
+	capacity = None
+
+	def __init__(self, capacity, items=None, expire_after=None):
 		self.capacity = capacity
 		self.cache = collections.OrderedDict(items or [])
+		#experimental field to expire data
+		#in addition to recentness of use
+		self.expire_after = expire_after
 
 	def exists(self, key):
 		return self.cache.get(key, None)
 		
 	def get(self, key, default=None):
 		try:
+			#remove and reinsert into
+			#ordered dict to move to recent
 			value = self.cache.pop(key)
-			self.cache[key] = value
-			return value
+			if(self.expire_after):
+				_time, _value = value
+				if(_time + self.expire_after < cur_ms()):
+					#item expired
+					IS_DEBUG and print("#LRU: expired in cache")
+					return default
+				self.cache[key] = value
+				#just return value instead of (time, data)
+				return _value
+			else:
+				#propagate it to top
+				self.cache[key] = value
+				return value
 		except KeyError:
 			return default
 
@@ -72,8 +92,12 @@ class LRUCache:
 		try:
 			self.cache.pop(key)
 		except KeyError:
+			#new entry so cleanup space if it's beyond capacity
 			while(len(self.cache) >= self.capacity):
 				removed_entries.append(self.cache.popitem(last=False))
+		if(self.expire_after):
+			#insert a tuple of timestamp instead of just value
+			value = (cur_ms(), value)
 		self.cache[key] = value
 		
 		return removed_entries
@@ -95,7 +119,7 @@ def to_son(obj):
 	ret = obj.__dict__
 	for k in ret.keys():
 		if(ret[k] == None):
-			del ret[k]            
+			del ret[k]
 	return ret
 
 

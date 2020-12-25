@@ -46,7 +46,8 @@ class Model(object):
 	_attrs = None
 	_pk_attrs = None
 
-	__cache__ = LRUCache(100)
+	#db values stale for max of 5 minutes
+	__cache__ = LRUCache(10000, expire_after=5 * 60 * 1000)
 	#instance level
 	__is_new = True
 	_set_query_updates = None
@@ -124,7 +125,7 @@ class Model(object):
 
 				#check already in cache
 				_item_in_cache = None
-				if(use_the_cache):
+				if(use_the_cache and cls.__cache__):
 					_item_in_cache = cls.__cache__.get(_pk_tuple)
 
 				if(not _item_in_cache):
@@ -338,11 +339,13 @@ class Model(object):
 		ret.pk(renew=True)
 		#important flag to indicat initiazation finished
 		ret._initializing = False
-		cls.__cache__.set(ret.pk_tuple(), ret)
+		if(cls.__cache__):
+			cls.__cache__.set(ret.pk_tuple(), ret)
 		return ret
 
 	def reinitialize_from_doc(self, doc):
 		cls = self.__class__
+		#remove existing pk_tuple in cache
 		cls.remove_from_cache(self)
 		self._initializing = True
 		for k, v in cls._attrs.items():
@@ -353,7 +356,8 @@ class Model(object):
 		self._original_doc = doc
 		#renew the pk!
 		self.pk(True)
-		cls.__cache__.set(self.pk_tuple(), self)
+		if(cls.__cache__):
+			cls.__cache__.set(self.pk_tuple(), self)
 
 	@classmethod
 	def get_default_values(cls):
@@ -712,12 +716,6 @@ class Model(object):
 		self._set_query_updates.clear()
 		self._other_query_updates.clear()
 
-		#update in the id_cache
-		_pk_tuple = self.pk_tuple()
-		existing_cache_entry = cls.__cache__.get(_pk_tuple, None)
-		if(existing_cache_entry == self): # if someone has already overridden ignore this object setting in cache
-			cls.__cache__.set(_pk_tuple, self)
-
 		return self
 
 	def delete(self):
@@ -747,12 +745,15 @@ class Model(object):
 		IS_DEBUG and print("#MONGO: deleting from primary",
 				_Model, _delete_query
 			)
-		self.__cache__.delete(self.pk_tuple())
+		if(_Model.__cache__):
+			_Model.__cache__.delete(self.pk_tuple())
 
 	@classmethod
 	def remove_from_cache(cls, *_objs):
+		if(not cls.__cache__):
+			return
 		for _obj in _objs:
-			cls.__cache__.cache.pop(_obj.pk_tuple(), None)
+			cls.__cache__.delete(_obj.pk_tuple(), None)
 
 
 class SecondaryShard:
