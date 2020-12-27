@@ -753,7 +753,7 @@ class Model(object):
 		if(not cls.__cache__):
 			return
 		for _obj in _objs:
-			cls.__cache__.delete(_obj.pk_tuple(), None)
+			cls.__cache__.delete(_obj.pk_tuple())
 
 
 class SecondaryShard:
