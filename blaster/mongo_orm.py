@@ -46,8 +46,7 @@ class Model(object):
 	_attrs = None
 	_pk_attrs = None
 
-	#db values stale for max of 5 minutes
-	__cache__ = LRUCache(10000, expire_after=5 * 60 * 1000)
+	__cache__ = LRUCache(10000)
 	#instance level
 	__is_new = True
 	_set_query_updates = None
