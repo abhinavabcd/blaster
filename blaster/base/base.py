@@ -122,7 +122,7 @@ class SocketDataReader():
 def parse_qs_modified(qs, keep_blank_values=True, strict_parsing=False):
 	_dict = {}
 	for name, value in urllib.parse.parse_qsl(qs, keep_blank_values, strict_parsing):
-		if name in _dict or name.endswith("[]"):
+		if name.endswith("[]"):
 			_values = _dict.get(name)
 			if(_values == None):
 				_dict[name] = _values = []

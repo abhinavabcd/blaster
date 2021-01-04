@@ -216,6 +216,13 @@ class Model(object):
 
 				return popped_val
 
+			def update(self, another):
+				for k, v in another.items():
+					#calls __setitem__ again
+					self[k] = v
+				#allow chaining
+				return self
+
 		ret = DictObj(**_obj)
 		_initializing = False
 		return ret
