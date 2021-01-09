@@ -423,7 +423,7 @@ class Model(object):
 	#_add_query is more query other than pk
 	# for example, you can say update only when someother field > 0
 
-	def update(self, _update_query, more_conditions=None, **kwargs):
+	def update(self, _update_query, more_conditions=None, force_secondary_update=None, **kwargs):
 		cls = self.__class__
 		
 		_query = dict(self.pk())
@@ -464,7 +464,7 @@ class Model(object):
 
 			_shard_key_changed = self._original_doc.get(shard_key) != updated_doc.get(shard_key)
 
-			if(_shard_key_changed):
+			if(_shard_key_changed or force_secondary_update):
 				#delete from old shard
 				_secondary_collection.find_one_and_delete(_secondary_pk)
 				for attr in shard.attributes:
