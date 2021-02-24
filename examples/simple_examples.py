@@ -4,18 +4,9 @@ Created on 22-Aug-2017
 @author: abhinav
 '''
 import blaster
-from blaster.base import start_stream_server, route_handler,\
-    process_post_data
+from blaster.base import start_stream_server, route_handler
 from blaster.common_funcs_and_datastructures import static_file_handler
 import os
-
-
-def do_nothing(a, **kwargs):
-    pass
-
-
-blaster.base.server_log = do_nothing
-
 
 @route_handler("^/test$")
 def do_test(sock , request_params=None, headers=None, post_data=None):
@@ -23,7 +14,7 @@ def do_test(sock , request_params=None, headers=None, post_data=None):
 
 
 ##directly return an object , server will automatically convert to json
-@route_handler("^/say/(.*)$") 
+@route_handler("^/say/(.*)$")
 def do_test2(sock, something, request_params=None, headers=None, post_data=None):
     return {"message" : str(something)} # something is a byte array !sorry
 
@@ -34,7 +25,6 @@ def do_test3(sock, something, request_params=None, headers=None, post_data=None)
 
 ##FOR handling you post arguments as key=value&key2=value2 data
 @route_handler("^/echo_post_params")
-@process_post_data
 def do_test4(sock, request_params=None, headers=None, post_data=None):
     return {"request_params" : request_params}
 
@@ -45,7 +35,6 @@ def do_test5(sock, request_params=None, headers=None, post_data=None):
 
 ##FOR handling you post as raw json body
 @route_handler("^/echo_post_data")
-@process_post_data
 def do_test6(sock, request_params=None, headers=None, post_data=None):
     return {"post_data_object" : request_params}
 
@@ -66,7 +55,7 @@ def do_test8(sock, request_params=None, headers=None, post_data=None):
 
 
 
-if __name__ == "__main__":    
+if __name__ == "__main__":
     start_stream_server(8081, handlers=[
-            ('^/(.*)', static_file_handler(os.path.dirname(os.path.abspath(__file__))+"/web/"))  #can server files too                  
+            ('^/(.*)', static_file_handler(os.path.dirname(os.path.abspath(__file__)) + "/web/"))  # can server files too                  
     ])

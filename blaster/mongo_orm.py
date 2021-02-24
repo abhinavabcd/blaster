@@ -11,9 +11,8 @@ from pymongo import ReturnDocument, ReadPreference
 from .common_funcs_and_datastructures import jump_hash, LRUCache
 from .config import IS_DEBUG
 
-#cluster => [{host: , port: , username:, password}...]
-_mongo_clusters = {}
 
+#just a random constant object to check for non existent keys without catching KeyNotExist exception
 SOME_OBJ = object()
 
 class MultiMapIterator:
@@ -381,16 +380,14 @@ class Model(object):
 	@classmethod
 	def get_collection(Model, shard_key):
 		shard_key = str(shard_key) if shard_key != None else ""
-		cluster_nodes = _mongo_clusters[Model._cluster_]
-		_node_with_data = jump_hash(shard_key.encode(), len(cluster_nodes))
-		_conn = cluster_nodes[_node_with_data]
+		_node_with_data = jump_hash(shard_key.encode(), len(Model._db_nodes_))
+		_conn = Model._db_nodes_[_node_with_data]
 		return _conn.get_collection(Model)
 
 	# returns all nodes and connections to Model inside them
 	@classmethod
 	def get_collections_all_nodes(Model):
-		cluster_nodes = _mongo_clusters[Model._cluster_]
-		return map(lambda _conn: _conn.get_collection(Model), cluster_nodes)
+		return map(lambda _conn: _conn.get_collection(Model), Model._db_nodes_)
 
 	#give a shard key from query we return multiple connect
 	@classmethod
@@ -631,6 +628,9 @@ class Model(object):
 	def before_update(self):
 		pass
 
+	def after_create(self):
+		pass
+
 	def commit(self, force=False):
 		cls = self.__class__
 		committed = False
@@ -678,6 +678,8 @@ class Model(object):
 				# set original doc and custom dict and set fields
 				#copy the dict to another
 				self.reinitialize_from_doc(dict(self._set_query_updates))
+				#hook to do something for newly created db entries
+				self.after_create()
 
 			except DuplicateKeyError as ex:
 
@@ -705,7 +707,7 @@ class Model(object):
 
 
 
-		if(not self.__is_new and not committed):  # try updated
+		if(not self.__is_new and not committed):  # try updating
 			_update_query = {}
 			if(self._set_query_updates):
 				_update_query["$set"] = self._set_query_updates
@@ -772,224 +774,304 @@ class SecondaryShard:
 		self.attributes = {}
 		self.indexes = []
 
-#Connection <=> Node is basically a server
-class Connection:
+
+#control
+class CollectionTracker(Model):
+	_db_name_ = "control"
+	_collection_name_ = "collection_tracker"
+
+	_id = Attribute(str) # db_name__collection_name
+	db_nodes = Attribute(list)
+	new_db_nodes = Attribute(list) # if resharding is in progress
+
+
+
+_cached_mongo_clients = {}
+#DatabaseNode is basically a server
+class DatabaseNode:
 
 	collections = {}
-	db = None
+	#mongo connection
+	mongo_connection = None
+	hosts = None
+	replica_set = None
+	username = None
+	password = None
+	#default db name
+	db_name = None
 
 	#this initializes the tables in all nodes
-	def __init__(self, host="localhost", port=27107, db_name=None, user_name=None, password=None):
-		self.db = MongoClient(host, port)[db_name]
-		for cls in Model.__subclasses__():
-			try:
-				self.inititalize(cls)
-			except Exception as ex:
-				print(
-					"Error creating Model",
-					cls,
-					"\n",
-					"-" * 50
-				)
-				raise ex
+	def __init__(self, hosts=None, replica_set=None, username=None, password=None, db_name=None):
+		if(isinstance(hosts, str)):
+			hosts = [hosts]
+		hosts.sort()
+		self.hosts = hosts
+		self.replica_set = replica_set
+		self.username = username
+		self.db_name = db_name
+		# use list of hosts, replicaset and username as cache key
+		# so as not to create multiple clients
+		_mongo_clients_cache_key = (",".join(hosts), replica_set or "" , username or "")
+		self.mongo_connection = _cached_mongo_clients.get(_mongo_clients_cache_key)
+		if(not self.mongo_connection):
+			self.mongo_connection = _cached_mongo_clients[_mongo_clients_cache_key] = MongoClient(host=hosts, replicaSet=replica_set, username=username, password=password)
 
-	#returns collection on the given Node
+
+	def to_dict(self):
+		return {
+			"hosts": self.hosts,
+			"replica_set": self.replica_set,
+			"username": self.username,
+			"db_name": self.db_name
+		}
+
+	#returns collection on the given DatabaseNode
 	def get_collection(self, Model):
 		ret = self.collections.get(Model)
 		if(not ret):
-			self.collections[Model] = ret = self.db[Model._collection_name_]
+			self.collections[Model] = ret = self.mongo_connection[Model._db_name_][Model._collection_name_]
 		return ret
 
-	def inititalize(self, Model):
-		# temp usage _id_attr
-		_id_attr = Attribute(str)
-		if(isinstance(Model, list)):
-			for _m in Model:
-				self.inititalize(_m)
-			return
 
-		IS_DEBUG and print("#MONGO: Initializing Model", Model)
-		Model._attrs = _model_attrs = {"_id": _id_attr}
-		Model._pk_attrs = None
-		'''it's used for translating attr objects to string names'''
-		Model.__attrs_to_name = attrs_to_name = {_id_attr: '_id', '_id': '_id'}
-		for k, v in Model.__dict__.items():
-			if(isinstance(v, Attribute)):
-				_model_attrs[k] = v
-				attrs_to_name[v] = k
-				# dumb , but it's one time thing
-				# and also helps converting if any given attributes as strings
-				attrs_to_name[k] = k
+def initialize_model(Model):
 
-		# ensure indexes created and all collections loaded to memory
-		#Ex: _index_ = [( (a, ASCENDING), (b, DESCENDING), {"unique": False})]
-		_model_primary_indexes = getattr(Model, "_primary_index_", None) or []
-		if(not _model_primary_indexes):
-			#if there are no primary indexes default is _id
-			_model_primary_indexes = [('_id',)]
-		#secondary indexes
-		_model_secondary_indexes = getattr(Model, "_secondary_index_", None) or []
+	if(isinstance(Model, list)):
+		for _m in Model:
+			initialize_model(_m)
+		return
 
-		#we create a single list and pass through all indexes and create primary/secondary
-		#automatically
-		_model_indexes = _model_primary_indexes + _model_secondary_indexes
-		# You can specify simple shard key or we take first unique index as the shard_key
-		Model._shard_key_ = None
-		Model._secondary_shards_ = {}
-		Model._cluster_ = getattr(Model, "_cluster_", "default")
 
-		_pymongo_indexes_to_create = []
-		Model._pk_is_unique_index = False
-		for _index in _model_indexes:
-			mongo_index_args = {}
-			pymongo_index = []
-			if(not isinstance(_index, tuple)):
-				_index = (_index,)
-			for _a in _index:
+	IS_DEBUG and print("#MONGO: Initializing Model", Model)
+	# temp usage _id_attr
+	_id_attr = Attribute(str)
+	Model._attrs = _model_attrs = {"_id": _id_attr}
+	Model._pk_attrs = None
+	'''it's used for translating attr objects to string names'''
+	Model.__attrs_to_name = attrs_to_name = {_id_attr: '_id', '_id': '_id'}
+	for k, v in Model.__dict__.items():
+		if(isinstance(v, Attribute)):
+			_model_attrs[k] = v
+			attrs_to_name[v] = k
+			# dumb , but it's one time thing
+			# and also helps converting if any given attributes as strings
+			attrs_to_name[k] = k
+
+	# ensure indexes created and all collections loaded to memory
+	#Ex: _index_ = [( (a, ASCENDING), (b, DESCENDING), {"unique": False})]
+	_model_primary_indexes = getattr(Model, "_primary_index_", None) or []
+	if(not _model_primary_indexes):
+		#if there are no primary indexes default is _id
+		_model_primary_indexes = [('_id',)]
+	#secondary indexes
+	_model_secondary_indexes = getattr(Model, "_secondary_index_", None) or []
+
+	#we create a single list and pass through all indexes and create primary/secondary
+	#automatically
+	_model_indexes = _model_primary_indexes + _model_secondary_indexes
+	# A simple shard key
+	Model._shard_key_ = None
+	# { shard_key : Shard } #a shard is a model class just like a normal table class
+	Model._secondary_shards_ = {}
+
+
+	_pymongo_indexes_to_create = []
+	Model._pk_is_unique_index = False
+	for _index in _model_indexes:
+		mongo_index_args = {}
+		pymongo_index = []
+		if(not isinstance(_index, tuple)):
+			_index = (_index,)
+		for _a in _index:
+			_attr_name = _a
+			_ordering = pymongo.ASCENDING
+			if(isinstance(_a, tuple)):
+				_a, _ordering = _a
+			if(isinstance(_a, Attribute)):
+				_attr_name = attrs_to_name[_a]
+			if(isinstance(_a, str)):
 				_attr_name = _a
-				_ordering = pymongo.ASCENDING
-				if(isinstance(_a, tuple)):
-					_a, _ordering = _a
-				if(isinstance(_a, Attribute)):
-					_attr_name = attrs_to_name[_a]
-				if(isinstance(_a, str)):
-					_attr_name = _a
-				if(isinstance(_a, dict)):
-					mongo_index_args = _a
-					continue
+			if(isinstance(_a, dict)):
+				mongo_index_args = _a
+				continue
 
-				pymongo_index.append((_attr_name, _ordering))
+			pymongo_index.append((_attr_name, _ordering))
 
-			#convert to tuple again
-			pymongo_index = tuple(pymongo_index)
-			is_unique_index = mongo_index_args.get("unique") is not False
-			do_not_shard = mongo_index_args.pop("do_not_shard", False)
+		#convert to tuple again
+		pymongo_index = tuple(pymongo_index)
+		is_unique_index = mongo_index_args.get("unique") is not False
+		do_not_shard = mongo_index_args.pop("do_not_shard", False)
 
-			_index_shard_key = pymongo_index[0][0]
-			if(do_not_shard):
-				#use it just for index and not as shard key
-				pass
-			#set primary and secondary shard attributes
-			elif(not Model._shard_key_):
-				Model._shard_key_ = _index_shard_key
-			#check and set secondary shard keys
-			elif(Model._shard_key_ != _index_shard_key):
-				#created secondary shards, these are tables
-				_seconday_shard = Model._secondary_shards_.get(_index_shard_key)
+		_index_shard_key = pymongo_index[0][0]
+		if(do_not_shard):
+			#use it just for index and not as shard key
+			pass
+		#set primary and secondary shard attributes
+		elif(not Model._shard_key_):
+			Model._shard_key_ = _index_shard_key
+		#check and set secondary shard keys
+		elif(Model._shard_key_ != _index_shard_key):
+			#created secondary shards, these are tables
+			_seconday_shard = Model._secondary_shards_.get(_index_shard_key)
 
-				if(not _seconday_shard):
-					Model._secondary_shards_[_index_shard_key] = _seconday_shard = SecondaryShard()
-					print("Warning: Having secondary shard keys is experimental.",
-						"Secondary shard key : ",
-						_index_shard_key, Model
-					)
-
-				for _attr_name, _ordering in pymongo_index:
-					_seconday_shard.attributes[_attr_name] = getattr(
-						Model,
-						_attr_name
-					)
-				#create _index_ for seconday shards
-				_secondary_shard_index = list(pymongo_index)
-				_secondary_shard_index.append(mongo_index_args)
-				_seconday_shard.indexes.append(
-					tuple(_secondary_shard_index)
+			if(not _seconday_shard):
+				Model._secondary_shards_[_index_shard_key] = _seconday_shard = SecondaryShard()
+				print("Warning: Having secondary shard keys is experimental.",
+					"Secondary shard key : ",
+					_index_shard_key, Model
 				)
 
-			#set the primary key
-			#prefer unique index as the pk
-			if(	Model._shard_key_ == _index_shard_key
-				and (
-						not Model._pk_attrs
-						or (is_unique_index and not Model._pk_is_unique_index)
+			for _attr_name, _ordering in pymongo_index:
+				_seconday_shard.attributes[_attr_name] = getattr(
+					Model,
+					_attr_name
 				)
-			):
-				Model._pk_is_unique_index = is_unique_index
-				Model._pk_attrs = _pk_attrs = OrderedDict()
-				for i in pymongo_index: # first unique index
-					_pk_attrs[i[0]] = 1
-
-			#check for indexes to ignore
-			ignore_index_creation = False
-			if(pymongo_index[0][0] == "_id"):
-				ignore_index_creation = True
-
-			#create the actual index
-			if(not ignore_index_creation):
-				IS_DEBUG and print("#MONGO: creating_indexes", pymongo_index, mongo_index_args)
-				_pymongo_indexes_to_create.append((pymongo_index, mongo_index_args))
-
-		# but if nothing was specified we set the default _id
-		# for index, pk and shard key
-		if(not _model_indexes):
-			_model_indexes = [('_id', pymongo.ASCENDING)]
-
-		if(not Model._pk_attrs): # create default _pk_attrs
-			Model._pk_attrs = OrderedDict(_id=True)
-
-		if(not Model._shard_key_):
-			Model._shard_key_ = "_id"
-
-		_model_collection_name_ = Model._collection_name_
-		# set collection name to include shard_keys
-		Model._collection_name_ = _model_collection_name_ + "_shard_" + Model._shard_key_
-		#if there is no shard key specified use the first primary key
-
-		# create indices in mongo
-		for pymongo_index, additional_mongo_index_args in _pymongo_indexes_to_create:
-			mongo_index_args = {"unique": True}
-			mongo_index_args.update(**additional_mongo_index_args)
-			self.get_collection(Model).create_index(pymongo_index, **mongo_index_args)
-		
-		#create secondary shards
-		for _seconday_shard_key, _seconday_shard in Model._secondary_shards_.items():
-			if(not Model._pk_is_unique_index):
-				raise Exception("Cannot have secondary shard keys for non unique indexes! %s"%(Model,))
-
-			class_attrs = {
-				"_primary_index_": _seconday_shard.indexes,
-				"_secondary_index_": None,
-				"_collection_name_": _model_collection_name_,
-				"_is_secondary_shard": True
-			}
-			# add primary key attributes of the main class to
-			# secondary shards too
-
-			for attr_name in Model._pk_attrs:
-				_seconday_shard.attributes[attr_name] = getattr(Model, attr_name)
-
-			secondary_id_attr = getattr(Model, '_id', None)
-			if(secondary_id_attr):
-				_seconday_shard.attributes['_id'] = secondary_id_attr
-
-			class_attrs.update(_seconday_shard.attributes)
-			#also include the primary key of the primary shard
-			#into secondary shards
-
-			_seconday_shard._Model_ = type(
-				"%s_%s"%(Model.__name__, _seconday_shard_key.upper()),
-				(Model,),
-				class_attrs
+			#create _index_ for seconday shards
+			_secondary_shard_index = list(pymongo_index)
+			_secondary_shard_index.append(mongo_index_args)
+			_seconday_shard.indexes.append(
+				tuple(_secondary_shard_index)
 			)
-			#initialize this new model
-			self.inititalize(_seconday_shard._Model_)
+
+		#set the primary key
+		#prefer unique index as the pk
+		if(	Model._shard_key_ == _index_shard_key
+			and (
+					not Model._pk_attrs
+					or (is_unique_index and not Model._pk_is_unique_index)
+			)
+		):
+			Model._pk_is_unique_index = is_unique_index
+			Model._pk_attrs = _pk_attrs = OrderedDict()
+			for i in pymongo_index: # first unique index
+				_pk_attrs[i[0]] = 1
+
+		#check for indexes to ignore
+		ignore_index_creation = False
+		if(pymongo_index[0][0] == "_id"):
+			ignore_index_creation = True
+
+		#create the actual index
+		if(not ignore_index_creation):
+			_pymongo_indexes_to_create.append((pymongo_index, mongo_index_args))
+
+	# but if nothing was specified we set the default _id
+	# for index, pk and shard key
+	if(not _model_indexes):
+		_model_indexes = [('_id', pymongo.ASCENDING)]
+
+	if(not Model._pk_attrs): # create default _pk_attrs
+		Model._pk_attrs = OrderedDict(_id=True)
+
+	if(not Model._shard_key_):
+		Model._shard_key_ = "_id"
+
+	_model_collection_name_ = Model._collection_name_
+	# set collection name to include shard_keys
+	Model._collection_name_ = _model_collection_name_ + "_shard_" + Model._shard_key_
+	#if there is no shard key specified use the first primary key
+
+	##find tracking nodes
+	Model._collection_tracker_key_ = "%s__%s"%(Model._db_name_, Model._collection_name_)
+	Model._db_nodes_ = getattr(Model, "_db_nodes_", None)
+
+	IS_DEBUG and print("#MONGO collection tracker key", Model._collection_tracker_key_)
+
+	if(Model not in [CollectionTracker] and not Model._db_nodes_):
+		collection_tracker = CollectionTracker.get(Model._collection_tracker_key_)
+		if(not collection_tracker):
+			print(
+				"#MONGOORM_IMPORTANT_INFO : "
+				"Collection tracker entry not present for '%s'.."
+				"creating table in control node for this time in database '%s'. "
+				"You may want to talk to dba team to move to a proper node"%(Model.__name__, Model._db_name_)
+			)
+			db_nodes = [{
+				"hosts": collection_tracker_db_node.hosts,
+				"replica_set": collection_tracker_db_node.replica_set,
+				"username": collection_tracker_db_node.username,
+				"db_name": Model._db_name_
+			} for collection_tracker_db_node in CollectionTracker._db_nodes_]
+
+			collection_tracker = CollectionTracker(
+				_id=Model._collection_tracker_key_,
+				db_nodes=db_nodes
+			).commit()
+
+		Model._db_nodes_ = [DatabaseNode(**_db_node) for _db_node in collection_tracker.db_nodes]
 
 
 
-#given send of node_connection data, create a cluster
-def init_mongo_cluster(nodes, cluster="default"):
-	if(not isinstance(nodes, list)):
-		nodes = [nodes]
-	db_nodes = []
-	for node in nodes:
-		if(isinstance(node, dict)):
-			node = Connection(**node)
-		db_nodes.append(node)
-	_mongo_clusters[cluster] = db_nodes
+	for pymongo_index, additional_mongo_index_args in _pymongo_indexes_to_create:
+		mongo_index_args = {"unique": True}
+		mongo_index_args.update(**additional_mongo_index_args)
+
+		IS_DEBUG and print("#MONGO: creating_indexes", pymongo_index, mongo_index_args)
+		#in each node create indexes
+		for db_node in Model._db_nodes_:
+			db_node.get_collection(Model).create_index(pymongo_index, **mongo_index_args)
+	
+	#create secondary shards
+	for _seconday_shard_key, _seconday_shard in Model._secondary_shards_.items():
+		if(not Model._pk_is_unique_index):
+			raise Exception("Cannot have secondary shard keys for non unique indexes! %s"%(Model,))
+
+		class_attrs = {
+			"_primary_index_": _seconday_shard.indexes,
+			"_secondary_index_": None,
+			"_collection_name_": _model_collection_name_,
+			"_is_secondary_shard": True,
+			"_db_nodes_": None
+		}
+		# add primary key attributes of the main class to
+		# secondary shards too
+
+		for attr_name in Model._pk_attrs:
+			_seconday_shard.attributes[attr_name] = getattr(Model, attr_name)
+
+		secondary_id_attr = getattr(Model, '_id', None)
+		if(secondary_id_attr):
+			_seconday_shard.attributes['_id'] = secondary_id_attr
+
+		class_attrs.update(_seconday_shard.attributes)
+		#also include the primary key of the primary shard
+		#into secondary shards
+
+		_seconday_shard._Model_ = type(
+			"%s_%s"%(Model.__name__, _seconday_shard_key.upper()),
+			(Model,),
+			class_attrs
+		)
+		#initialize this new model
+		initialize_model(_seconday_shard._Model_)
+
+
+#initialize control Tr
+#initialize all other nodes
+def initialize_mongo(collection_tracker_db_node, default_db_name=None):
+
+	default_db_name = default_db_name or "temp_db"
+	#initialize control db
+	if(isinstance(collection_tracker_db_node, dict)):
+		collection_tracker_db_node = DatabaseNode(**collection_tracker_db_node)
+	#check connection to mongodb
+	collection_tracker_db_node.mongo_connection.server_info()
+
+	#initialize control db
+	CollectionTracker._db_nodes_ = [collection_tracker_db_node]
+	initialize_model(CollectionTracker)
+
+	#set default db name for each class
+	for cls in Model.__subclasses__():
+		if(not getattr(cls, "_db_name_", None)):
+			cls._db_name_ = default_db_name
+		initialize_model(cls)
+
 
 
 # Initially intended to be < 500 line and crazy scalable like
 # add more nodes and it automatically shards
-# - Supports client-side sharding,
+# - Complete client side sharding, control database,
 # - You can Configure mongo as a sharded cluster.Just pass the configuration server to
-# - init_mongo_cluster({"host": "", "port": 27017, "db_name": "yourdb", "user_name": "", "password": ""})
+# - init_mongo_cluster({"uri": "mongodb://localhost:27017", "db_name": "yourdb"})
+
+#reshard-restart-reshard

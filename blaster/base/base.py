@@ -10,7 +10,6 @@ Created on 22-Aug-2017
 # protobuf==3.2.0
 # boto3==1.4.4
 
-
 import ujson as json
 import re
 import urllib.parse
@@ -44,6 +43,10 @@ default_stream_headers = {
 								'X-XSS-Protection': '0'
 						}
 
+########some random constants
+HTTP_MAX_REQUEST_BODY_SIZE = 11 * 1024 * 1024 # 11 mb
+SLASH_N_ORDINAL = ord(b'\n')
+
 
 
 def server_log(log_type, cur_millis=None, **kwargs):
@@ -53,71 +56,89 @@ def server_log(log_type, cur_millis=None, **kwargs):
 
 
 
-def write_data(socket, *_data):
-	for data in _data:
-		if(isinstance(data, str)):
-			data = data.encode()
-		n = 0
-		data_len = len(data)
-		while(n < data_len):
-			sent = socket.send(data[n:])
-			n += sent
-			if(sent < 0):
-				return False
-	return True
+
+def find_new_line(arr):
+	n = len(arr)
+	i = 0
+	while(i < n):
+		if(arr[i] == SLASH_N_ORDINAL):
+			return i
+		i += 1
+	return -1
 
 
-
-class SocketDataReader():
+class BufferedSocket():
 	
 	is_eof = False
 	sock = None
 	store = None
-	_n = 0
 
 	def __init__(self, sock):
 		self.sock = sock
 		self.store = bytearray()
-		self._n = 0
-	
-	def read(self, n):
+		
+	def send(self, *_data):
+		for data in _data:
+			if(isinstance(data, str)):
+				data = data.encode()
+			n = 0
+			data_len = len(data)
+			while(n < data_len):
+				sent = self.sock.send(data[n:])
+				n += sent
+				if(sent < 0):
+					return False
+		return True
+				
+	def recv(self, n):
 		if(self.is_eof):
 			return None
-		while(self._n + n > len(self.store)):
-			data = self.sock.recv(1024)
+		while(len(self.store) < n):
+			data = self.sock.recv(4096)
 			if(not data):
 				self.is_eof = True
 				break
 			self.store.extend(data)
-		ret = self.store[self._n:self._n + n]
-		self._n += n
+		#return n bytes for now
+		ret = self.store[:n]
+		#set remaining to new store
+		self.store = self.store[n:]
 		return ret
 		
-			
-			
-	def read_line(self):
+	def readline(self, max_size=HTTP_MAX_REQUEST_BODY_SIZE):
 		if(self.is_eof):
 			return None
-		n = self._n
-		line_found = False
-		while(not line_found):
-			if(n >= len(self.store)):
-				data = self.sock.recv(1024)
-				if(not data):
-					self.is_eof = True
-					break
-				self.store.extend(data) # fetch more data
-				
-			if(self.store[n] == ord(b'\n')):
-				line_found = True
-			n += 1
-		
-		
-		ret = self.store[self._n: n]
-		self._n = n
+		#indicates the index in store where we find the new line
+		line_found = find_new_line(self.store)
+		#check in store
+		while(line_found == -1 and len(self.store) < max_size):
+			data = self.sock.recv(4096)
+			if(not data):
+				self.is_eof = True
+				break
+
+			line_found = find_new_line(data)
+			if(line_found != -1):
+				line_found = len(self.store) + line_found
+
+			self.store.extend(data) # fetch more data
+
+		ret = None
+		if(line_found != -1):
+			ret = self.store[:line_found + 1]
+			self.store = self.store[line_found + 1 :]
+		else: # EOF, return everything in buffer
+			ret = self.store
+			self.store = bytearray()
+			self.is_eof = True
 		return ret
 
-	
+	def __getattr__(self, key):
+		ret = getattr(self.sock, key, SOME_OBJ)
+		if(ret == SOME_OBJ):
+			raise AttributeError()
+		return ret
+
 ####parse query string
 def parse_qs_modified(qs, keep_blank_values=True, strict_parsing=False):
 	_dict = {}
@@ -242,10 +263,9 @@ class App:
 		self.route_handlers = []
 		self.request_handlers = []
 
-	def route(self, regex):
-
+	def route(self, regex, method="GET", name='', description=''):
 		def _decorator(func):
-			self.route_handlers.append((regex, func))
+			self.route_handlers.append((regex, func, method))
 
 			def new_func(*args, **kwargs):
 				return func(*args, **kwargs)
@@ -267,9 +287,9 @@ class App:
 
 				fargs = args.groups()
 				if(fargs):
-					ret = func(*fargs , **kwargs)
+					ret = func(None, *fargs , **kwargs)
 				else:
-					ret = func(**kwargs)
+					ret = func(None, **kwargs)
 				
 				break
 			
@@ -297,21 +317,36 @@ class App:
 
 	def start(self, port=80, handlers=[], use_wsgi=False, **ssl_args):
 		self.route_handlers.sort(key=functools.cmp_to_key(lambda x, y: len(y[0]) - len(x[0]))) # reverse sort by length
-		self.route_handlers.extend(handlers)
-		multiple_handler_filer = {}
-		for regex, handler in reversed(self.route_handlers):
-			if(regex in multiple_handler_filer):
+		
+		handlers_with_methods = []
+		for handler in handlers:
+			if(len(handler) < 2 or len(handler) > 3):
 				continue
-			multiple_handler_filer[regex] = True
+			if(len(handler) == 2):
+				handler = (handler[0], handler[1], "GET")
+			handlers_with_methods.append(handler)
+		#add them to all route handlers
+		self.route_handlers.extend(handlers_with_methods)
 
-			if(isinstance(regex, str)):
-				regex = re.compile(regex)
-			self.request_handlers.append((regex, handler))
+		regexes_map = {}
+		for regex, handler, method in reversed(self.route_handlers):
+			existing_regex_handlers = regexes_map.get(regex)
+			if(not existing_regex_handlers):
+				existing_regex_handlers = regexes_map[regex] = {}
+
+			method_handler_exists = existing_regex_handlers.get(method)
+			if(method_handler_exists):
+				existing_regex_handlers[method] = handler
+			else:
+				existing_regex_handlers = {method.upper(): handler}
+				regexes_map[regex] = existing_regex_handlers
+				self.request_handlers.append((re.compile(regex), existing_regex_handlers))
 		
 		#sort ascending because we iterated in reverse earlier
 		self.request_handlers.reverse()
 		if(config.IS_DEBUG):
-			print(self.request_handlers)
+			for regex, method_handlers in self.request_handlers:
+				print(regex.pattern, method_handlers)
 
 		if(use_wsgi):
 			self.stream_server = WSGIServer(('', port), self.handle_wsgi).serve_forever()
@@ -333,10 +368,10 @@ class App:
 		all the connection handling magic happens here
 	'''
 	def handle_connection(self, socket, address):
-		socket_data_reader = SocketDataReader(socket)
-		is_okay = True # reuse the connection to handle another
-		while(is_okay):
-			request_line = socket_data_reader.read_line()
+		buffered_socket = BufferedSocket(socket)
+		process_next_http_request = True # reuse the connection to handle another
+		while(process_next_http_request):
+			request_line = buffered_socket.readline(4096) # ignore request lines > 4096 bytes
 			if(not request_line):
 				return
 			post_data = None
@@ -361,7 +396,7 @@ class App:
 			
 				headers = LowerKeyDict()
 				while(True): # keep reading headers
-					data = socket_data_reader.read_line()
+					data = buffered_socket.readline()
 					if(data == b'\r\n'):
 						break
 					if(not data):
@@ -369,44 +404,61 @@ class App:
 					header_name , header_value = data.split(b': ', 1)
 					headers[header_name.lower().decode()] = header_value.rstrip(b'\r\n')
 				
-				if(request_type == "POST" and headers.get("Content-Length", None)):
-					n = int(headers.get("Content-Length", b'0'))
+				if(request_type == "POST"):
+					n = int(headers.get("Content-Length", 0))
 					if(n > 0):
-						post_data = bytearray()
-						while(len(post_data) < n):
-							bts = socket_data_reader.read(n)
-							if(not bts):
-								break
-							post_data.extend(bts)
+						if(n < HTTP_MAX_REQUEST_BODY_SIZE):
+							post_data = buffered_socket.recv(n)
+
+					else: # handle chuncked encoding
+						transfer_encoding = headers.get("transfer-encoding")
+						if(transfer_encoding == "chunked"):
+							post_data = bytearray()
+							chunk_size = int(buffered_socket.readline(), 16) # hex
+							while(chunk_size > 0):
+								data = buffered_socket.recv(chunk_size + 2)
+								post_data.extend(data)
+								chunk_size = int(buffered_socket.readline(), 16) # hex
+							#as bytes
+
+
+
 				##app specific headers
 				ret = status = response_headers = body = None
+
 				for handler in self.request_handlers:
 					args = handler[0].match(request_path)
-					func = handler[1]
+					handler_methods = handler[1]
 					
 					if(args != None):
-						kwargs = {}
-						kwargs["request_params"] = request_params
-						kwargs["headers"] = headers
+						func = handler_methods.get(request_type)
+						if(not func and request_type != "GET"):
+							#perform GET call by default
+							#server_log("handler_method_not_found", msg="performing get by default")
+							func = handler_methods.get("GET")
+						if(func):
+							kwargs = {}
+							kwargs["request_params"] = request_params
+							kwargs["headers"] = headers
 
-						#process cookies
-						cookie_header = headers.get("Cookie", None)
-						decoded_cookies = {}
-						if(cookie_header):
-							_temp = cookie_header.strip().decode().split(";")
-							for i in _temp:
-								decoded_cookies.update(parse_qs_modified(i.strip()))
-						request_params._cookies = decoded_cookies
-						#process cookies end
-						request_params._post = deserialize_post_data(post_data, headers)
+							#process cookies
+							cookie_header = headers.get("Cookie", None)
+							decoded_cookies = {}
+							if(cookie_header):
+								_temp = cookie_header.strip().decode().split(";")
+								for i in _temp:
+									decoded_cookies.update(parse_qs_modified(i.strip()))
+							request_params._cookies = decoded_cookies
+							#process cookies end
+							request_params._post = deserialize_post_data(post_data, headers)
 
-						fargs = args.groups()
-						if(fargs):
-							ret = func(socket, *fargs , **kwargs)
-							break
-						else:
-							ret = func(socket, **kwargs)
-							break
+							fargs = args.groups()
+							if(fargs):
+								ret = func(buffered_socket, *fargs , **kwargs)
+								break
+							else:
+								ret = func(buffered_socket, **kwargs)
+								break
 				
 
 				#handle various return values from handler functions
@@ -423,30 +475,30 @@ class App:
 						body = ret
 		
 					status = status or b'200 OK'
-					is_okay = write_data(socket, b'HTTP/1.1 ', status, b'\r\n')
+					buffered_socket.send(b'HTTP/1.1 ', status, b'\r\n')
 
 					if(response_headers):
 						if(isinstance(response_headers, dict)):
 							for key, val in response_headers.items():
-								is_okay = is_okay and write_data(socket, key, b': ', val, b'\r\n')
+								buffered_socket.send(key, b': ', val, b'\r\n')
 
 							for key, val in default_stream_headers.items():
 								if(key not in response_headers):
-									is_okay = is_okay and write_data(socket, key, b': ', val, b'\r\n')
+									buffered_socket.send(key, b': ', val, b'\r\n')
 
 						elif(isinstance(response_headers, list)):
 							for header in response_headers:
-								is_okay = is_okay and write_data(socket, header, b'\r\n')
+								buffered_socket.send(header, b'\r\n')
 
 					else:
 						for key, val in default_stream_headers.items():
-							is_okay = is_okay and write_data(socket, key, b': ', val, b'\r\n')
+							buffered_socket.send(key, b': ', val, b'\r\n')
 
 					#check and respond to keep alive
 					is_keep_alive = headers.get('Connection', b'').lower() == b'keep-alive'
 					#send back keep alive
 					if(is_keep_alive):
-						is_okay = is_okay and write_data(socket, b'Connection: keep-alive\r\n')
+						buffered_socket.send(b'Connection: keep-alive\r\n')
 
 					if(body != None): # if body doesn't exist , the handler function is holding the connection and handling it manually
 						if(isinstance(body, (dict, list))):
@@ -455,18 +507,18 @@ class App:
 						#encode body
 						if(isinstance(body, str)):
 							body = body.encode()
-						is_okay = is_okay and write_data(socket, b'Content-Length: ', str(len(body)), b'\r\n\r\n')
-						is_okay = is_okay and write_data(socket, body)
+						buffered_socket.send(b'Content-Length: ', str(len(body)), b'\r\n\r\n')
+						buffered_socket.send(body)
 						
 						#close if not keeping alive
 						if(not is_keep_alive):
 							socket.close()
-							is_okay = False
+							process_next_http_request = False
 					else: # close headers and dont rehandle this connection(probably socket if used for sending data in callbacks etc)
-						write_data(socket, b'\r\n')
-						is_okay = False
+						buffered_socket.send(b'\r\n')
+						process_next_http_request = False
 				else: # return value is None => manually handling
-					is_okay = False
+					process_next_http_request = False
 
 				server_log("http" , request_type=request_type , path=request_path, wallclockms=int(1000 * time.time()) - cur_millis)
 
@@ -483,7 +535,7 @@ class App:
 					)
 				if(not body):
 					body = b'Internal server error'
-				write_data(socket,
+				buffered_socket.send(
 						b'HTTP/1.1 ', b'502 Server error', b'\r\n',
 						b'Connection: close', b'\r\n',
 						b'Content-Length: ', str(len(body)), b'\r\n\r\n',

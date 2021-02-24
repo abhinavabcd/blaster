@@ -24,27 +24,27 @@ for i, j in country_code_num_digits_map.items():
 
 class PhoneNumberObj:
 	phone_number = None
-	country_code = None
+	country_phone_code = None
 	national_number = None
 
-	def __init__(self, country_code, national_number, phone_number):
+	def __init__(self, country_phone_code, national_number, phone_number):
 		self.phone_number = phone_number
 		self.national_number = national_number
-		if(country_code):
-			self.country_code = country_code.lstrip("+")
+		if(country_phone_code):
+			self.country_phone_code = country_phone_code.lstrip("+")
 
 
 	#mobile numbers only
 	@classmethod
-	def parse_phone_number(cls, phone_number, country_code=None, iso2_country_code=None):
+	def parse_phone_number(cls, phone_number, country_phone_code=None, iso2_country_code=None):
 		#assume phone number without country code
 		#assume phone number with country code without +
 		#assume + by mistake
 		if(not phone_number or not PHONE_NUMBER_REGEX.match(phone_number)):
 			return None
 		
-		if(country_code):
-			country_code = country_code.lstrip("+")
+		if(country_phone_code):
+			country_phone_code = country_phone_code.lstrip("+")
 
 		phone_number = phone_number.lstrip("+0")
 
@@ -62,22 +62,22 @@ class PhoneNumberObj:
 			_root = _root[_d]
 
 
-		if(iso2_country_code):
-			country_code = data_utils.iso2_to_phone_code.get(iso2_country_code, None) # netherlands by defailt
+		if(not country_phone_code and iso2_country_code):
+			country_phone_code = data_utils.iso2_to_phone_code.get(iso2_country_code, None) # netherlands by defailt
 
-		if(not country_code):
-			country_code = "31" # try netherlands by default
+		if(not country_phone_code):
+			country_phone_code = "31" # try netherlands by default
 
 
-		if len(phone_number) in country_code_num_digits_map[country_code]:
-			return PhoneNumberObj(country_code, phone_number, country_code + phone_number)
+		if len(phone_number) in country_code_num_digits_map[country_phone_code]:
+			return PhoneNumberObj(country_phone_code, phone_number, country_phone_code + phone_number)
 
-		phone_number_strip = phone_number.lstrip(country_code)
-		if len(phone_number_strip) in country_code_num_digits_map[country_code]:
-			return PhoneNumberObj(country_code, phone_number_strip, country_code + phone_number_strip)
+		phone_number_strip = phone_number.lstrip(country_phone_code)
+		if len(phone_number_strip) in country_code_num_digits_map[country_phone_code]:
+			return PhoneNumberObj(country_phone_code, phone_number_strip, country_phone_code + phone_number_strip)
 
-		if(phone_number.startswith(country_code)):
-			return PhoneNumberObj.parse_phone_number(phone_number.lstrip(country_code), country_code=country_code, iso2_country_code=iso2_country_code)
+		if(phone_number.startswith(country_phone_code)):
+			return PhoneNumberObj.parse_phone_number(phone_number.lstrip(country_phone_code), country_phone_code=country_phone_code, iso2_country_code=iso2_country_code)
 
 		return None
 
@@ -90,7 +90,7 @@ def test():
 			print("no")
 	print(PhoneNumberObj.parse_phone_number('+917680971071').__dict__)
 	print(PhoneNumberObj.parse_phone_number('+917680971071').__dict__)
-	print(PhoneNumberObj.parse_phone_number("229270555", country_code="31").__dict__)
+	print(PhoneNumberObj.parse_phone_number("229270555", country_phone_code="31").__dict__)
 	assert_equals(PhoneNumberObj.parse_phone_number('+917680971071', '+91').phone_number, "917680971071")
 	assert_equals(PhoneNumberObj.parse_phone_number('917680971071', '+91').phone_number, "917680971071")
 	assert_equals(PhoneNumberObj.parse_phone_number('07680971071', '+91').phone_number, "917680971071")
