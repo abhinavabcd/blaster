@@ -11,6 +11,12 @@ from pymongo import ReturnDocument, ReadPreference
 from .common_funcs_and_datastructures import jump_hash, LRUCache
 from .config import IS_DEBUG
 
+EVENT_BEFORE_DELETE = -2
+EVENT_AFTER_DELETE = -1
+EVENT_BEFORE_UPDATE = 1
+EVENT_AFTER_UPDATE = 2
+EVENT_BEFORE_CREATE = 3
+EVENT_AFTER_CREATE = 4
 
 #just a random constant object to check for non existent keys without catching KeyNotExist exception
 SOME_OBJ = object()
@@ -98,7 +104,7 @@ class Model(object):
 				_pks = _pk
 
 			if(not _pks):
-				return [] if not is_single_item else None
+				return []
 
 			from_cache = []
 			#handle _ids fetch separately so to speedup
@@ -287,11 +293,22 @@ class Model(object):
 		if(_attr_type_obj):
 			#change type of objects when initializing
 			if(self._initializing):
-				if(_attr_type_obj._type == dict and isinstance(v, dict)):
-					v = self.get_custom_dict(k, v)
+				if(_attr_type_obj._type == dict):
+					if(isinstance(v, dict)):
+						v = self.get_custom_dict(k, v)
+					elif(v == None):
+						_default = getattr(_attr_type_obj, "default", None)
+						if(_default != None):
+							v = dict(_default)
 
-				if(_attr_type_obj._type == list and isinstance(v, list)):
-					v = self.get_custom_list(k, v)
+				elif(_attr_type_obj._type == list):
+					if(isinstance(v, list)):
+						v = self.get_custom_list(k, v)
+					elif(v == None):
+						_default = getattr(_attr_type_obj, "default", None)
+						if(_default != None):
+							v = list(_default)
+
 			else:
 				cur_value = getattr(self, k, None)
 				if(cur_value != v):
@@ -335,7 +352,7 @@ class Model(object):
 	def get_instance_from_document(cls, doc):
 		ret = cls(False)
 		for k, v in cls._attrs.items():
-			ret.__dict__[k] = None # set all initial attributes to None
+			setattr(ret, k, None) # set all initial attributes to None
 		for k, v in doc.items():
 			setattr(ret, k, v)
 
@@ -354,7 +371,7 @@ class Model(object):
 		cls.remove_from_cache(self)
 		self._initializing = True
 		for k, v in cls._attrs.items():
-			self.__dict__[k] = None # set all initial attributes to None
+			setattr(self, k, None) # set all initial attributes to None
 		for k, v in doc.items():
 			setattr(self, k, v)
 		self._initializing = False
@@ -372,6 +389,12 @@ class Model(object):
 			if(default != None):
 				if(isinstance(default, types.FunctionType)):
 					default = default()
+				if(isinstance(default, (list, tuple))):
+					#create a copy
+					default = list(default)
+				if(isinstance(default, (dict,))):
+					#create a copy
+					default = dict(default)
 				ret[k] = default
 		return ret
 
@@ -625,19 +648,41 @@ class Model(object):
 
 		return MultiMapIterator(multi_map_iterator)
 
-	def before_update(self):
-		pass
+	'''
+		usually we call this while compile time,
+		perfomance wise is not an issue
+	'''
+	@classmethod
+	def on(cls, events, func):
+		if(not isinstance(events, list)):
+			events = [events]
+		for event in events:
+			event_listeners = getattr(cls, "_event_listeners_", SOME_OBJ)
+			if(event_listeners == SOME_OBJ):
+				event_listeners = {}
+				setattr(cls, "_event_listeners_", event_listeners)
+			handlers = event_listeners.get(event)
+			if(handlers == None):
+				event_listeners[event] = handlers = []
+			handlers.append(func)
 
-	def after_create(self):
+	@classmethod
+	def _trigger_event(cls, event, obj):
+		handlers = cls._event_listeners_.get(event)
+		if(not handlers):
+			return
+		for handler in handlers:
+			handler(obj)
+
+	def before_update(self):
 		pass
 
 	def commit(self, force=False):
 		cls = self.__class__
 		committed = False
 
-		self.before_update()
 		if(self.__is_new): # try inserting
-
+			cls._trigger_event(EVENT_BEFORE_CREATE, self)
 			if(not self._set_query_updates):
 				return self # nothing to update
 			shard_key_name = cls._shard_key_
@@ -679,7 +724,7 @@ class Model(object):
 				#copy the dict to another
 				self.reinitialize_from_doc(dict(self._set_query_updates))
 				#hook to do something for newly created db entries
-				self.after_create()
+				cls._trigger_event(EVENT_AFTER_CREATE, self)
 
 			except DuplicateKeyError as ex:
 
@@ -716,7 +761,12 @@ class Model(object):
 			if(not _update_query):
 				return self # nothing to update
 
+			cls._trigger_event(EVENT_BEFORE_UPDATE, self)
+
 			self.update(_update_query) # , hint=self.__class__._pk_attrs)
+
+			cls._trigger_event(EVENT_AFTER_UPDATE, self)
+
 
 		#clear and reset pk to new
 		self.pk(renew=True)
@@ -731,6 +781,8 @@ class Model(object):
 		if(_Model._is_secondary_shard):
 			raise Exception("Cannot delete secondary shard item")
 		#Note: when we know the _id and the shard we basically delete them by _id
+
+		_Model._trigger_event(EVENT_BEFORE_DELETE, self)
 
 		#delete it from secondary shards first
 		for _shard_key, _seconday_shard in _Model._secondary_shards_.items():
@@ -755,6 +807,9 @@ class Model(object):
 			)
 		if(_Model.__cache__):
 			_Model.__cache__.delete(self.pk_tuple())
+
+		_Model._trigger_event(EVENT_AFTER_DELETE, self)
+
 
 	@classmethod
 	def remove_from_cache(cls, *_objs):
@@ -783,6 +838,22 @@ class CollectionTracker(Model):
 	_id = Attribute(str) # db_name__collection_name
 	db_nodes = Attribute(list)
 	new_db_nodes = Attribute(list) # if resharding is in progress
+
+	def set_new_db_nodes(self, new_db_nodes):
+		self.new_db_nodes = new_db_nodes
+		# find LCS
+
+#Control Jobs
+class ControlJobs(Model):
+	_db_name_ = "control"
+	_collection_name_ = "jobs"
+
+	_id = Attribute(str)
+	db = Attribute(str)
+	collection = Attribute(str)
+	from_node = Attribute(str)
+	to_node = Attribute(str)
+	
 
 
 
@@ -873,6 +944,9 @@ def initialize_model(Model):
 	# { shard_key : Shard } #a shard is a model class just like a normal table class
 	Model._secondary_shards_ = {}
 
+	Model._event_listeners_ = getattr(Model, "_event_listeners_", {})
+	#some default event
+	Model.on(EVENT_BEFORE_UPDATE, lambda obj: obj.before_update())
 
 	_pymongo_indexes_to_create = []
 	Model._pk_is_unique_index = False
@@ -976,7 +1050,7 @@ def initialize_model(Model):
 
 	IS_DEBUG and print("#MONGO collection tracker key", Model._collection_tracker_key_)
 
-	if(Model not in [CollectionTracker] and not Model._db_nodes_):
+	if(Model not in [CollectionTracker, ControlJobs] and not Model._db_nodes_):
 		collection_tracker = CollectionTracker.get(Model._collection_tracker_key_)
 		if(not collection_tracker):
 			print(

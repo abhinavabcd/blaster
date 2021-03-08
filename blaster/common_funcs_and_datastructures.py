@@ -427,24 +427,23 @@ def sanitize_email_id(email_id, plus_allowed=True):
 
 
 PHONE_NUMBER_REGEX = re.compile("^\+?[0-9]+")
-def sanitize_phone_number(phone_number, country_code):
+def sanitize_phone_number(phone_number, country_phone_code=None, iso2_country_code=None):
 	if(not phone_number):
 		return None
-	phone_number = phone_number.strip().lower()
+	phone_number = phone_number.replace(" ", "").strip().lower()
 	if(not PHONE_NUMBER_REGEX.match(phone_number)):
 		return None
 
 	try:
 		phone_number = PhoneNumberObj.parse_phone_number(
 			phone_number,
-			iso2_country_code=country_code
+			country_phone_code=country_phone_code,
+			iso2_country_code=iso2_country_code
 		).phone_number
 	except Exception as ex:
 		return None
 
 	return phone_number
-
-
 
 
 # first minus second

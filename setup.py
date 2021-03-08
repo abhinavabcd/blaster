@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
 	name='blaster-server',
 	packages=find_packages("."),
-	version='0.0.332b',
+	version='0.0.333b',
 	license='MIT',
 	description='Gevent based python server built from scratch',
 	author='Abhinav Reddy',                   # Type in your name
