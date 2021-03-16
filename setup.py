@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
 	name='blaster-server',
 	packages=find_packages("."),
-	version='0.0.333b',
+	version='0.0.334',
 	license='MIT',
 	description='Gevent based python server built from scratch',
 	author='Abhinav Reddy',                   # Type in your name
@@ -13,10 +13,9 @@ setup(
 	keywords=['server', 'superfast', 'just like flask but minimal and fast'],
 	install_requires=[            # I get to this in a second
 		"wheel>=0.34.2",
-		"boto3>=1.13.19",
-		"botocore>=1.16.19",
+		"boto3>=1.17.28",
+		"botocore>=1.20.28",
 		"pytz>=2020.1",
-		"python-dateutil>=2.8.1",
 		"gevent>=20.9.0",
 		"greenlet>=0.4.16",
 		"pymongo>=3.10.1",

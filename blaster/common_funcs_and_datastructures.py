@@ -888,12 +888,13 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000):
 	#keep parsing output
 	def process_output(proc_out, proc_in):
 		while(state.is_running):
-			_out = proc_out.read(1024)
+			_out = proc_out.read(1)
 			if(not _out):
 				break
+			_out = _out.decode()
 			#add to our input
 			state.total_output += _out
-			if(len(state.total_output) > max_buf):
+			if(len(state.total_output) > 2 * max_buf):
 				state.total_output = state.total_output[-max_buf:]
 
 			if(output_parser):
@@ -907,12 +908,13 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000):
 
 	def process_error(proc_err, proc_in):
 		while(state.is_running):
-			_err = proc_err.read(1024)
+			_err = proc_err.read(1)
 			if(not _err):
 				break
+			_err = _err.decode()
 			#add to our input
 			state.total_err += _err
-			if(len(state.total_err) > max_buf):
+			if(len(state.total_err) > 2 * max_buf):
 				state.total_err = state.total_err[-max_buf:]
 			if(output_parser):
 				#parse the output and if it returns something
@@ -923,12 +925,13 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000):
 			else:
 				print(_err, end="", flush=True)
 
-	
 	if(isinstance(cmd, str) and not shell):
 		cmd = shlex.split(cmd)
 
-	proc = subprocess.Popen(cmd,
-		stdin=subprocess.PIPE,
+	dup_stdin = os.dup(sys.stdin.fileno()) if shell else subprocess.PIPE
+	proc = subprocess.Popen(
+		cmd,
+		stdin=dup_stdin,
 		stdout=subprocess.PIPE,
 		stderr=subprocess.PIPE,
 		shell=shell,
@@ -936,20 +939,26 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000):
 	)
 	state.is_running = True
 
-	proc_stdin = FileObject(proc.stdin)
-	proc_stdout = FileObject(proc.stdout)
-	proc_stderr = FileObject(proc.stderr)
-	#process output
-	output_parser_thread = gevent.spawn(
-		process_output,
-		proc_stdout,
-		proc_stdin
+	#process output reader
+	output_parser_thread = Thread(
+		target=process_output,
+		args=(
+			proc.stdout,
+			proc.stdin
+		)
 	)
-	err_parser_thread = gevent.spawn(
-		process_error,
-		proc_stderr,
-		proc_stdin
+	#process err reader
+	err_parser_thread = Thread(
+		target=process_error,
+		args=(
+			proc.stderr,
+			proc.stdin
+		)
 	)
+	output_parser_thread.start()
+	err_parser_thread.start()
+
+	os.close(dup_stdin) if dup_stdin != subprocess.PIPE else None
 
 	#just keep printing error
 	#wait for process to terminate
