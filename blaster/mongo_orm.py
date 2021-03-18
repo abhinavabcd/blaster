@@ -19,7 +19,7 @@ EVENT_BEFORE_CREATE = 3
 EVENT_AFTER_CREATE = 4
 
 #just a random constant object to check for non existent keys without catching KeyNotExist exception
-SOME_OBJ = object()
+_OBJ_END_ = object()
 
 class MultiMapIterator:
 	func_and_iterators = None
@@ -208,8 +208,8 @@ class Model(object):
 
 			def pop(this, k, default=None):
 				#not in initializing mode
-				popped_val = super(DictObj, this).pop(k, SOME_OBJ)
-				if(popped_val == SOME_OBJ):
+				popped_val = super(DictObj, this).pop(k, _OBJ_END_)
+				if(popped_val == _OBJ_END_):
 					popped_val = default
 				#if not initializing and has value set remove it form mongo
 				elif(not _initializing):
@@ -549,29 +549,29 @@ class Model(object):
 		#map of collection: [_query]
 		collections_to_query = {}
 		for _query in queries:
+			not_possible_in_the_secondary_shard = True
 			shard_key = _query.get(cls._shard_key_)
-			if(shard_key):
-				collection_shards = cls.get_collections_from_shard_key(shard_key)
-				for collection_shard in collection_shards:
-					_key = id(collection_shard)
-					shard_and_queries = collections_to_query.get(_key)
-					if(shard_and_queries == None):
-						collections_to_query[_key]\
-							= shard_and_queries \
-							= (collection_shard, [], cls)
-					shard_and_queries[1].append(_query)
-
-			else: # try secondary shards to query
+			if(not shard_key):
+				# querying on secondary shards as main shard key doesn't exist
+				# so try each secondary shard and test if we can query on it
+				# otherwise we go with primary shard
 				for _shard_key_name, _shard in cls._secondary_shards_.items():
-					shard_key = _query.get(_shard_key_name, SOME_OBJ)
-					if(shard_key == SOME_OBJ):
+					shard_key = _query.get(_shard_key_name, _OBJ_END_)
+					if(shard_key == _OBJ_END_):
 						continue
 					#extract keys from the query to create new secondary shard query
+					not_possible_in_the_secondary_shard = False
 					secondary_shard_query = {}
-					for attr in _shard.attributes:
-						_query_attr = _query.get(attr, SOME_OBJ)
-						if(_query_attr != SOME_OBJ):
-							secondary_shard_query[attr] = _query_attr
+					for query_attr_name, query_attr_val in _query.items():
+						attr_exists_in_shard = _shard.attributes.get(query_attr_name, _OBJ_END_)
+						if(attr_exists_in_shard == _OBJ_END_):
+							not_possible_in_the_secondary_shard = True
+							break
+						secondary_shard_query[query_attr_name] = query_attr_val
+
+					if(not_possible_in_the_secondary_shard):
+						#try next secondary shard
+						continue
 
 					secondary_collection_shards = _shard._Model_.get_collections_from_shard_key(shard_key)
 					for collection_shard in secondary_collection_shards:
@@ -582,6 +582,19 @@ class Model(object):
 								= shard_and_queries \
 								= (collection_shard, [], _shard._Model_)
 						shard_and_queries[1].append(secondary_shard_query)
+					break
+
+			if(not_possible_in_the_secondary_shard):
+				#query on the primary shard
+				collection_shards = cls.get_collections_from_shard_key(shard_key)
+				for collection_shard in collection_shards:
+					_key = id(collection_shard)
+					shard_and_queries = collections_to_query.get(_key)
+					if(shard_and_queries == None):
+						collections_to_query[_key]\
+							= shard_and_queries \
+							= (collection_shard, [], cls)
+					shard_and_queries[1].append(_query)
 
 		#if we did not find any possible shard to query
 		# we query all primary shards and assemble queries using chain
@@ -657,8 +670,8 @@ class Model(object):
 		if(not isinstance(events, list)):
 			events = [events]
 		for event in events:
-			event_listeners = getattr(cls, "_event_listeners_", SOME_OBJ)
-			if(event_listeners == SOME_OBJ):
+			event_listeners = getattr(cls, "_event_listeners_", _OBJ_END_)
+			if(event_listeners == _OBJ_END_):
 				event_listeners = {}
 				setattr(cls, "_event_listeners_", event_listeners)
 			handlers = event_listeners.get(event)
@@ -705,8 +718,8 @@ class Model(object):
 				for shard_key, _shard in cls._secondary_shards_.items():
 					_secondary_insert_values = {}
 					for attr in _shard.attributes:
-						_insert_attr = self._set_query_updates.get(attr, SOME_OBJ)
-						if(_insert_attr != SOME_OBJ):
+						_insert_attr = self._set_query_updates.get(attr, _OBJ_END_)
+						if(_insert_attr != _OBJ_END_):
 							_secondary_insert_values[attr] = _insert_attr
 					#use the same id of the document
 					_secondary_insert_values["_id"] = _id

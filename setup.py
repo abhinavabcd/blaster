@@ -22,9 +22,9 @@ setup(
 		"elasticsearch>=6.1.1",
 		"ujson>=2.0.3",
 		"python-dateutil>=2.8.1",
-		"requests>=2.23.0",
+		"requests>=2.25.1",
 		"requests-toolbelt>=0.9.1",
-		"requests-aws4auth>=0.9",
+		"requests-aws4auth>=1.0.1",
 		"PyMySQL>=0.9.3",
 	],
 	classifiers=[
