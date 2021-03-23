@@ -8,7 +8,7 @@ from collections import OrderedDict
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 from pymongo import ReturnDocument, ReadPreference
-from .common_funcs_and_datastructures import jump_hash, LRUCache
+from .common_funcs_and_datastructures import jump_hash, LRUCache, cur_ms, list_diff2
 from .config import IS_DEBUG
 
 EVENT_BEFORE_DELETE = -2
@@ -148,6 +148,7 @@ class Model(object):
 			_query = {"$or": to_fetch_pks}
 			if(to_fetch_ids):
 				to_fetch_pks.append({"_id": {"$in": to_fetch_ids}})
+
 			ret = list(chain(from_cache, cls.query(_query)))
 			if(is_single_item):
 				if(ret):
@@ -555,9 +556,9 @@ class Model(object):
 				# querying on secondary shards as main shard key doesn't exist
 				# so try each secondary shard and test if we can query on it
 				# otherwise we go with primary shard
-				for _shard_key_name, _shard in cls._secondary_shards_.items():
-					shard_key = _query.get(_shard_key_name, _OBJ_END_)
-					if(shard_key == _OBJ_END_):
+				for secondary_shard_key_name, _shard in cls._secondary_shards_.items():
+					secondary_shard_key = _query.get(secondary_shard_key_name, _OBJ_END_)
+					if(secondary_shard_key == _OBJ_END_):
 						continue
 					#extract keys from the query to create new secondary shard query
 					not_possible_in_the_secondary_shard = False
@@ -573,7 +574,7 @@ class Model(object):
 						#try next secondary shard
 						continue
 
-					secondary_collection_shards = _shard._Model_.get_collections_from_shard_key(shard_key)
+					secondary_collection_shards = _shard._Model_.get_collections_from_shard_key(secondary_shard_key)
 					for collection_shard in secondary_collection_shards:
 						_key = id(collection_shard)
 						shard_and_queries = collections_to_query.get(_key)
@@ -690,7 +691,7 @@ class Model(object):
 	def before_update(self):
 		pass
 
-	def commit(self, force=False):
+	def commit(self, force=False, ignore_exceptions=None):
 		cls = self.__class__
 		committed = False
 
@@ -741,6 +742,9 @@ class Model(object):
 
 			except DuplicateKeyError as ex:
 
+				if(ignore_exceptions and DuplicateKeyError in ignore_exceptions):
+					return None
+
 				if(not force):
 					raise(ex) # re reaise
 
@@ -771,7 +775,7 @@ class Model(object):
 				_update_query["$set"] = self._set_query_updates
 			if(self._other_query_updates):
 				_update_query.update(self._other_query_updates)
-			if(not _update_query):
+			if(not _update_query and not force):
 				return self # nothing to update
 
 			cls._trigger_event(EVENT_BEFORE_UPDATE, self)
@@ -850,24 +854,50 @@ class CollectionTracker(Model):
 
 	_id = Attribute(str) # db_name__collection_name
 	db_nodes = Attribute(list)
-	new_db_nodes = Attribute(list) # if resharding is in progress
+	primary_shard_key = Attribute(str)
+	secondary_shard_keys = Attribute(list)
 
-	def set_new_db_nodes(self, new_db_nodes):
-		self.new_db_nodes = new_db_nodes
-		# find LCS
 
-#Control Jobs
+'''
+Control Jobs
+- 	every time a job is completed, check if it has parent,
+	goto parent and check if all child jobs are finished and mark it complete
+'''
 class ControlJobs(Model):
 	_db_name_ = "control"
 	_collection_name_ = "jobs"
 
 	_id = Attribute(str)
+	parent__id = Attribute(str)
+	num_child_jobs = Attribute(int, default=0) # just for reconcillation
+	_type = Attribute(int) # reshard=>0, create_secondary_index=>1, create_primary_index=>2
 	db = Attribute(str)
 	collection = Attribute(str)
-	from_node = Attribute(str)
-	to_node = Attribute(str)
-	
+	status = Attribute(int, default=0) # 0=>not started, 1=>progress, 2=>completed
+	uid = Attribute(str) # unique identifier not to duplicate jobs
 
+	worker_id = Attribute(str) # worker id
+	worker_should_update_within_ms = Attribute(int, default=60000) # contract that worker should update every few millis
+	#work data
+	data = Attribute(dict)
+	data1 = Attribute(dict)
+	created_at = Attribute(int, default=cur_ms)
+	updated_at = Attribute(int, default=cur_ms)
+
+	_primary_index_ = [
+		(db, collection, _type, uid),
+		(db, collection, _type, status, {"unique": False}),
+	]
+
+	_secondary_index_ = [
+		(parent__id, {"unique": False, "do_not_shard": True})
+	]
+
+	##Constants
+	CREATE_SECONDARY_SHARD = 1
+
+	def before_update(self):
+		self.updated_at = cur_ms()
 
 
 _cached_mongo_clients = {}
@@ -1019,21 +1049,21 @@ def initialize_model(Model):
 				tuple(_secondary_shard_index)
 			)
 
-		#set the primary key
-		#prefer unique index as the pk
-		if(	Model._shard_key_ == _index_shard_key
-			and (
-					not Model._pk_attrs
-					or (is_unique_index and not Model._pk_is_unique_index)
-			)
-		):
-			Model._pk_is_unique_index = is_unique_index
-			Model._pk_attrs = _pk_attrs = OrderedDict()
-			for i in pymongo_index: # first unique index
-				_pk_attrs[i[0]] = 1
+		ignore_index_creation = False
+		if(	Model._shard_key_ == _index_shard_key or do_not_shard):
+			#set the primary key
+			#prefer unique index as the pk
+			if(not Model._pk_attrs
+				or (is_unique_index and not Model._pk_is_unique_index)
+			):
+				Model._pk_is_unique_index = is_unique_index
+				Model._pk_attrs = _pk_attrs = OrderedDict()
+				for i in pymongo_index: # first unique index
+					_pk_attrs[i[0]] = 1
+		else:
+			ignore_index_creation = True
 
 		#check for indexes to ignore
-		ignore_index_creation = False
 		if(pymongo_index[0][0] == "_id"):
 			ignore_index_creation = True
 
@@ -1059,35 +1089,63 @@ def initialize_model(Model):
 
 	##find tracking nodes
 	Model._collection_tracker_key_ = "%s__%s"%(Model._db_name_, Model._collection_name_)
-	Model._db_nodes_ = getattr(Model, "_db_nodes_", None)
 
 	IS_DEBUG and print("#MONGO collection tracker key", Model._collection_tracker_key_)
 
-	if(Model not in [CollectionTracker, ControlJobs] and not Model._db_nodes_):
+	if(Model not in [CollectionTracker, ControlJobs]):
 		collection_tracker = CollectionTracker.get(Model._collection_tracker_key_)
-		if(not collection_tracker):
+		if(not collection_tracker
+				or not collection_tracker.db_nodes
+				or not collection_tracker.primary_shard_key
+		):
 			print(
 				"#MONGOORM_IMPORTANT_INFO : "
 				"Collection tracker entry not present for '%s'.."
 				"creating table in control node for this time in database '%s'. "
 				"You may want to talk to dba team to move to a proper node"%(Model.__name__, Model._db_name_)
 			)
-			db_nodes = [{
-				"hosts": collection_tracker_db_node.hosts,
-				"replica_set": collection_tracker_db_node.replica_set,
-				"username": collection_tracker_db_node.username,
-				"db_name": Model._db_name_
-			} for collection_tracker_db_node in CollectionTracker._db_nodes_]
+
+			#check if the Model already has _db_nodes_
+			db_nodes = getattr(Model, "_db_nodes_", None) or [
+						{
+							"hosts": init_db_nodes.hosts,
+							"replica_set": init_db_nodes.replica_set,
+							"username": init_db_nodes.username,
+							"db_name": Model._db_name_
+						} for init_db_nodes in CollectionTracker._db_nodes_
+					]
 
 			collection_tracker = CollectionTracker(
 				_id=Model._collection_tracker_key_,
-				db_nodes=db_nodes
-			).commit()
+				db_nodes=db_nodes,
+				primary_shard_key=Model._shard_key_,
+				secondary_shard_keys=list(Model._secondary_shards_.keys())
+			).commit(force=True)
 
 		Model._db_nodes_ = [DatabaseNode(**_db_node) for _db_node in collection_tracker.db_nodes]
+		#TODO: find new secondary shards by comparing collection_tracker.secondary_shard_keys, Model._secondary_shards_.keys()
+		#and create a job to create and reindex all data to secondary index
+		if(collection_tracker.primary_shard_key != Model._shard_key_):
+			raise Exception("#MONGO_EXCEPTION: Primary shard key changed for ", Model)
 
+		#create diff jobs
+		to_create_secondary_index, to_delete_secondary_index = list_diff2(
+			Model._secondary_shards_.keys(),
+			collection_tracker.secondary_shard_keys
+		)
+		for shard_key in to_create_secondary_index:
+			try:
+				ControlJobs(
+					db=Model._db_name_,
+					collection=Model._collection_name_,
+					_type=ControlJobs.CREATE_SECONDARY_SHARD,
+					uid=shard_key
+				).commit()
+				IS_DEBUG and print("#MONGO: create a control job to add secondary shard", Model, shard_key)
+			except DuplicateKeyError as ex:
+				pass
 
-
+	#TODO: create or delete index using control jobs
 	for pymongo_index, additional_mongo_index_args in _pymongo_indexes_to_create:
 		mongo_index_args = {"unique": True}
 		mongo_index_args.update(**additional_mongo_index_args)
@@ -1134,18 +1192,19 @@ def initialize_model(Model):
 
 #initialize control Tr
 #initialize all other nodes
-def initialize_mongo(collection_tracker_db_node, default_db_name=None):
+def initialize_mongo(init_db_nodes, default_db_name=None):
 
 	default_db_name = default_db_name or "temp_db"
 	#initialize control db
-	if(isinstance(collection_tracker_db_node, dict)):
-		collection_tracker_db_node = DatabaseNode(**collection_tracker_db_node)
+	if(isinstance(init_db_nodes, dict)):
+		init_db_nodes = DatabaseNode(**init_db_nodes)
 	#check connection to mongodb
-	collection_tracker_db_node.mongo_connection.server_info()
+	init_db_nodes.mongo_connection.server_info()
 
 	#initialize control db
-	CollectionTracker._db_nodes_ = [collection_tracker_db_node]
-	initialize_model(CollectionTracker)
+	CollectionTracker._db_nodes_ = [init_db_nodes]
+	ControlJobs._db_nodes_ = [init_db_nodes]
+	initialize_model([CollectionTracker, ControlJobs])
 
 	#set default db name for each class
 	for cls in Model.__subclasses__():

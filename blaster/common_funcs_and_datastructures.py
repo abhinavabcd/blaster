@@ -453,6 +453,34 @@ def list_diff(first, second):
 	second = set(second)
 	return [item for item in first if item not in second]
 
+# what are added vs what need to be deleted from first
+#no order
+def list_diff2(first, second):
+	if(not first and second):
+		return [], second
+	if(second == None):
+		return first, []
+	second = set(second)
+	first = set(first)
+	# to add and delete
+	return [item for item in first if item not in second],\
+		[item for item in second if item not in first]
+
+# [TODO:] returns least operations to modify first-second
+# hamiltonian distance
+def list_diff3(first, second):
+	if(not first and second):
+		return [], second
+	if(second == None):
+		return first, []
+	second = set(second)
+	first = set(first)
+	# to add and delete
+	return [item for item in first if item not in second],\
+		[item for item in second if item not in first]
+
+
+
 # a dummy object with given keys,values
 class DummyObject:
 	entries = None
