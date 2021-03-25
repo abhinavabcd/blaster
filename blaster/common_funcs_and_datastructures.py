@@ -98,6 +98,76 @@ class LRUCache:
 			ret[key] = val.to_son() if hasattr(val, "to_son") else val
 		return ret
 
+class ExpiringCache:
+	cache = None
+	capacity = None
+	ttl = None
+
+	#ttl in millis, 5 minutes default
+	def __init__(self, capacity, items=None, ttl=5 * 60 * 1000):
+		self.capacity = capacity
+		self.cache = collections.OrderedDict()
+		self.ttl = ttl
+		if(items):
+			for k, v in items:
+				self.set(k, v)
+
+	def get(self, key, default=None):
+		try:
+			#remove and reinsert into
+			#ordered dict to move to recent
+			cur_timestamp = cur_ms()
+			timestamp_and_value = self.cache.get(key)
+			if(not timestamp_and_value):
+				return default
+
+			timestamp, value = timestamp_and_value
+			if(cur_timestamp < timestamp + self.ttl):
+				return value
+			else:
+				#remove if expired
+				self.cache.pop(key, None)
+
+			return default
+		except KeyError:
+			return default
+
+
+	def set(self, key, value):
+		removed_entries = []
+		try:
+			self.cache.pop(key)
+		except KeyError:
+			#new entry so cleanup space if it's beyond capacity
+			cur_timestamp = cur_ms()
+			while(len(self.cache) >= self.capacity):
+				_key, (timestamp, _value) = self.cache.popitem(last=False)
+				if(cur_timestamp < timestamp + self.ttl):
+					removed_entries.append((_key, _value))
+
+		self.cache[key] = (cur_ms(), value)
+		
+		return removed_entries
+
+	def exists(self, key):
+		return self.cache.get(key, SOME_OBJ) != SOME_OBJ
+		
+	def delete(self, key):
+		return self.cache.pop(key, None)
+	
+	def clear(self):
+		return self.cache.clear()
+	
+	def to_son(self):
+		ret = {}
+		cur_timestamp = cur_ms()
+		for key, _val in self.cache.items():
+			timestamp, val = _val
+			if(cur_timestamp < timestamp + self.ttl):
+				ret[key] = val.to_son() if hasattr(val, "to_son") else val
+		return ret
+
+
 #get SON of the fields from any generic python object
 def to_son(obj):
 	ret = obj.__dict__

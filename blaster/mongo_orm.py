@@ -8,7 +8,7 @@ from collections import OrderedDict
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 from pymongo import ReturnDocument, ReadPreference
-from .common_funcs_and_datastructures import jump_hash, LRUCache, cur_ms, list_diff2
+from .common_funcs_and_datastructures import jump_hash, ExpiringCache, cur_ms, list_diff2
 from .config import IS_DEBUG
 
 EVENT_BEFORE_DELETE = -2
@@ -51,7 +51,7 @@ class Model(object):
 	_attrs = None
 	_pk_attrs = None
 
-	__cache__ = LRUCache(10000)
+	__cache__ = ExpiringCache(10000)
 	#instance level
 	__is_new = True
 	_set_query_updates = None
@@ -124,7 +124,7 @@ class Model(object):
 				else: # dict
 					_pk_tuple = []
 					for _k in cls._pk_attrs:
-						_pk_tuple.append(_pk.get(_k))
+						_pk_tuple.append(_pk[_k])
 					_pk_tuple = tuple(_pk_tuple)
 
 				#check already in cache
@@ -298,16 +298,16 @@ class Model(object):
 					if(isinstance(v, dict)):
 						v = self.get_custom_dict(k, v)
 					elif(v == None):
-						_default = getattr(_attr_type_obj, "default", None)
-						if(_default != None):
+						_default = getattr(_attr_type_obj, "default", _OBJ_END_)
+						if(_default != _OBJ_END_):
 							v = dict(_default)
 
 				elif(_attr_type_obj._type == list):
 					if(isinstance(v, list)):
 						v = self.get_custom_list(k, v)
 					elif(v == None):
-						_default = getattr(_attr_type_obj, "default", None)
-						if(_default != None):
+						_default = getattr(_attr_type_obj, "default", _OBJ_END_)
+						if(_default != _OBJ_END_):
 							v = list(_default)
 
 			else:
@@ -319,12 +319,12 @@ class Model(object):
 	def to_dict(self):
 		_json = {}
 		for k in self.__class__._attrs:
-			v = getattr(self, k, None)
-			if(v != None):
+			v = getattr(self, k, _OBJ_END_)
+			if(v != _OBJ_END_):
 				_json[k] = v
 
-		_id = getattr(self, '_id', None)
-		if(_id != None):
+		_id = getattr(self, '_id', _OBJ_END_)
+		if(_id != _OBJ_END_):
 			_json['_id'] = str(_id)
 		return _json
 
@@ -551,8 +551,8 @@ class Model(object):
 		collections_to_query = {}
 		for _query in queries:
 			not_possible_in_the_secondary_shard = True
-			shard_key = _query.get(cls._shard_key_)
-			if(not shard_key):
+			shard_key = _query.get(cls._shard_key_, _OBJ_END_)
+			if(shard_key == _OBJ_END_):
 				# querying on secondary shards as main shard key doesn't exist
 				# so try each secondary shard and test if we can query on it
 				# otherwise we go with primary shard
@@ -585,7 +585,7 @@ class Model(object):
 						shard_and_queries[1].append(secondary_shard_query)
 					break
 
-			if(not_possible_in_the_secondary_shard):
+			if(shard_key != _OBJ_END_ and not_possible_in_the_secondary_shard):
 				#query on the primary shard
 				collection_shards = cls.get_collections_from_shard_key(shard_key)
 				for collection_shard in collection_shards:
@@ -617,18 +617,15 @@ class Model(object):
 			if(limit):
 				ret = ret.limit(limit)
 
-			map_func = None
 			# we queried from the secondary shard, will not have all fields
 			if(_Model._is_secondary_shard and not _no_requery):
 				# do a requery to fetch full document
 				#TODO: make it batch wise fetch
 				def requery_from_secondary_doc(x):
 					return cls.get(cls.pk_from_doc(x))
-				map_func = requery_from_secondary_doc
+				multi_map_iterator.append((requery_from_secondary_doc, ret))
 			else:
-				map_func = cls.get_instance_from_document
-
-			multi_map_iterator.append((map_func, ret))
+				multi_map_iterator.append((cls.get_instance_from_document, ret))
 
 
 		threads = []
