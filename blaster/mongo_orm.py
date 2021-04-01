@@ -444,32 +444,40 @@ class Model(object):
 	#_add_query is more query other than pk
 	# for example, you can say update only when someother field > 0
 
-	def update(self, _update_query, more_conditions=None, force_secondary_update=None, **kwargs):
+	#force_update_secondary = [shard1, shard2]
+	def update(self, _update_query, more_conditions=None, force_update_secondary=None, **kwargs):
 		cls = self.__class__
 		
-		_query = dict(self.pk())
-		if(more_conditions == None):
-			more_conditions = {}
+		updated_doc = None
+		if(_update_query):
+			_query = dict(self.pk())
+			if(more_conditions == None):
+				more_conditions = {}
 
-		#TODO: add existing values to more_conditions to be
-		# super consistent on updates and probably
-		# raise concurrent update exception if not modified
-		_query.update(more_conditions)
+			#TODO: add existing values to more_conditions to be
+			# super consistent on updates and probably
+			# raise concurrent update exception if not modified
+			_query.update(more_conditions)
 
-		#get the shard where current object is
-		primary_collection_shard = cls.get_collection(
-			getattr(self, cls._shard_key_)
-		)
-		#query and update the document
-		updated_doc = primary_collection_shard.find_one_and_update(
-			_query,
-			_update_query,
-			return_document=ReturnDocument.AFTER,
-			**kwargs
-		)
-		IS_DEBUG and print("#MONGO: updated before and after",
-			cls, _query, self._original_doc, _update_query, updated_doc
-		)
+			#get the shard where current object is
+			primary_collection_shard = cls.get_collection(
+				getattr(self, cls._shard_key_)
+			)
+			#query and update the document
+			updated_doc = primary_collection_shard.find_one_and_update(
+				_query,
+				_update_query,
+				return_document=ReturnDocument.AFTER,
+				**kwargs
+			)
+			IS_DEBUG and print("#MONGO: updated before and after",
+				cls, _query, self._original_doc, _update_query, updated_doc
+			)
+		elif(force_update_secondary):
+			IS_DEBUG and print("#MONGO: force updating secondary shards", cls, self.pk(), force_update_secondary)
+			#we are foce updating secondary shards
+			self.updated_doc = self._original_doc
+
 		if(not updated_doc):
 			#update was unsuccessful
 			return None
@@ -485,7 +493,7 @@ class Model(object):
 
 			_shard_key_changed = self._original_doc.get(shard_key) != updated_doc.get(shard_key)
 
-			if(_shard_key_changed or force_secondary_update):
+			if(_shard_key_changed or (force_update_secondary and (shard_key in force_update_secondary))):
 				#delete from old shard
 				_secondary_collection.find_one_and_delete(_secondary_pk)
 				for attr in shard.attributes:
