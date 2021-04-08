@@ -134,8 +134,8 @@ class BufferedSocket():
 		return ret
 
 	def __getattr__(self, key):
-		ret = getattr(self.sock, key, SOME_OBJ)
-		if(ret == SOME_OBJ):
+		ret = getattr(self.sock, key, _OBJ_END_)
+		if(ret == _OBJ_END_):
 			raise AttributeError()
 		return ret
 
@@ -189,27 +189,26 @@ def deserialize_post_data(post_data_bytes, headers):
 	return _post_params
 
 
-SOME_OBJ = object()
+_OBJ_END_ = object()
 class RequestParams:
 	_post = None
 	_get = None
 	_cookies = None
-
 
 	def __init__(self):
 		self._get = SanitizedDict() # empty params by default
 
 	#searches in post and get
 	def get(self, key, default=None, **kwargs):
-		val = SOME_OBJ
+		val = _OBJ_END_
 		#try post params first
 		if(self._post):
-			val = self._post.get(key, default=SOME_OBJ, **kwargs)
+			val = self._post.get(key, default=_OBJ_END_, **kwargs)
 		#try get param next
-		if(val == SOME_OBJ and self._get):
-			val = self._get.get(key, default=SOME_OBJ, **kwargs)
+		if(val == _OBJ_END_ and self._get):
+			val = self._get.get(key, default=_OBJ_END_, **kwargs)
 
-		if(val == SOME_OBJ):
+		if(val == _OBJ_END_):
 			return default
 		return val
 
@@ -217,14 +216,14 @@ class RequestParams:
 		self._get[key] = val
 
 	def __getitem__(self, key):
-		ret = self.get(key, default=SOME_OBJ)
-		if(ret == SOME_OBJ):
+		ret = self.get(key, default=_OBJ_END_)
+		if(ret == _OBJ_END_):
 			raise LookupError()
 		return ret
 
 	def __getattr__(self, key):
-		ret = self.get(key, default=SOME_OBJ)
-		if(ret == SOME_OBJ):
+		ret = self.get(key, default=_OBJ_END_)
+		if(ret == _OBJ_END_):
 			raise AttributeError()
 		return ret
 
@@ -246,6 +245,20 @@ class RequestParams:
 	def to_dict(self):
 		return {"get": self._get, "post": self._post}
 
+class AutoRender:
+	body = None
+	template = None
+	frame_template = None
+	meta_tags = None
+	allowed_return_types = None
+
+	def __init__(self, body, template=None, frame_template=None, meta_tags=None, allowed_return_types=None):
+		self.body = body
+		self.template = template
+		self.frame_template = frame_template
+		self.meta_tags = meta_tags
+		self.allowed_return_types = allowed_return_types
+
 
 #contains all running apps
 _all_apps = set()
@@ -266,13 +279,9 @@ class App:
 	def route(self, regex, method="GET", name='', description=''):
 		def _decorator(func):
 			self.route_handlers.append((regex, func, method))
+			#return func as if nothing's decorated! (so you can call function as is)
+			return func
 
-			def new_func(*args, **kwargs):
-				return func(*args, **kwargs)
-
-			new_func._original = getattr(func, "_original", func)
-			return new_func
-		
 		return _decorator
 
 
@@ -325,6 +334,7 @@ class App:
 			if(len(handler) == 2):
 				handler = (handler[0], handler[1], "GET")
 			handlers_with_methods.append(handler)
+
 		#add them to all route handlers
 		self.route_handlers.extend(handlers_with_methods)
 
@@ -363,6 +373,22 @@ class App:
 	def stop(self):
 		self.stream_server.stop()
 		_all_apps.remove(self)
+
+	@classmethod
+	def response_body_to_parts(cls, ret):
+		status = response_headers = body = None
+		if(isinstance(ret, tuple)):
+			body_len = len(ret)
+			if(body_len > 0):
+				body = ret[-1]
+			if(body_len > 1):
+				response_headers = ret[-2]
+			if(body_len > 2):
+				status = str(ret[-3]).encode()
+		else:
+			body = ret
+
+		return status, response_headers, body
 
 	'''
 		all the connection handling magic happens here
@@ -421,16 +447,14 @@ class App:
 								chunk_size = int(buffered_socket.readline(), 16) # hex
 							#as bytes
 
-
-
-				##app specific headers
-				ret = status = response_headers = body = None
-
+				matched_handler = None
+				ret = None
 				for handler in self.request_handlers:
 					args = handler[0].match(request_path)
 					handler_methods = handler[1]
 					
 					if(args != None):
+						matched_handler = handler
 						func = handler_methods.get(request_type)
 						if(not func and request_type != "GET"):
 							#perform GET call by default
@@ -455,24 +479,14 @@ class App:
 							fargs = args.groups()
 							if(fargs):
 								ret = func(buffered_socket, *fargs , **kwargs)
-								break
 							else:
 								ret = func(buffered_socket, **kwargs)
-								break
+							break
 				
-
+				##app specific headers
 				#handle various return values from handler functions
 				if(ret != None):
-					if(isinstance(ret, tuple)):
-						body_len = len(ret)
-						if(body_len > 0):
-							body = ret[-1]
-						if(body_len > 1):
-							response_headers = ret[-2]
-						if(body_len > 2):
-							status = str(ret[-3]).encode()
-					else:
-						body = ret
+					(status, response_headers, body) = App.response_body_to_parts(ret)
 		
 					status = status or b'200 OK'
 					buffered_socket.send(b'HTTP/1.1 ', status, b'\r\n')
@@ -501,12 +515,55 @@ class App:
 						buffered_socket.send(b'Connection: keep-alive\r\n')
 
 					if(body != None): # if body doesn't exist , the handler function is holding the connection and handling it manually
+
+						if(isinstance(body, AutoRender)):
+							#just keep a reference as we overwrite body variable
+							auto_render_obj = body
+							return_type = request_params.get("return_type")
+
+							#if no template given or return type is json , try to return body dict
+							if(return_type == "json" or not body.template):
+								body = body.body
+
+							#if template file is given and body should be a dict for the template
+							elif(body.template and isinstance(body.body, dict)):
+								tmpl_rendered = body.template.render(
+									request_params=request_params,
+									**body.body
+								)
+
+								frame_template = body.frame_template
+								if(return_type == "content" or not frame_template):
+									body = tmpl_rendered # partial
+
+								else:
+									body = frame_template.render(
+										body_content=tmpl_rendered,
+										meta_tags=body.meta_tags
+									)
+
+							if(config.IS_DEBUG):
+								print(
+									"##API DEBUG",
+									json.dumps({
+										"PATH": request_path,
+										"REQUEST_METHOD": request_type,
+										"GET": request_params._get,
+										"REQUEST_BODY": request_params._post,
+										"REQUEST_CONTENT_TYPE": headers.get("content-type", b'').decode(),
+										"RESPONSE_STATUS": status,
+										"RESPONSE_HEADERS": response_headers,
+										"REPONSE_BODY": auto_render_obj.body
+									}, indent=4)
+								)
+
 						if(isinstance(body, (dict, list))):
 							body = json.dumps(body)
 						
 						#encode body
 						if(isinstance(body, str)):
 							body = body.encode()
+
 						buffered_socket.send(b'Content-Length: ', str(len(body)), b'\r\n\r\n')
 						buffered_socket.send(body)
 						

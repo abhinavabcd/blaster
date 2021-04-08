@@ -776,7 +776,8 @@ class SanitizedDict(SanitizedSetterGetter, dict):
 	#can pass escape_html=false if you want raw data
 	def get(self, key, default=None, escape_html=True, escape_quotes=True):
 		try:
-			val = self.__getitem__(key,
+			val = self.__getitem__(
+				key,
 				escape_html=escape_html,
 				escape_quotes=escape_quotes
 			)
@@ -989,7 +990,7 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000):
 			_out = proc_out.read(1)
 			if(not _out):
 				break
-			_out = _out.decode()
+			_out = _out.decode('utf-8', 'ignore')
 			#add to our input
 			state.total_output += _out
 			if(len(state.total_output) > 2 * max_buf):
@@ -1009,7 +1010,7 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000):
 			_err = proc_err.read(1)
 			if(not _err):
 				break
-			_err = _err.decode()
+			_err = _err.decode('utf-8', 'ignore')
 			#add to our input
 			state.total_err += _err
 			if(len(state.total_err) > 2 * max_buf):

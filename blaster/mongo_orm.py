@@ -476,7 +476,7 @@ class Model(object):
 		elif(force_update_secondary):
 			IS_DEBUG and print("#MONGO: force updating secondary shards", cls, self.pk(), force_update_secondary)
 			#we are foce updating secondary shards
-			self.updated_doc = self._original_doc
+			updated_doc = self._original_doc
 
 		if(not updated_doc):
 			#update was unsuccessful
@@ -496,7 +496,7 @@ class Model(object):
 			if(_shard_key_changed or (force_update_secondary and (shard_key in force_update_secondary))):
 				#delete from old shard
 				_secondary_collection.find_one_and_delete(_secondary_pk)
-				for attr in shard.attributes:
+				for attr, _attr_obj in shard.attributes.items():
 					new_value = updated_doc.get(attr)
 					_secondary_updates[attr] = new_value
 				_secondary_updates["_id"] = updated_doc["_id"]
