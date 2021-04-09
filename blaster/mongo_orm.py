@@ -295,7 +295,7 @@ class Model(object):
 			#change type of objects when initializing
 			if(self._initializing):
 				if(_attr_type_obj._type == dict):
-					if(isinstance(v, dict)):
+					if(not self.__is_new and isinstance(v, dict)):
 						v = self.get_custom_dict(k, v)
 					elif(v == None):
 						_default = getattr(_attr_type_obj, "default", _OBJ_END_)
@@ -303,7 +303,7 @@ class Model(object):
 							v = dict(_default)
 
 				elif(_attr_type_obj._type == list):
-					if(isinstance(v, list)):
+					if(not self.__is_new and isinstance(v, list)):
 						v = self.get_custom_list(k, v)
 					elif(v == None):
 						_default = getattr(_attr_type_obj, "default", _OBJ_END_)
@@ -464,15 +464,17 @@ class Model(object):
 				getattr(self, cls._shard_key_)
 			)
 			#query and update the document
+			IS_DEBUG and print("#MONGO: update before and query",
+				cls, _query, self._original_doc, _update_query
+			)
 			updated_doc = primary_collection_shard.find_one_and_update(
 				_query,
 				_update_query,
 				return_document=ReturnDocument.AFTER,
 				**kwargs
 			)
-			IS_DEBUG and print("#MONGO: updated before and after",
-				cls, _query, self._original_doc, _update_query, updated_doc
-			)
+			IS_DEBUG and print("#MONGO: after update::", cls, updated_doc)
+			
 		elif(force_update_secondary):
 			IS_DEBUG and print("#MONGO: force updating secondary shards", cls, self.pk(), force_update_secondary)
 			#we are foce updating secondary shards

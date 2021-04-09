@@ -245,19 +245,21 @@ class RequestParams:
 	def to_dict(self):
 		return {"get": self._get, "post": self._post}
 
-class AutoRender:
+class BlasterResponse:
 	body = None
-	template = None
+	templates = None
 	frame_template = None
 	meta_tags = None
-	allowed_return_types = None
 
-	def __init__(self, body, template=None, frame_template=None, meta_tags=None, allowed_return_types=None):
+	def __init__(self, body, template=None,
+			frame_template=None, templates=None, meta_tags=None
+		):
 		self.body = body
-		self.template = template
 		self.frame_template = frame_template
 		self.meta_tags = meta_tags
-		self.allowed_return_types = allowed_return_types
+		self.templates = {"content": template}
+		if(templates):
+			self.templates.update(templates)
 
 
 #contains all running apps
@@ -514,52 +516,50 @@ class App:
 					if(is_keep_alive):
 						buffered_socket.send(b'Connection: keep-alive\r\n')
 
-					if(body != None): # if body doesn't exist , the handler function is holding the connection and handling it manually
 
-						if(isinstance(body, AutoRender)):
+					if(body != None): # if body doesn't exist , the handler function is holding the connection and handling it manually
+						#just a variable to track api type responses
+						api_response = None
+						if(isinstance(body, BlasterResponse)):
 							#just keep a reference as we overwrite body variable
-							auto_render_obj = body
+							blaster_response_obj = body
+							api_response = blaster_response_obj.body
 							return_type = request_params.get("return_type")
+							templates = blaster_response_obj.templates
 
 							#if no template given or return type is json , try to return body dict
-							if(return_type == "json" or not body.template):
+							if(return_type == "json"):
 								body = body.body
 
-							#if template file is given and body should be a dict for the template
-							elif(body.template and isinstance(body.body, dict)):
-								tmpl_rendered = body.template.render(
-									request_params=request_params,
-									**body.body
-								)
-
-								frame_template = body.frame_template
-								if(return_type == "content" or not frame_template):
-									body = tmpl_rendered # partial
-
-								else:
-									body = frame_template.render(
-										body_content=tmpl_rendered,
-										meta_tags=body.meta_tags
+							else:
+								template_exists \
+									= (return_type and templates.get(return_type))\
+									or blaster_response_obj.templates.get("content")
+								#if template file is given and body should be a dict for the template
+								if(template_exists and isinstance(body.body, dict)):
+									tmpl_rendered = template_exists.render(
+										request_params=request_params,
+										**body.body
 									)
 
-							if(config.IS_DEBUG):
-								print(
-									"##API DEBUG",
-									json.dumps({
-										"PATH": request_path,
-										"REQUEST_METHOD": request_type,
-										"GET": request_params._get,
-										"REQUEST_BODY": request_params._post,
-										"REQUEST_CONTENT_TYPE": headers.get("content-type", b'').decode(),
-										"RESPONSE_STATUS": status,
-										"RESPONSE_HEADERS": response_headers,
-										"REPONSE_BODY": auto_render_obj.body
-									}, indent=4)
-								)
+									frame_template = body.frame_template
+									#if there is a return type, just retutn the template
+									#render the full frame
+									if(return_type or not frame_template):
+										body = tmpl_rendered # partial
+
+									else:
+										body = frame_template.render(
+											body_content=tmpl_rendered,
+											meta_tags=body.meta_tags
+										)
+								else: # template doesn't exist, return body as is
+									body = body.body
 
 						if(isinstance(body, (dict, list))):
+							api_response = body
 							body = json.dumps(body)
-						
+
 						#encode body
 						if(isinstance(body, str)):
 							body = body.encode()
@@ -571,6 +571,26 @@ class App:
 						if(not is_keep_alive):
 							socket.close()
 							process_next_http_request = False
+
+
+						#just some debug for apis
+						if(config.IS_DEBUG and api_response):
+							print(
+								"##API DEBUG",
+								json.dumps({
+									"PATH": request_path,
+									"REQUEST_METHOD": request_type,
+									"GET": request_params._get,
+									"REQUEST_BODY": request_params._post,
+									"REQUEST_CONTENT_TYPE": headers.get("content-type", b'').decode(),
+									"RESPONSE_STATUS": status,
+									"RESPONSE_HEADERS": response_headers,
+									"REPONSE_BODY": api_response
+								}, indent=4)
+							)
+						
+
+
 					else: # close headers and dont rehandle this connection(probably socket if used for sending data in callbacks etc)
 						buffered_socket.send(b'\r\n')
 						process_next_http_request = False
