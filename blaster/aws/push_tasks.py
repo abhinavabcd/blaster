@@ -101,13 +101,6 @@ def post_a_task(func, *args, **kwargs):
     else:
         return None
 
-    if(not config.sqs_url):
-        server_log("server_info", data="calling directly as not queue provided")
-        func = push_tasks.get(func_name, None)
-        func(*args, **kwargs)
-        return None
-
-
     now = datetime.utcnow().isoformat()
     task_id = get_random_id()
     message_body = {
@@ -118,10 +111,21 @@ def post_a_task(func, *args, **kwargs):
         "created_at": now
     }
     message_body = pickle.dumps(message_body)
+
+    if(not config.sqs_url):
+        message_body = pickle.loads(message_body)
+        server_log("server_info", data="calling directly as not queue provided")
+        func = push_tasks.get(
+            message_body.get("func_v2", ""),
+            None
+        )
+        func and func(*message_body.get("args", []), **message_body.get("kwargs", {}))
+        return None
+
     response = queue.send_message(
-            QueueUrl=config.sqs_url,
-            MessageBody=base64.a85encode(message_body).decode(),# to utf-8 string
-            DelaySeconds=1
+        QueueUrl=config.sqs_url,
+        MessageBody=base64.a85encode(message_body).decode(),# to utf-8 string
+        DelaySeconds=1
     )
     return response
     

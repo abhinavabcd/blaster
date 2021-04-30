@@ -231,6 +231,7 @@ def find_nth(haystack, needle, n):
 
 
 SOME_TIME_WHEN_WE_STARTED_THIS = 1471504855
+SOME_TIME_WHEN_WE_STARTED_THIS_MILLIS_WITH_10 = 16111506425808
 
 ### this function is inspired from instagram engineering post on generating 64bit keys with 12 bit shard_id inside it
 # __thread_data = LRUCache(10000)
@@ -256,6 +257,41 @@ def generate_64bit_key(shard_id): # shard id should be a 12 bit number
 	#shard_id|timestmap|random_number
 	
 	return _id
+
+def int_to_bytes(number: int) -> bytes:
+	return number.to_bytes(length=(8 + (number + (number < 0)).bit_length()) // 8, byteorder='big', signed=True)
+
+
+BASE_62_LIST = string.ascii_uppercase + string.digits + string.ascii_lowercase
+BASE_62_DICT = dict((c, i) for i, c in enumerate(BASE_62_LIST))
+
+def str_to_int(string, reverse_base=BASE_62_DICT):
+	length = len(reverse_base)
+	ret = 0
+	for i, c in enumerate(string[::-1]):
+		ret += (length ** i) * reverse_base[c]
+
+	return ret
+
+def int_to_str(integer, base=BASE_62_LIST):
+	if integer == 0:
+		return base[0]
+
+	length = len(base)
+	ret = ''
+	while integer != 0:
+		ret = base[integer % length] + ret
+		integer /= length
+
+	return ret
+
+def get_int_id():
+	return int(time.time() * 10000 - SOME_TIME_WHEN_WE_STARTED_THIS_MILLIS_WITH_10)
+
+def get_str_id():
+	return int_to_str(get_int_id())
+
+
 
 ##### protobuf + mysql utility functions
 def list_to_protobuf(values, message):
@@ -449,7 +485,7 @@ def get_random_id(length=10, include_timestamp=True):
 	'''returns a 10 character random string containing numbers lowercase upper case'''
 	'''http://stackoverflow.com/questions/2257441/random-string-generation-with-upper-case-letters-and-digits-in-python'''
 
-	key_str = ''.join(random.SystemRandom().choice(string.ascii_uppercase + string.digits+string.ascii_lowercase) for _ in range(length)) 
+	key_str = ''.join(random.SystemRandom().choice(BASE_62_LIST) for _ in range(length)) 
 	if(include_timestamp):
 		key_str = key_str + ("%d" % time.time())
 	#key_str = hashlib.md5(key_str).hexdigest()
