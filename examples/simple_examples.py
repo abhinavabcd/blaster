@@ -12,6 +12,9 @@ import os
 def do_test(sock , request_params=None, headers=None, post_data=None):
     return "<html><body>Hello World</body></html>"
 
+@route_handler("^/hello")
+def do_test(sock , request_params=None, headers=None, post_data=None):
+    return {"hello": "world"}
 
 ##directly return an object , server will automatically convert to json
 @route_handler("^/say/(.*)$")

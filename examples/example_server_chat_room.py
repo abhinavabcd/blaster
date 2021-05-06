@@ -4,7 +4,7 @@ Created on 22-Aug-2017
 @author: abhinav
 '''
 import blaster
-from blaster.config import IS_DEBUG
+from blaster.config import IS_DEV
 
 blaster.config.secrets = {"v0": "asdsadkjhsakjdhjksadasdasd"}
 

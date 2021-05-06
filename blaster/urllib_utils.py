@@ -14,8 +14,7 @@ import re
 from queue import Queue
 import time
 import ujson as json
-import six
-from .config import IS_DEBUG
+from .config import IS_DEV
 #enable any header format
 import http.client
 http.client._is_legal_header_name = re.compile(rb'[^\s][^:\r\n]*').fullmatch
@@ -37,8 +36,8 @@ def get_url_loader(actual_func):
         try:
             url_loader = url_loaders_queue.get(block=False)
         except Exception as ex:
-            http_logger = urllib.request.HTTPHandler(debuglevel=(1 if IS_DEBUG else 0))
-            https_logger = urllib.request.HTTPSHandler(debuglevel=(1 if IS_DEBUG else 0))
+            http_logger = urllib.request.HTTPHandler(debuglevel=(1 if IS_DEV else 0))
+            https_logger = urllib.request.HTTPSHandler(debuglevel=(1 if IS_DEV else 0))
             url_loader = urllib.request.build_opener(http_logger, urllib.request.HTTPCookieProcessor(), urllib.request.ProxyHandler(), https_logger, urllib.request.HTTPRedirectHandler())
             urllib.request.install_opener(url_loader)
         
@@ -60,8 +59,11 @@ def get_data(url, post=None, headers=None, method=None, url_loader=None, as_stri
     headers['Accept-encoding'] = 'gzip'
     ret = None
     try:
-        if(post and isinstance(post, six.text_type)):
-            post = post.encode()
+        if(post):
+            if(isinstance(post, (list, dict))):
+                post = json.dumps(post)
+            if(isinstance(post, str)):
+                post = post.encode()
         req = urllib.request.Request(url, data=post, headers=headers)
         if(method != None):
             req.get_method = lambda : method

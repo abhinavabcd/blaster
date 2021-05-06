@@ -1,5 +1,5 @@
 from blaster.common_funcs_and_datastructures import get_random_id, cur_ms
-from blaster.config import IS_DEBUG
+from blaster.config import IS_DEV
 from blaster.mongo_orm import Connection, Model, Attribute, init_mongo_cluster
 
 
@@ -28,7 +28,7 @@ class SalesAgent(Model):
 #call this function after you import all mongo db classes/models
 def initialize_mongo():
 	nodes = []
-	if IS_DEBUG:
+	if IS_DEV:
 		nodes.append(Connection(host="localhost", port=27017, db_name="xyz"))
 	else:
 		nodes.append(Connection(host="mongodb://mongo-0.mongo.default.svc/", port=27017, db_name="xyz"))

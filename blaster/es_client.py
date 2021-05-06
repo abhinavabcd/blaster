@@ -9,7 +9,7 @@ import urllib3
 import json
 from elasticsearch import Elasticsearch, RequestsHttpConnection
 from requests_aws4auth.aws4auth import AWS4Auth
-from .config import aws_config, es_aws_host, es_http_host, IS_DEBUG
+from .config import aws_config, es_aws_host, es_http_host, IS_DEV
 from .common_funcs_and_datastructures import cur_ms
 urllib3.disable_warnings()
 
@@ -58,4 +58,4 @@ def create_indexes_and_mappings(es_indexes_to_create, recreate_indexes=False):
 
 
         ret = es_conn.indices.create(index=index, body=index_config, ignore=400)
-        IS_DEBUG and print("es_index_create", cur_ms(), {"index": index, "status": ret})
+        IS_DEV and print("es_index_create", cur_ms(), {"index": index, "status": ret})

@@ -2,30 +2,37 @@ from gevent.queue import Queue, Empty
 import boto3
 
 from . import config
-from .config import aws_config, IS_DEBUG
+from .config import aws_config, IS_DEV
 #import umysql
 
 conn_pools = {}
-boto_session = None
-if(aws_config):
-    boto_session = boto3.session.Session(**aws_config)
+boto_sessions = {
+    0: None # 0 is the default boto session id
+}
 
 def get_dynamodb_conn():
-    if(IS_DEBUG):
-        return boto3.resource('dynamodb', endpoint_url='http://{endpoint}:{port}'.format(endpoint="127.0.0.1", port="8000"), aws_access_key_id=" ", aws_secret_access_key=" ", region_name="ap-south-1")
+    if(IS_DEV):
+        return boto3.resource(
+            'dynamodb',
+            endpoint_url='http://{endpoint}:{port}'.format(endpoint="127.0.0.1", port="8000"),
+            aws_access_key_id="",
+            aws_secret_access_key="",
+            region_name="ap-south-1"
+        )
     else:
-        return boto_session.resource('dynamodb')
+        return boto_sessions[0].resource('dynamodb')
 
 def get_s3_conn():
-    return boto_session.resource('s3')
+    return boto_sessions[0].resource('s3')
 
 def get_sqs_conn():
-    return boto_session.client('sqs')
+    return boto_sessions[0].client('sqs')
 
 def get_ses_conn():
-    return boto_session.client('ses', region_name="eu-west-1")
+    return boto_sessions[0].client('ses', region_name="eu-west-1")
 
 
+#default connection generators
 connection_generators = {
     "dynamodb": get_dynamodb_conn,
     "s3" : get_s3_conn,
@@ -33,13 +40,13 @@ connection_generators = {
     "ses": get_ses_conn
 }
 
-connection_generators.update(**config.connection_generators)
-
-
-
 def get_from_pool(pool_id):
-    conn = None
+    # check and initialize
+    if(boto_sessions[0] == None and aws_config):
+        boto_sessions[0] = boto3.session.Session(**aws_config)
+        connection_generators.update(**config.connection_generators)
 
+    conn = None
     conn_pool = conn_pools.get(pool_id, None)
     if (conn_pool == None):
         #if no conn_pool for given pool_id create and store in conn_pools
@@ -103,6 +110,7 @@ def use_connection_pool(**pool_args):
         return func_wrap
 
     return use_db_connection
+
 
 '''
 uses gevent.Queue to maintain pools

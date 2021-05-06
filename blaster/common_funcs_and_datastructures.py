@@ -40,7 +40,7 @@ import traceback
 
 from . import config
 from .websocket._core import WebSocket
-from .config import IS_DEBUG
+from .config import IS_DEV
 from .utils.xss_html import XssHtml
 from .utils.phone_number_utils import PhoneNumberObj
 
@@ -980,7 +980,7 @@ def static_file_handler(_base_folder_path_, default_file_path="index.html", file
 		file_data = cached_file_data.get(path, None)
 		resp_headers = None
 
-		if(not file_data or time.time() * 1000 - file_data[2] > 1000 if IS_DEBUG else 2 * 60 * 1000): # 1 millis
+		if(not file_data or time.time() * 1000 - file_data[2] > 1000 if IS_DEV else 2 * 60 * 1000): # 1 millis
 			gevent_lock.acquire()
 			file_hash_key = path + urlencode(request_params._get)[:400]
 			file_data = cached_file_data.get(file_hash_key, None)

@@ -9,9 +9,12 @@ secrets = {
 	"v0": "something_random_secret_here"
 }
 
-IS_DEBUG = True
+DEBUG_LEVEL = int(environ.get("DEBUG_LEVEL") or 1)
+IS_DEV = True
 if(environ.get('PROD') == "1"):
-	IS_DEBUG = False
+	IS_DEV = False
+
+
 
 aws_config = {
 	# 'aws_access_key_id': "A*****",

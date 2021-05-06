@@ -22,8 +22,8 @@ from gevent.server import StreamServer
 from gevent.pywsgi import WSGIServer
 from requests_toolbelt.multipart import decoder
 
-
-from .. import config
+from .. import config as blaster_config
+from ..config import IS_DEV, DEBUG_LEVEL
 from ..common_funcs_and_datastructures import cur_ms, LowerKeyDict, SanitizedDict
 
 _is_server_running = True
@@ -31,30 +31,27 @@ _is_server_running = True
 exit_listeners = []
 
 default_wsgi_headers = [
-							('Content-Type', 'text/html; charset=utf-8')
-					]
+	('Content-Type', 'text/html; charset=utf-8')
+]
 default_stream_headers = {
-								'Content-Type': 'text/html; charset=utf-8',
-								'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
-								'X-Content-Type-Options': 'nosniff',
-								'vary': 'Accept-Encoding',
-								'X-Frame-Options': 'SAMEORIGIN',
-								'X-UA-Compatible': 'IE=Edge',
-								'X-XSS-Protection': '0'
-						}
+	'Content-Type': 'text/html; charset=utf-8',
+	'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+	'X-Content-Type-Options': 'nosniff',
+	'vary': 'Accept-Encoding',
+	'X-Frame-Options': 'SAMEORIGIN',
+	'X-UA-Compatible': 'IE=Edge',
+	'X-XSS-Protection': '0'
+}
 
 ########some random constants
 HTTP_MAX_REQUEST_BODY_SIZE = 11 * 1024 * 1024 # 11 mb
 SLASH_N_ORDINAL = ord(b'\n')
 
 
-
 def server_log(log_type, cur_millis=None, **kwargs):
 	if(not cur_millis):
 		cur_millis = cur_ms()
 	print(log_type , cur_millis, json.dumps(kwargs))
-
-
 
 
 def find_new_line(arr):
@@ -183,7 +180,7 @@ def deserialize_post_data(post_data_bytes, headers):
 			or content_type_header == b'application/json'
 		):
 			_post_params.update(json.loads(post_data_str))
-		else:
+		else: # urlencoded form
 			_post_params.update(parse_qs_modified(post_data_str))
 
 	return _post_params
@@ -356,7 +353,7 @@ class App:
 		
 		#sort ascending because we iterated in reverse earlier
 		self.request_handlers.reverse()
-		if(config.IS_DEBUG):
+		if(IS_DEV):
 			for regex, method_handlers in self.request_handlers:
 				print(regex.pattern, method_handlers)
 
@@ -413,7 +410,7 @@ class App:
 				request_type, _request_line = request_line.split(" ", 1)
 				_http_protocol_index = _request_line.rfind(" ")
 				request_path = _request_line[: _http_protocol_index]
-				http_version = _request_line[_http_protocol_index + 1:]
+				#http_version = _request_line[_http_protocol_index + 1:]
 
 				query_start_index = request_path.find("?")
 				if(query_start_index != -1):
@@ -574,7 +571,7 @@ class App:
 
 
 						#just some debug for apis
-						if(config.IS_DEBUG and api_response):
+						if(IS_DEV and DEBUG_LEVEL > 1 and api_response):
 							print(
 								"##API DEBUG",
 								json.dumps({
@@ -602,8 +599,8 @@ class App:
 			except Exception as ex:
 				stacktrace_string = traceback.format_exc()
 				body = None
-				if(config.server_error_page):
-					body = config.server_error_page(
+				if(blaster_config.server_error_page):
+					body = blaster_config.server_error_page(
 						request_type,
 						request_path,
 						request_params,
@@ -626,7 +623,7 @@ class App:
 					path=request_path,
 					query_params=request_params.to_dict()
 				)
-				if(config.IS_DEBUG):
+				if(IS_DEV):
 					traceback.print_exc()
 				return
 
