@@ -47,9 +47,7 @@ def create_indexes_and_mappings(es_indexes_to_create, recreate_indexes=False):
             }
 
         index_config["mappings"] = {
-            "data": {
-                "properties" : index_to_create["mappings"]
-            }
+            "properties" : index_to_create["mappings"]
         }
 
         if(recreate_indexes):

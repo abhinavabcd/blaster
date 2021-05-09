@@ -61,7 +61,6 @@ def get_from_pool(pool_id):
         if(pool_id in connection_generators):
             conn = connection_generators[pool_id]()
 
-            
     return conn
 
 

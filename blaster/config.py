@@ -10,10 +10,9 @@ secrets = {
 }
 
 DEBUG_LEVEL = int(environ.get("DEBUG_LEVEL") or 1)
-IS_DEV = True
-if(environ.get('PROD') == "1"):
-	IS_DEV = False
-
+IS_DEV = 0 if environ.get("IS_PROD") == "1" else 1
+#staging is for production test instances
+IS_STAGING = not IS_DEV and environ.get("IS_STAGING") == "1"
 
 
 aws_config = {
