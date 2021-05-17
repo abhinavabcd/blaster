@@ -169,8 +169,8 @@ class Table(object):
                 #     'WriteCapacityUnits': 1
                 # }
                 #assuming billing is pay per request
-                #index_properties['BillingMode'] = "PAY_PER_REQUEST"
-            
+                index_properties['BillingMode'] = "PAY_PER_REQUEST"
+                
             if("projections" in attribute_dict):
                 index_properties['Projection'] = {'ProjectionType': 'INCLUDE',
                                                   'NonKeyAttributes': attribute_dict["projections"]

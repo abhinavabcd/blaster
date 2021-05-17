@@ -524,34 +524,28 @@ class App:
 							return_type = request_params.get("return_type")
 							templates = blaster_response_obj.templates
 
-							#if no template given or return type is json , try to return body dict
-							if(return_type == "json"):
-								body = body.body
+							#if no template given or return type is json , try to return body dict, else regular api_response
+							template_exists \
+								= (return_type and templates.get(return_type))\
+								or blaster_response_obj.templates.get("content")
+							#if template file is given and body should be a dict for the template
+							if(template_exists and isinstance(body.body, dict)):
+								tmpl_rendered = template_exists.render(
+									request_params=request_params,
+									**body.body
+								)
 
-							else:
-								template_exists \
-									= (return_type and templates.get(return_type))\
-									or blaster_response_obj.templates.get("content")
-								#if template file is given and body should be a dict for the template
-								if(template_exists and isinstance(body.body, dict)):
-									tmpl_rendered = template_exists.render(
-										request_params=request_params,
-										**body.body
+								frame_template = body.frame_template
+								#if there is a return type, just retutn the template
+								#render the full frame
+								if(return_type or not frame_template):
+									body = tmpl_rendered # partial
+
+								else:
+									body = frame_template.render(
+										body_content=tmpl_rendered,
+										meta_tags=body.meta_tags
 									)
-
-									frame_template = body.frame_template
-									#if there is a return type, just retutn the template
-									#render the full frame
-									if(return_type or not frame_template):
-										body = tmpl_rendered # partial
-
-									else:
-										body = frame_template.render(
-											body_content=tmpl_rendered,
-											meta_tags=body.meta_tags
-										)
-								else: # template doesn't exist, return body as is
-									body = body.body
 
 						if(isinstance(body, (dict, list))):
 							api_response = body
