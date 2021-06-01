@@ -95,7 +95,7 @@ class Table(object):
                     'AttributeName': field,
                     'AttributeType': get_attribute_type(attributes[field])
                 })
-            range_key = attribute_dict.get("range_key",None)
+            range_key = attribute_dict.get("range_key", None)
             if(range_key and not _fields_indexed.get(range_key, None)):
                 AttributeDefinitions.append({
                     'AttributeName': range_key,
@@ -128,8 +128,8 @@ class Table(object):
             field_object = self.instance.attributes[field]
             if(field_object.projections):
                 index_properties['Projection'] = {'ProjectionType': 'INCLUDE',
-                                                  'NonKeyAttributes': field_object.projections                                                 
-                                                 }
+                                                  'NonKeyAttributes': field_object.projections
+                                                }
             else:
                 index_properties['Projection'] = {'ProjectionType': 'KEYS_ONLY'}
 
@@ -145,7 +145,7 @@ class Table(object):
             }]
             if attribute_dict.get("range_key", None):
                 KeySchema.append({
-                        'AttributeName': attribute_dict.get("range_key"), 
+                        'AttributeName': attribute_dict.get("range_key"),
                         'KeyType': 'RANGE'
                 })
             index_properties = {
@@ -500,7 +500,7 @@ class Table(object):
             },
             'ReturnConsumedCapacity': 'TOTAL'
         }
-        projections = kwargs.get("projections",None)
+        projections = kwargs.get("projections", None)
         if(projections):
             params["RequestItems"]["ProjectionExpression"] = ",".join(projections)
         
@@ -596,7 +596,7 @@ class Table(object):
         if _condition_expression:
             params['ConditionExpression'] = _condition_expression
         _expression_attribute_values = kwargs.pop('ExpressionAttributeValues', {})
-        _expression_attribute_names =  kwargs.pop('ExpressionAttributeNames', {})
+        _expression_attribute_names = kwargs.pop('ExpressionAttributeNames', {})
         action_exp_dict = {}
         if update_fields:
             set_expression_str = ''
@@ -677,7 +677,7 @@ class Table(object):
         _expression_attribute_values = kwargs.pop('ExpressionAttributeValues', {})
         if _expression_attribute_values:
             params['ExpressionAttributeValues'] = _expression_attribute_values
-        _expression_attribute_names =  kwargs.pop('ExpressionAttributeNames', {})
+        _expression_attribute_names = kwargs.pop('ExpressionAttributeNames', {})
         if _expression_attribute_names:
             params['ExpressionAttributeNames'] = _expression_attribute_names
         return params

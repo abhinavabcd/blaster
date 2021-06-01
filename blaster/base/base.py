@@ -24,7 +24,7 @@ from requests_toolbelt.multipart import decoder
 
 from .. import config as blaster_config
 from ..config import IS_DEV, DEBUG_LEVEL
-from ..common_funcs_and_datastructures import cur_ms, LowerKeyDict, SanitizedDict
+from ..common_funcs_and_datastructures import cur_ms, SanitizedDict
 
 _is_server_running = True
 
@@ -151,46 +151,14 @@ def parse_qs_modified(qs, keep_blank_values=True, strict_parsing=False):
 			_dict[name] = value
 	return _dict
 
-#process data as json
-def deserialize_post_data(post_data_bytes, headers):
-	if(not post_data_bytes):
-		return None
-	_post_params = SanitizedDict()
-	content_type_header = headers.get("Content-Type", b'')
-	if(headers and content_type_header.startswith(b'multipart/form-data')):
-		for part in decoder.MultipartDecoder(post_data_bytes, content_type_header.decode()).parts:
-			content_disposition = part.headers.get(b'Content-Disposition')
-			parsed_part_headers = {}
-			for i in content_disposition.split(b';'):
-				key_val = i.split(b'=')
-				if(len(key_val) == 2):
-					key = key_val[0].strip()
-					val = key_val[1].strip(b'"\'').decode()
-					parsed_part_headers[key] = val
-			if(b'name' in parsed_part_headers):
-				_post_params[parsed_part_headers[b'name']] = {
-					"additional_part_headers": parsed_part_headers,
-					"data": part.content or part.text,
-					"part_headers": part.headers
-				}
-
-	else:
-		post_data_str = post_data_bytes.decode('utf-8')
-		if(post_data_str[0] == '{'
-			or content_type_header == b'application/json'
-		):
-			_post_params.update(json.loads(post_data_str))
-		else: # urlencoded form
-			_post_params.update(parse_qs_modified(post_data_str))
-
-	return _post_params
-
 
 _OBJ_END_ = object()
 class RequestParams:
 	_post = None
 	_get = None
 	_cookies = None
+	#cookies to send to client
+	_cookies_to_set = None
 
 	def __init__(self):
 		self._get = SanitizedDict() # empty params by default
@@ -236,11 +204,78 @@ class RequestParams:
 			return self._post.get(key, **kwargs)
 		return None
 
-	def COOKIES(self, key):
-		return self._cookies.get(key)
+	def COOKIES(self, key, cookie_value=_OBJ_END_):
+		ret = self._cookies.get(key)
+		if(cookie_value != _OBJ_END_):
+			if(self._cookies_to_set == None):
+				self._cookies_to_set = {}
+			if(isinstance(cookie_value, dict)):
+				_cookie_val = str(cookie_value.pop("value", "1"))
+				if(cookie_value):
+					_cookie_val += ";"
+					#other key=val atrributes of cookie
+					for k, v in cookie_value.items():
+						_cookie_val += (" " + k)
+						if(v is not True): # if mentioned as True just the key is suffice like httpsOnly, secureOnly
+							_cookie_val += "=%s;"%(str(v))
+				cookie_value = _cookie_val
+			if(isinstance(cookie_value, str)):
+				self._cookies_to_set[key] = cookie_value
+		return ret
+
+	def parse_request_body(self, post_data_bytes, headers):
+		if(not post_data_bytes):
+			return None
+		self._post = _post_params = SanitizedDict()
+		content_type_header = headers.get("Content-Type", "")
+		if(headers and content_type_header.startswith("multipart/form-data")):
+			for part in decoder.MultipartDecoder(post_data_bytes, content_type_header).parts:
+				content_disposition = part.headers.pop(b'Content-Disposition', None)
+				if(not content_disposition):
+					continue
+				attrs = {}
+				for i in content_disposition.split(b';'):
+					key_val = i.split(b'=')
+					if(len(key_val) == 2):
+						key = key_val[0].strip()
+						val = key_val[1].strip(b'"\'').decode()
+						attrs[key] = val
+				name = attrs.pop(b'name', _OBJ_END_)
+				if(name != _OBJ_END_):
+					#if no additional headers, and no other attributes,
+					#it's just a plain input field
+					if(not part.headers and not attrs):
+						_post_params[name] = part.text
+					else: # could be a file or other type of data, preserve all data
+						_post_params[name] = {
+							"attrs": attrs,
+							"data": part.content,
+							"headers": part.headers
+						}
+		else:
+			post_data_str = post_data_bytes.decode('utf-8')
+			if(post_data_str[0] == '{'
+				or content_type_header == "application/json"
+			):
+				_post_params.update(json.loads(post_data_str))
+			else: # urlencoded form
+				_post_params.update(parse_qs_modified(post_data_str))
+
+		return self
+
 
 	def to_dict(self):
 		return {"get": self._get, "post": self._post}
+
+class HeadersDict(dict):
+	def __getitem__(self, k):
+		return super().__getitem__(k.lower()).decode()
+
+	def get(self, k, default=None):
+		header_value = super().get(k.lower(), _OBJ_END_)
+		if(header_value == _OBJ_END_):
+			return default
+		return header_value.decode()
 
 class BlasterResponse:
 	body = None
@@ -419,7 +454,7 @@ class App:
 					)
 					request_path = request_path[:query_start_index]
 			
-				headers = LowerKeyDict()
+				headers = HeadersDict()
 				while(True): # keep reading headers
 					data = buffered_socket.readline()
 					if(data == b'\r\n'):
@@ -468,12 +503,12 @@ class App:
 							cookie_header = headers.get("Cookie", None)
 							decoded_cookies = {}
 							if(cookie_header):
-								_temp = cookie_header.strip().decode().split(";")
+								_temp = cookie_header.strip().split(";")
 								for i in _temp:
 									decoded_cookies.update(parse_qs_modified(i.strip()))
 							request_params._cookies = decoded_cookies
 							#process cookies end
-							request_params._post = deserialize_post_data(post_data, headers)
+							request_params.parse_request_body(post_data, headers)
 
 							fargs = args.groups()
 							if(fargs):
@@ -507,8 +542,13 @@ class App:
 						for key, val in default_stream_headers.items():
 							buffered_socket.send(key, b': ', val, b'\r\n')
 
+					if(request_params._cookies_to_set):
+						for cookie_name, cookie_val in request_params._cookies_to_set.items():
+							buffered_socket.send(b'Set-Cookie: ', cookie_name, b'=', cookie_val, b'\r\n')
+
+
 					#check and respond to keep alive
-					is_keep_alive = headers.get('Connection', b'').lower() == b'keep-alive'
+					is_keep_alive = headers.get('Connection', "").lower() == "keep-alive"
 					#send back keep alive
 					if(is_keep_alive):
 						buffered_socket.send(b'Connection: keep-alive\r\n')
@@ -522,30 +562,34 @@ class App:
 							blaster_response_obj = body
 							api_response = blaster_response_obj.body
 							return_type = request_params.get("return_type")
-							templates = blaster_response_obj.templates
 
-							#if no template given or return type is json , try to return body dict, else regular api_response
-							template_exists \
-								= (return_type and templates.get(return_type))\
-								or blaster_response_obj.templates.get("content")
-							#if template file is given and body should be a dict for the template
-							if(template_exists and isinstance(body.body, dict)):
-								tmpl_rendered = template_exists.render(
-									request_params=request_params,
-									**body.body
-								)
-
-								frame_template = body.frame_template
-								#if there is a return type, just retutn the template
-								#render the full frame
-								if(return_type or not frame_template):
-									body = tmpl_rendered # partial
-
-								else:
-									body = frame_template.render(
-										body_content=tmpl_rendered,
-										meta_tags=body.meta_tags
+							if(return_type == "json"):
+								body = api_response
+							#standard return_types -> json, content, None(content, and frame)
+							else:
+								templates = blaster_response_obj.templates
+								#if no template given or return type is json , try to return body dict, else regular api_response
+								template_exists \
+									= (return_type and templates.get(return_type))\
+									or blaster_response_obj.templates.get("content")
+								#if template file is given and body should be a dict for the template
+								if(template_exists and isinstance(api_response, dict)):
+									tmpl_rendered = template_exists.render(
+										request_params=request_params,
+										**api_response
 									)
+
+									frame_template = blaster_response_obj.frame_template
+									#if there is a return type, just retutn the template
+									#render the full frame
+									if(return_type or not frame_template):
+										body = tmpl_rendered # partial
+
+									else: # return type is nothing -> return full frame
+										body = frame_template.render(
+											body_content=tmpl_rendered,
+											meta_tags=blaster_response_obj.meta_tags
+										)
 
 						if(isinstance(body, (dict, list))):
 							api_response = body
@@ -573,7 +617,7 @@ class App:
 									"REQUEST_METHOD": request_type,
 									"GET": request_params._get,
 									"REQUEST_BODY": request_params._post,
-									"REQUEST_CONTENT_TYPE": headers.get("content-type", b'').decode(),
+									"REQUEST_CONTENT_TYPE": headers.get("content-type"),
 									"RESPONSE_STATUS": status,
 									"RESPONSE_HEADERS": response_headers,
 									"REPONSE_BODY": api_response
@@ -588,7 +632,7 @@ class App:
 				else: # return value is None => manually handling
 					process_next_http_request = False
 
-				server_log("http" , request_type=request_type , path=request_path, wallclockms=int(1000 * time.time()) - cur_millis)
+				server_log("http" , response_status=status, request_type=request_type , path=request_path, wallclockms=int(1000 * time.time()) - cur_millis)
 
 			except Exception as ex:
 				stacktrace_string = traceback.format_exc()
@@ -658,7 +702,7 @@ def redirect_http_to_https():
 		if(not host):
 			return "404", {}, "Not understood"
 		query_string = ("?" + urllib.parse.urlencode(query_params)) if query_params else ""
-		return "302 Redirect", ["Location: https://%s%s%s"%(host.decode(), path, query_string)], "need https"
+		return "302 Redirect", ["Location: https://%s%s%s"%(host, path, query_string)], "need https"
 
 	http_app = App("port=80")
 	http_app.start(port=80, handlers=[("(.*)", redirect)])

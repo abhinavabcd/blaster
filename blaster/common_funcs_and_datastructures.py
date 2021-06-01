@@ -1014,6 +1014,30 @@ def static_file_handler(_base_folder_path_, default_file_path="index.html", file
 	
 	return file_handler
 
+
+def parse_cmd_line_arguments():
+	from sys import argv
+	args_map = {}
+	i = 0
+	num_args = len(argv)
+	while(i < num_args):
+		arg = argv[i]
+		if(arg.startswith("--")):
+			if("=" in arg):
+				key, val = arg.split("=", 1)
+				args_map[key.strip("-")] = val
+			else:
+				args_map[arg.strip("-")] = True
+		elif(arg.startswith("-")):
+			key = arg.strip("-")
+			val = argv[i + 1] if (i + 1 < num_args) else True
+			i += 1
+			args_map[key] = val
+
+		i += 1
+	return args_map
+
+
 def run_shell(cmd, output_parser=None, shell=False, max_buf=5000):
 
 	state = DummyObject()
