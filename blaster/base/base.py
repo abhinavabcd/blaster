@@ -278,15 +278,15 @@ class HeadersDict(dict):
 		return header_value.decode()
 
 class BlasterResponse:
-	body = None
+	data = None
 	templates = None
 	frame_template = None
 	meta_tags = None
 
-	def __init__(self, body, template=None,
+	def __init__(self, data, template=None,
 			frame_template=None, templates=None, meta_tags=None
 		):
-		self.body = body
+		self.data = data
 		self.frame_template = frame_template
 		self.meta_tags = meta_tags
 		self.templates = {"content": template}
@@ -310,9 +310,22 @@ class App:
 		self.route_handlers = []
 		self.request_handlers = []
 
-	def route(self, regex, method="GET", name='', description=''):
+	def route(self, regex, methods=None, name='', description='', query_class=None, request_class=None, response_class=None):
+		methods = methods or ("GET", "POST")
+		if(isinstance(methods, str)):
+			methods = (methods,)
+
 		def _decorator(func):
-			self.route_handlers.append((regex, func, method))
+			self.route_handlers.append({
+				"regex": regex,
+				"func": func,
+				"methods": methods,
+				"name": name,
+				"description": description,
+				"query_class": query_class,
+				"request_class": request_class,
+				"response_class": response_class
+			})
 			#return func as if nothing's decorated! (so you can call function as is)
 			return func
 
@@ -321,12 +334,12 @@ class App:
 
 	def handle_wsgi(self, environ, start_response):
 		ret = None
-		for handler in self.request_handlers:
-			args = handler[0].match(environ['PATH_INFO'])
-			func = handler[1]
-			if(args != None):
+		for regex, method_handler in self.request_handlers:
+			args = regex.match(environ['PATH_INFO'])
+			func = method_handler.get(environ["REQUEST_METHOD"].upper())
+			if(args != None and func):
 				kwargs = {}
-				kwargs["query_params"] = urllib.parse.parse_qs(environ['QUERY_STRING'])
+				kwargs["request_params"] = urllib.parse.parse_qs(environ['QUERY_STRING'])
 
 				fargs = args.groups()
 				if(fargs):
@@ -359,38 +372,40 @@ class App:
 
 
 	def start(self, port=80, handlers=[], use_wsgi=False, **ssl_args):
-		self.route_handlers.sort(key=functools.cmp_to_key(lambda x, y: len(y[0]) - len(x[0]))) # reverse sort by length
+		self.route_handlers.sort(key=functools.cmp_to_key(lambda x, y: len(y["regex"]) - len(x["regex"]))) # reverse sort by length
 		
 		handlers_with_methods = []
 		for handler in handlers:
-			if(len(handler) < 2 or len(handler) > 3):
-				continue
-			if(len(handler) == 2):
-				handler = (handler[0], handler[1], "GET")
-			handlers_with_methods.append(handler)
+			if(isinstance(handler, (list, tuple))):
+				if(len(handler) < 2 or len(handler) > 3):
+					continue
+				handlers_with_methods.append({"regex": handler[0], "func": handler[1], "methods": ("GET",)})
+			elif(isinstance(handler, dict)):
+				_handler = {"methods": ("GET", "POST")} # defaults
+				_handler.update(handler)
+				handlers_with_methods.append(_handler)
+
 
 		#add them to all route handlers
 		self.route_handlers.extend(handlers_with_methods)
 
 		regexes_map = {}
-		for regex, handler, method in reversed(self.route_handlers):
-			existing_regex_handlers = regexes_map.get(regex)
-			if(not existing_regex_handlers):
-				existing_regex_handlers = regexes_map[regex] = {}
+		#build {regex: {GET: handler,...}...}
+		for handler in reversed(self.route_handlers):
+			regex = handler["regex"]
+			existing_regex_method_handlers = regexes_map.get(regex)
+			if(not existing_regex_method_handlers):
+				regexes_map[regex] = existing_regex_method_handlers = {}
+				self.request_handlers.append((re.compile(regex), existing_regex_method_handlers))
 
-			method_handler_exists = existing_regex_handlers.get(method)
-			if(method_handler_exists):
-				existing_regex_handlers[method] = handler
-			else:
-				existing_regex_handlers = {method.upper(): handler}
-				regexes_map[regex] = existing_regex_handlers
-				self.request_handlers.append((re.compile(regex), existing_regex_handlers))
+			for method in handler["methods"]:
+				existing_regex_method_handlers[method.upper()] = handler
 		
 		#sort ascending because we iterated in reverse earlier
 		self.request_handlers.reverse()
 		if(IS_DEV):
 			for regex, method_handlers in self.request_handlers:
-				print(regex.pattern, method_handlers)
+				print(regex.pattern, {method: handler["func"] for method, handler in method_handlers.items()})
 
 		if(use_wsgi):
 			self.stream_server = WSGIServer(('', port), self.handle_wsgi).serve_forever()
@@ -418,7 +433,7 @@ class App:
 			if(body_len > 1):
 				response_headers = ret[-2]
 			if(body_len > 2):
-				status = str(ret[-3]).encode()
+				status = str(ret[-3])
 		else:
 			body = ret
 
@@ -483,18 +498,22 @@ class App:
 
 				matched_handler = None
 				ret = None
-				for handler in self.request_handlers:
-					args = handler[0].match(request_path)
-					handler_methods = handler[1]
+				for regex, method_handlers in self.request_handlers:
+					args = regex.match(request_path)
 					
 					if(args != None):
-						matched_handler = handler
-						func = handler_methods.get(request_type)
-						if(not func and request_type != "GET"):
+						handler = method_handlers.get(request_type)
+						if(not handler):
 							#perform GET call by default
-							#server_log("handler_method_not_found", msg="performing get by default")
-							func = handler_methods.get("GET")
-						if(func):
+							server_log(
+								"handler_method_not_found",
+								request_type=request_type,
+								msg="performing GET by default"
+							)
+							if(request_type != "GET"):
+								handler = method_handlers.get("GET")
+						if(handler):
+							func = handler.get("func")
 							kwargs = {}
 							kwargs["request_params"] = request_params
 							kwargs["headers"] = headers
@@ -522,7 +541,7 @@ class App:
 				if(ret != None):
 					(status, response_headers, body) = App.response_body_to_parts(ret)
 		
-					status = status or b'200 OK'
+					status = status or '200 OK'
 					buffered_socket.send(b'HTTP/1.1 ', status, b'\r\n')
 
 					if(response_headers):
@@ -556,27 +575,27 @@ class App:
 
 					if(body != None): # if body doesn't exist , the handler function is holding the connection and handling it manually
 						#just a variable to track api type responses
-						api_response = None
+						response_data = None
 						if(isinstance(body, BlasterResponse)):
 							#just keep a reference as we overwrite body variable
 							blaster_response_obj = body
-							api_response = blaster_response_obj.body
+							#set body as default to repose_obj.data
+							body = response_data = blaster_response_obj.data
 							return_type = request_params.get("return_type")
 
-							if(return_type == "json"):
-								body = api_response
-							#standard return_types -> json, content, None(content, and frame)
-							else:
+							#standard return_types -> json, content, None(=>content inside frame)
+							if(return_type != "json"):
+								#if template file is given and body should be a dict for the template
 								templates = blaster_response_obj.templates
-								#if no template given or return type is json , try to return body dict, else regular api_response
+								#if no template given or returns just the blaster_response_obj.data
 								template_exists \
 									= (return_type and templates.get(return_type))\
 									or blaster_response_obj.templates.get("content")
-								#if template file is given and body should be a dict for the template
-								if(template_exists and isinstance(api_response, dict)):
+
+								if(template_exists and isinstance(response_data, dict)):
 									tmpl_rendered = template_exists.render(
 										request_params=request_params,
-										**api_response
+										**response_data
 									)
 
 									frame_template = blaster_response_obj.frame_template
@@ -592,7 +611,7 @@ class App:
 										)
 
 						if(isinstance(body, (dict, list))):
-							api_response = body
+							response_data = body
 							body = json.dumps(body)
 
 						#encode body
@@ -609,7 +628,7 @@ class App:
 
 
 						#just some debug for apis
-						if(IS_DEV and DEBUG_LEVEL > 1 and api_response):
+						if(IS_DEV and DEBUG_LEVEL > 1 and response_data):
 							print(
 								"##API DEBUG",
 								json.dumps({
@@ -620,7 +639,7 @@ class App:
 									"REQUEST_CONTENT_TYPE": headers.get("content-type"),
 									"RESPONSE_STATUS": status,
 									"RESPONSE_HEADERS": response_headers,
-									"REPONSE_BODY": api_response
+									"REPONSE_BODY": response_data
 								}, indent=4)
 							)
 						
@@ -632,7 +651,7 @@ class App:
 				else: # return value is None => manually handling
 					process_next_http_request = False
 
-				server_log("http" , response_status=status, request_type=request_type , path=request_path, wallclockms=int(1000 * time.time()) - cur_millis)
+				server_log("http", response_status=status, request_type=request_type , path=request_path, wallclockms=int(1000 * time.time()) - cur_millis)
 
 			except Exception as ex:
 				stacktrace_string = traceback.format_exc()
@@ -654,12 +673,14 @@ class App:
 						body
 				)
 				socket.close()
-				server_log("http_error",
+				server_log(
+					"http_error",
 					cur_millis,
 					exception_str=str(ex),
 					stacktrace_string=stacktrace_string,
-					path=request_path,
-					query_params=request_params.to_dict()
+					request_type=request_type,
+					request_path=request_path,
+					request_params=request_params.to_dict()
 				)
 				if(IS_DEV):
 					traceback.print_exc()
@@ -697,12 +718,12 @@ def start_stream_server(*args, **kwargs):
 
 
 def redirect_http_to_https():
-	def redirect(sock, path, query_params=None, headers=None, post_data=None, user=None):
+	def redirect(sock, path, request_params=None, headers=None, post_data=None, user=None):
 		host = headers.get('host')
 		if(not host):
 			return "404", {}, "Not understood"
-		query_string = ("?" + urllib.parse.urlencode(query_params)) if query_params else ""
-		return "302 Redirect", ["Location: https://%s%s%s"%(host, path, query_string)], "need https"
+		query_string = ("?" + urllib.parse.urlencode(request_params._get)) if request_params._get else ""
+		return "302 Redirect", ["Location: https://%s%s%s"%(host, path, query_string)], "Need Https"
 
 	http_app = App("port=80")
 	http_app.start(port=80, handlers=[("(.*)", redirect)])

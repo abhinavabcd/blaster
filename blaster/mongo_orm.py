@@ -1072,6 +1072,9 @@ def initialize_model(Model):
 				for i in pymongo_index: # first unique index
 					_pk_attrs[i[0]] = 1
 		else:
+			#if we are sharding, we are creating indexes
+			#only necessary for the sharded table,
+			#Ex: Table A is sharded by x then we created indexes that has x on A_shard_x table only
 			ignore_index_creation = True
 
 		#check for indexes to ignore
