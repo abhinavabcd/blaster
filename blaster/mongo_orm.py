@@ -1,8 +1,7 @@
 import gevent
-import time
 import types
 import pymongo
-import hashlib
+from functools import partial
 from itertools import chain
 from collections import OrderedDict
 from pymongo import MongoClient
@@ -28,10 +27,10 @@ class MultiMapIterator:
 	def __init__(self, func_and_iterators):
 		self.func_and_iterators = func_and_iterators
 	
-	def count(self, limited=False):
+	def count(self):
 		_count = 0
 		for _func, _iter in self.func_and_iterators:
-			_count += _iter.count(limited)
+			_count += _iter.count()
 		return _count
 
 	def __iter__(self):
@@ -620,6 +619,14 @@ class Model(object):
 
 		multi_map_iterator = []
 
+		def count_documents(_collection, _query, offset, limit):
+			kwargs = {}
+			if(offset):
+				kwargs["skip"] = offset
+			if(limit):
+				kwargs["limit"] = limit
+			return _collection.count_documents(_query, **kwargs)
+
 		def query_collection(_Model, _collection, _query, projection, sort, offset, limit):
 			ret = _collection.find(_query, projection, **kwargs)
 			if(sort):
@@ -628,8 +635,12 @@ class Model(object):
 				ret = ret.sort(sort)
 			if(offset):
 				ret = ret.skip(offset)
+
 			if(limit):
 				ret = ret.limit(limit)
+
+			#replace the deprecated count method
+			ret.count = partial(count_documents, _collection, _query, offset, limit)
 
 			# we queried from the secondary shard, will not have all fields
 			if(_Model._is_secondary_shard and not _no_requery):
