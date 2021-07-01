@@ -23,7 +23,7 @@ from gevent.pywsgi import WSGIServer
 from requests_toolbelt.multipart import decoder
 
 from .. import config as blaster_config
-from ..config import IS_DEV, DEBUG_LEVEL
+from ..config import IS_DEV, DEBUG_LEVEL, LOG_LEVEL
 from ..common_funcs_and_datastructures import cur_ms, SanitizedDict
 
 _is_server_running = True
@@ -51,7 +51,12 @@ SLASH_N_ORDINAL = ord(b'\n')
 def server_log(log_type, cur_millis=None, **kwargs):
 	if(not cur_millis):
 		cur_millis = cur_ms()
-	print(log_type , cur_millis, json.dumps(kwargs))
+	print(log_type, cur_millis, json.dumps(kwargs))
+
+def LOG(level, log_type, cur_millis=None, **kwargs):
+	if(not cur_millis):
+		cur_millis = cur_ms()
+	(level <= LOG_LEVEL) and print(log_type, cur_millis, json.dumps(kwargs))
 
 
 def find_new_line(arr):
@@ -152,16 +157,31 @@ def parse_qs_modified(qs, keep_blank_values=True, strict_parsing=False):
 	return _dict
 
 
+
+class HeadersDict(dict):
+	def __getitem__(self, k):
+		return super().__getitem__(k.lower())
+
+	def get(self, k, default=None):
+		header_value = super().get(k.lower(), _OBJ_END_)
+		if(header_value == _OBJ_END_):
+			return default
+		return header_value
+
+
 _OBJ_END_ = object()
 class RequestParams:
 	_post = None
 	_get = None
 	_cookies = None
+	_headers = None
 	#cookies to send to client
 	_cookies_to_set = None
 
-	def __init__(self):
+	def __init__(self, buffered_socket):
 		self._get = SanitizedDict() # empty params by default
+		self._headers = HeadersDict()
+		self.sock = buffered_socket
 
 	#searches in post and get
 	def get(self, key, default=None, **kwargs):
@@ -203,6 +223,11 @@ class RequestParams:
 		if(self._post):
 			return self._post.get(key, **kwargs)
 		return None
+
+	def HEADERS(self, key=None, default=None):
+		if(key == None):
+			return self._headers
+		return self._headers.get(key, default=default)
 
 	def COOKIES(self, key, cookie_value=_OBJ_END_):
 		ret = self._cookies.get(key)
@@ -266,16 +291,6 @@ class RequestParams:
 
 	def to_dict(self):
 		return {"get": self._get, "post": self._post}
-
-class HeadersDict(dict):
-	def __getitem__(self, k):
-		return super().__getitem__(k.lower()).decode()
-
-	def get(self, k, default=None):
-		header_value = super().get(k.lower(), _OBJ_END_)
-		if(header_value == _OBJ_END_):
-			return default
-		return header_value.decode()
 
 class BlasterResponse:
 	data = None
@@ -450,7 +465,7 @@ class App:
 			if(not request_line):
 				return
 			post_data = None
-			request_params = RequestParams()
+			request_params = RequestParams(buffered_socket)
 			cur_millis = int(1000 * time.time())
 			request_type = None
 			request_path = None
@@ -469,7 +484,7 @@ class App:
 					)
 					request_path = request_path[:query_start_index]
 			
-				headers = HeadersDict()
+				headers = request_params._headers
 				while(True): # keep reading headers
 					data = buffered_socket.readline()
 					if(data == b'\r\n'):
@@ -477,7 +492,7 @@ class App:
 					if(not data):
 						return
 					header_name , header_value = data.split(b': ', 1)
-					headers[header_name.lower().decode()] = header_value.rstrip(b'\r\n')
+					headers[header_name.lower().decode()] = header_value.rstrip(b'\r\n').decode()
 				
 				if(request_type == "POST"):
 					n = int(headers.get("Content-Length", 0))
@@ -496,7 +511,6 @@ class App:
 								chunk_size = int(buffered_socket.readline(), 16) # hex
 							#as bytes
 
-				matched_handler = None
 				ret = None
 				for regex, method_handlers in self.request_handlers:
 					args = regex.match(request_path)
@@ -516,7 +530,6 @@ class App:
 							func = handler.get("func")
 							kwargs = {}
 							kwargs["request_params"] = request_params
-							kwargs["headers"] = headers
 
 							#process cookies
 							cookie_header = headers.get("Cookie", None)
@@ -531,9 +544,9 @@ class App:
 
 							fargs = args.groups()
 							if(fargs):
-								ret = func(buffered_socket, *fargs , **kwargs)
+								ret = func(*fargs , **kwargs)
 							else:
-								ret = func(buffered_socket, **kwargs)
+								ret = func(**kwargs)
 							break
 				
 				##app specific headers
@@ -718,8 +731,8 @@ def start_stream_server(*args, **kwargs):
 
 
 def redirect_http_to_https():
-	def redirect(sock, path, request_params=None, headers=None, post_data=None, user=None):
-		host = headers.get('host')
+	def redirect(path, request_params=None, user=None):
+		host = request_params.HEADERS('host')
 		if(not host):
 			return "404", {}, "Not understood"
 		query_string = ("?" + urllib.parse.urlencode(request_params._get)) if request_params._get else ""

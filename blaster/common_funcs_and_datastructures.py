@@ -281,7 +281,7 @@ def int_to_str(integer, base=BASE_62_LIST):
 	ret = ''
 	while integer != 0:
 		ret = base[integer % length] + ret
-		integer /= length
+		integer //= length
 
 	return ret
 
@@ -739,6 +739,18 @@ def make_xss_safe(_html):
 	parser.close()
 	return parser.getHtml()
 
+
+def batch_iter(iterable, n=1):
+	current_batch = []
+	for item in iterable:
+		current_batch.append(item)
+		if len(current_batch) == n:
+			yield current_batch
+			current_batch = []
+	if current_batch:
+		yield current_batch
+
+
 ##### custom containers ##########
 #SanitizedList and SanitizedDict are used for HTML safe operation
 #the idea is to wrap them to sanitizeContainers while inserting
@@ -972,7 +984,7 @@ def static_file_handler(_base_folder_path_, default_file_path="index.html", file
 	cached_file_data = {}
 	gevent_lock = Lock()
 
-	def file_handler(sock, path, request_params=None, headers=None, post_data=None):
+	def file_handler(path, request_params=None):
 		if(not path):
 			path = default_file_path
 		#from given base_path

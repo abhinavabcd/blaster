@@ -200,6 +200,7 @@ class Model(object):
 				if(not _initializing):
 					new_path = path + "." + str(k)
 					self._set_query_updates[new_path] = v
+				if(_initializing):
 					if(isinstance(v, dict)):
 						v = self.get_custom_dict(new_path, v)
 					elif(isinstance(v, list)):
@@ -241,6 +242,7 @@ class Model(object):
 				if(not _initializing):
 					new_path = path + "." + str(k)
 					self._set_query_updates[new_path] = v
+				if(_initializing):
 					if(isinstance(v, dict)):
 						v = self.get_custom_dict(new_path, v)
 					elif(isinstance(v, list)):
@@ -268,12 +270,13 @@ class Model(object):
 				return ret
 
 			def append(this, item):
-				if(isinstance(item, dict)):
-					new_path = path + "." + str(len(this))
-					item = self.get_custom_dict(new_path, item)
-				elif(isinstance(item, list)):
-					new_path = path + "." + str(len(this))
-					item = self.get_custom_list(new_path, item)
+				if(_initializing):
+					if(isinstance(item, dict)):
+						new_path = path + "." + str(len(this))
+						item = self.get_custom_dict(new_path, item)
+					elif(isinstance(item, list)):
+						new_path = path + "." + str(len(this))
+						item = self.get_custom_list(new_path, item)
 
 				super(ListObj, this).append(item)
 
@@ -487,9 +490,16 @@ class Model(object):
 			#update was unsuccessful
 			return None
 
+		#CONS of this multi table sharding:
+		#- Primary index updated by secondary constraint can fail
+		#- in that case, the data exists in primary shard, but it's not valid data
+		#TODO:
+		# idea1: move this to transactions if we have secondary shards ?
+		# idea2: revert the original update
 		#update all secondary shards
 		for shard_key, shard in cls._secondary_shards_.items():
 			secondary_Model = shard._Model_
+			#all secondary index is retrieved by _id, but sharded by their shard_key
 			_secondary_pk = {"_id": self._original_doc["_id"]}
 			_secondary_updates = {}
 			_secondary_collection = secondary_Model.get_collection(
@@ -747,11 +757,18 @@ class Model(object):
 					#use the same id of the document
 					_secondary_insert_values["_id"] = _id
 					#insert into other shards
-					_shard._Model_.get_collection(
-						str(getattr(self, shard_key))
-					).insert_one(
-						_secondary_insert_values
-					)
+					try:
+						_shard._Model_.get_collection(
+							str(getattr(self, shard_key))
+						).insert_one(
+							_secondary_insert_values
+						)
+					except Exception as ex:
+						print("#MONGO: encountered an error while updating secondary shard:", shard_key, str(ex))
+						#delete the original insert
+						_collection_shard.delete_one({"_id": _id})
+						raise ex
+
 
 				#set _id updates
 				self._id = self._set_query_updates["_id"] = _id
@@ -1038,7 +1055,7 @@ def initialize_model(Model):
 		#convert to tuple again
 		pymongo_index = tuple(pymongo_index)
 		is_unique_index = mongo_index_args.get("unique") is not False
-		do_not_shard = mongo_index_args.pop("do_not_shard", False)
+		do_not_shard = mongo_index_args.pop("do_not_shard", False) or (mongo_index_args.pop("shard", True) is False)
 
 		_index_shard_key = pymongo_index[0][0]
 		if(do_not_shard):
