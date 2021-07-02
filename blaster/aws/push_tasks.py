@@ -148,4 +148,5 @@ def run_later(func):
             **kwargs
         )
 
+    wrapper._original = func
     return wrapper
