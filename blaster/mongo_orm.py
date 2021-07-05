@@ -749,11 +749,16 @@ class Model(object):
 				_id = self._insert_result.inserted_id
 				# try inserting into secondary shards now
 				for shard_key, _shard in cls._secondary_shards_.items():
+					shard_key_value = self._set_query_updates.get(shard_key)
+					if(shard_key_value == None):
+						#shard key doesn't exist
+						continue
+
 					_secondary_insert_values = {}
 					for attr in _shard.attributes:
-						_insert_attr = self._set_query_updates.get(attr, _OBJ_END_)
-						if(_insert_attr != _OBJ_END_):
-							_secondary_insert_values[attr] = _insert_attr
+						_attr_val = self._set_query_updates.get(attr, _OBJ_END_)
+						if(_attr_val != _OBJ_END_):
+							_secondary_insert_values[attr] = _attr_val
 					#use the same id of the document
 					_secondary_insert_values["_id"] = _id
 					#insert into other shards
