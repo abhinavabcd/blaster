@@ -212,7 +212,7 @@ class Model(object):
 				#not in initializing mode
 				popped_val = super(DictObj, this).pop(k, _OBJ_END_)
 				if(popped_val == _OBJ_END_):
-					popped_val = default
+					return default
 				#if not initializing and has value set remove it form mongo
 				elif(not _initializing):
 					new_path = path + "." + str(k)
@@ -220,7 +220,11 @@ class Model(object):
 					if(not _unset):
 						_unset = self._other_query_updates["$unset"] = {}
 					_unset[new_path] = ""
-
+				#convert them to original object types
+				if(isinstance(popped_val, list)):
+					return list(popped_val)
+				if(isinstance(popped_val, dict)):
+					return dict(popped_val)
 				return popped_val
 
 			def update(self, another):
@@ -267,6 +271,11 @@ class Model(object):
 					if(_pop == None):
 						_pop = self._other_query_updates["$pop"] = {}
 					_pop[path] = i
+				#convert them to original object types
+				if(isinstance(ret, list)):
+					return list(ret)
+				if(isinstance(ret, dict)):
+					return dict(ret)
 				return ret
 
 			def append(this, item):
