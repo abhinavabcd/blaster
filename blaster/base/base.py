@@ -43,6 +43,12 @@ default_stream_headers = {
 	'X-XSS-Protection': '0'
 }
 
+I_AM_HANDLING_THE_SOCKET = object()
+I_AM_HANDLING_THE_HEADERS = object()
+I_AM_HANDLING_THE_STATUS = object()
+
+REUSE_SOCKET_FOR_HTTP = object()
+
 ########some random constants
 HTTP_MAX_REQUEST_BODY_SIZE = 11 * 1024 * 1024 # 11 mb
 SLASH_N_ORDINAL = ord(b'\n')
@@ -79,6 +85,10 @@ class BufferedSocket():
 		self.sock = sock
 		self.store = bytearray()
 		
+	def close(self):
+		self.sock.close()
+		self.is_eof = True
+
 	def send(self, *_data):
 		for data in _data:
 			if(isinstance(data, str)):
@@ -425,9 +435,18 @@ class App:
 		if(use_wsgi):
 			self.stream_server = WSGIServer(('', port), self.handle_wsgi).serve_forever()
 		else:
-			#request_handlers.sort(key = lambda x:x[0] , reverse=True)
-			self.stream_server = StreamServer(('', port), self.handle_connection, **ssl_args)
-		#keep a track
+			class CustomStreamServer(StreamServer):
+				def do_close(self, *args):
+					return
+
+				#lets handle closing ourself
+				def wrap_socket_and_handle(self, client_socket, address):
+					# used in case of ssl sockets
+					return self.handle(self.wrap_socket(client_socket, **self.ssl_args), address)
+
+			server_log("server_start", port=port)
+			self.stream_server = CustomStreamServer(('', port), handle=self.handle_connection, **ssl_args)
+			#keep a track
 		_all_apps.add(self)
 
 
@@ -454,250 +473,265 @@ class App:
 
 		return status, response_headers, body
 
+	def process_http_request(self, buffered_socket):
+		resuse_socket_for_next_http_request = True
+		request_line = buffered_socket.readline(4096) # ignore request lines > 4096 bytes
+		if(not request_line):
+			return
+		post_data = None
+		request_params = RequestParams(buffered_socket)
+		cur_millis = int(1000 * time.time())
+		request_type = None
+		request_path = None
+		headers = None
+		try:
+			request_line = request_line.decode("utf-8")
+			request_type, _request_line = request_line.split(" ", 1)
+			_http_protocol_index = _request_line.rfind(" ")
+			request_path = _request_line[: _http_protocol_index]
+			#http_version = _request_line[_http_protocol_index + 1:]
+
+			query_start_index = request_path.find("?")
+			if(query_start_index != -1):
+				request_params._get.update(
+					parse_qs_modified(request_path[query_start_index + 1:])
+				)
+				request_path = request_path[:query_start_index]
+		
+			headers = request_params._headers
+			while(True): # keep reading headers
+				data = buffered_socket.readline()
+				if(data == b'\r\n'):
+					break
+				if(not data):
+					return
+				header_name , header_value = data.split(b': ', 1)
+				headers[header_name.lower().decode()] = header_value.rstrip(b'\r\n').decode()
+			
+			#check if there is a content length or transfer encoding chunked
+			content_length = int(headers.get("Content-Length", 0))
+			if(content_length > 0):
+				if(content_length < HTTP_MAX_REQUEST_BODY_SIZE):
+					post_data = buffered_socket.recv(content_length)
+
+			else: # handle chuncked encoding
+				transfer_encoding = headers.get("transfer-encoding")
+				if(transfer_encoding == "chunked"):
+					post_data = bytearray()
+					chunk_size = int(buffered_socket.readline(), 16) # hex
+					while(chunk_size > 0):
+						data = buffered_socket.recv(chunk_size + 2)
+						post_data.extend(data)
+						chunk_size = int(buffered_socket.readline(), 16) # hex
+					#as bytes
+
+			ret = None
+			handler = None
+			for regex, method_handlers in self.request_handlers:
+				args = regex.match(request_path)
+				
+				if(args != None):
+					handler = method_handlers.get(request_type)
+					if(not handler):
+						#perform GET call by default
+						server_log(
+							"handler_method_not_found",
+							request_type=request_type,
+							msg="performing GET by default"
+						)
+						if(request_type != "GET"):
+							handler = method_handlers.get("GET")
+					if(handler):
+						#found a handler
+						break
+
+			if(not handler):
+				raise("method not found")
+
+			func = handler.get("func")
+			#process cookies
+			cookie_header = headers.get("Cookie", None)
+			decoded_cookies = {}
+			if(cookie_header):
+				_temp = cookie_header.strip().split(";")
+				for i in _temp:
+					decoded_cookies.update(parse_qs_modified(i.strip()))
+			request_params._cookies = decoded_cookies
+			#process cookies end
+			request_params.parse_request_body(post_data, headers)
+
+
+			ret = func(*args.groups(), request_params=request_params)
+			
+			##app specific headers
+			#handle various return values from handler functions
+			(status, _response_headers, body) = App.response_body_to_parts(ret)
+
+			if(status != I_AM_HANDLING_THE_STATUS):
+				status = status or '200 OK'
+				buffered_socket.send(b'HTTP/1.1 ', status, b'\r\n')
+
+			response_headers = {}
+			if(isinstance(_response_headers, list)):
+				#send only the specified headers
+				for header in _response_headers:
+					_index = header.index(":")
+					if(_index >= 0):
+						response_headers[header[:_index]] = header[_index + 1:]
+
+			elif(isinstance(_response_headers, dict)):
+				#mix default stream headers
+				response_headers = _response_headers
+				#add default stream headers
+				for key, val in default_stream_headers.items():
+					if(key not in _response_headers):
+						buffered_socket.send(key, b': ', val, b'\r\n')
+
+			elif(_response_headers == None): # no headers => use default stream headers
+				response_headers = default_stream_headers
+
+			#send all basic headers
+			for key, val in response_headers.items():
+				buffered_socket.send(key, b': ', val, b'\r\n')
+
+			#send any new cookies set
+			if(request_params._cookies_to_set):
+				for cookie_name, cookie_val in request_params._cookies_to_set.items():
+					buffered_socket.send(b'Set-Cookie: ', cookie_name, b'=', cookie_val, b'\r\n')
+
+			#check and respond to keep alive
+			resuse_socket_for_next_http_request = headers.get('Connection', "").lower() == "keep-alive"
+			#send back keep alive
+			if(resuse_socket_for_next_http_request):
+				buffered_socket.send(b'Connection: keep-alive\r\n')
+
+			if(body == I_AM_HANDLING_THE_SOCKET):
+				if(_response_headers != I_AM_HANDLING_THE_HEADERS):
+					buffered_socket.send(b'\r\n') # close the headers
+
+				return I_AM_HANDLING_THE_SOCKET
+			else:
+				#just a variable to track api type responses
+				response_data = None
+				if(isinstance(body, BlasterResponse)):
+					#just keep a reference as we overwrite body variable
+					blaster_response_obj = body
+					#set body as default to repose_obj.data
+					body = response_data = blaster_response_obj.data
+					return_type = request_params.get("return_type")
+
+					#standard return_types -> json, content, None(=>content inside frame)
+					if(return_type != "json"):
+						#if template file is given and body should be a dict for the template
+						templates = blaster_response_obj.templates
+						#if no template given or returns just the blaster_response_obj.data
+						template_exists \
+							= (return_type and templates.get(return_type))\
+							or blaster_response_obj.templates.get("content")
+
+						if(template_exists and isinstance(response_data, dict)):
+							tmpl_rendered = template_exists.render(
+								request_params=request_params,
+								**response_data
+							)
+
+							frame_template = blaster_response_obj.frame_template
+							#if there is a return type, just retutn the template
+							#render the full frame
+							if(return_type or not frame_template):
+								body = tmpl_rendered # partial
+
+							else: # return type is nothing -> return full frame
+								body = frame_template.render(
+									body_content=tmpl_rendered,
+									meta_tags=blaster_response_obj.meta_tags
+								)
+
+				if(isinstance(body, (dict, list))):
+					response_data = body
+					body = json.dumps(body)
+
+				#encode body
+				if(isinstance(body, str)):
+					body = body.encode()
+
+			#close headers and send the body data
+			if(body):
+				#finalize all the headers
+				buffered_socket.send(b'Content-Length: ', str(len(body)), b'\r\n\r\n')
+				buffered_socket.send(body)
+			else:
+				buffered_socket.send(b'Content-Length: 0', b'\r\n\r\n')
+
+			#just some debug for apis
+			if(IS_DEV and DEBUG_LEVEL > 1 and response_data):
+				print(
+					"##API DEBUG",
+					json.dumps({
+						"PATH": request_path,
+						"REQUEST_METHOD": request_type,
+						"GET": request_params._get,
+						"REQUEST_BODY": request_params._post,
+						"REQUEST_CONTENT_TYPE": headers.get("content-type"),
+						"RESPONSE_STATUS": status,
+						"RESPONSE_HEADERS": response_headers,
+						"REPONSE_BODY": response_data
+					}, indent=4)
+				)
+
+			server_log("http", response_status=status, request_type=request_type , path=request_path, wallclockms=int(1000 * time.time()) - cur_millis)
+
+		except Exception as ex:
+			stacktrace_string = traceback.format_exc()
+			body = None
+			if(blaster_config.server_error_page):
+				body = blaster_config.server_error_page(
+					request_type,
+					request_path,
+					request_params,
+					headers,
+					stacktrace_string=stacktrace_string
+				)
+			if(not body):
+				body = b'Internal server error'
+			buffered_socket.send(
+					b'HTTP/1.1 ', b'502 Server error', b'\r\n',
+					b'Connection: close', b'\r\n',
+					b'Content-Length: ', str(len(body)), b'\r\n\r\n',
+					body
+			)
+			server_log(
+				"http_error",
+				cur_millis,
+				exception_str=str(ex),
+				stacktrace_string=stacktrace_string,
+				request_type=request_type,
+				request_path=request_path,
+				request_params=request_params.to_dict()
+			)
+			if(IS_DEV):
+				traceback.print_exc()
+			#BREAK THIS CONNECTION
+		
+		if(resuse_socket_for_next_http_request):
+			return REUSE_SOCKET_FOR_HTTP
+
 	'''
 		all the connection handling magic happens here
 	'''
 	def handle_connection(self, socket, address):
 		buffered_socket = BufferedSocket(socket)
-		process_next_http_request = True # reuse the connection to handle another
-		while(process_next_http_request):
-			request_line = buffered_socket.readline(4096) # ignore request lines > 4096 bytes
-			if(not request_line):
-				return
-			post_data = None
-			request_params = RequestParams(buffered_socket)
-			cur_millis = int(1000 * time.time())
-			request_type = None
-			request_path = None
-			headers = None
-			try:
-				request_line = request_line.decode("utf-8")
-				request_type, _request_line = request_line.split(" ", 1)
-				_http_protocol_index = _request_line.rfind(" ")
-				request_path = _request_line[: _http_protocol_index]
-				#http_version = _request_line[_http_protocol_index + 1:]
+		close_socket = True
+		while(True):
+			ret = self.process_http_request(buffered_socket)
+			if(ret == REUSE_SOCKET_FOR_HTTP):
+				continue # try again
+			elif(ret == I_AM_HANDLING_THE_SOCKET):
+				close_socket = False
+			break
 
-				query_start_index = request_path.find("?")
-				if(query_start_index != -1):
-					request_params._get.update(
-						parse_qs_modified(request_path[query_start_index + 1:])
-					)
-					request_path = request_path[:query_start_index]
-			
-				headers = request_params._headers
-				while(True): # keep reading headers
-					data = buffered_socket.readline()
-					if(data == b'\r\n'):
-						break
-					if(not data):
-						return
-					header_name , header_value = data.split(b': ', 1)
-					headers[header_name.lower().decode()] = header_value.rstrip(b'\r\n').decode()
-				
-				if(request_type == "POST"):
-					n = int(headers.get("Content-Length", 0))
-					if(n > 0):
-						if(n < HTTP_MAX_REQUEST_BODY_SIZE):
-							post_data = buffered_socket.recv(n)
-
-					else: # handle chuncked encoding
-						transfer_encoding = headers.get("transfer-encoding")
-						if(transfer_encoding == "chunked"):
-							post_data = bytearray()
-							chunk_size = int(buffered_socket.readline(), 16) # hex
-							while(chunk_size > 0):
-								data = buffered_socket.recv(chunk_size + 2)
-								post_data.extend(data)
-								chunk_size = int(buffered_socket.readline(), 16) # hex
-							#as bytes
-
-				ret = None
-				for regex, method_handlers in self.request_handlers:
-					args = regex.match(request_path)
-					
-					if(args != None):
-						handler = method_handlers.get(request_type)
-						if(not handler):
-							#perform GET call by default
-							server_log(
-								"handler_method_not_found",
-								request_type=request_type,
-								msg="performing GET by default"
-							)
-							if(request_type != "GET"):
-								handler = method_handlers.get("GET")
-						if(handler):
-							func = handler.get("func")
-							kwargs = {}
-							kwargs["request_params"] = request_params
-
-							#process cookies
-							cookie_header = headers.get("Cookie", None)
-							decoded_cookies = {}
-							if(cookie_header):
-								_temp = cookie_header.strip().split(";")
-								for i in _temp:
-									decoded_cookies.update(parse_qs_modified(i.strip()))
-							request_params._cookies = decoded_cookies
-							#process cookies end
-							request_params.parse_request_body(post_data, headers)
-
-							fargs = args.groups()
-							if(fargs):
-								ret = func(*fargs , **kwargs)
-							else:
-								ret = func(**kwargs)
-							break
-				
-				##app specific headers
-				#handle various return values from handler functions
-				if(ret != None):
-					(status, response_headers, body) = App.response_body_to_parts(ret)
-		
-					status = status or '200 OK'
-					buffered_socket.send(b'HTTP/1.1 ', status, b'\r\n')
-
-					if(response_headers):
-						if(isinstance(response_headers, dict)):
-							for key, val in response_headers.items():
-								buffered_socket.send(key, b': ', val, b'\r\n')
-
-							for key, val in default_stream_headers.items():
-								if(key not in response_headers):
-									buffered_socket.send(key, b': ', val, b'\r\n')
-
-						elif(isinstance(response_headers, list)):
-							for header in response_headers:
-								buffered_socket.send(header, b'\r\n')
-
-					else:
-						for key, val in default_stream_headers.items():
-							buffered_socket.send(key, b': ', val, b'\r\n')
-
-					if(request_params._cookies_to_set):
-						for cookie_name, cookie_val in request_params._cookies_to_set.items():
-							buffered_socket.send(b'Set-Cookie: ', cookie_name, b'=', cookie_val, b'\r\n')
-
-
-					#check and respond to keep alive
-					is_keep_alive = headers.get('Connection', "").lower() == "keep-alive"
-					#send back keep alive
-					if(is_keep_alive):
-						buffered_socket.send(b'Connection: keep-alive\r\n')
-
-
-					if(body != None): # if body doesn't exist , the handler function is holding the connection and handling it manually
-						#just a variable to track api type responses
-						response_data = None
-						if(isinstance(body, BlasterResponse)):
-							#just keep a reference as we overwrite body variable
-							blaster_response_obj = body
-							#set body as default to repose_obj.data
-							body = response_data = blaster_response_obj.data
-							return_type = request_params.get("return_type")
-
-							#standard return_types -> json, content, None(=>content inside frame)
-							if(return_type != "json"):
-								#if template file is given and body should be a dict for the template
-								templates = blaster_response_obj.templates
-								#if no template given or returns just the blaster_response_obj.data
-								template_exists \
-									= (return_type and templates.get(return_type))\
-									or blaster_response_obj.templates.get("content")
-
-								if(template_exists and isinstance(response_data, dict)):
-									tmpl_rendered = template_exists.render(
-										request_params=request_params,
-										**response_data
-									)
-
-									frame_template = blaster_response_obj.frame_template
-									#if there is a return type, just retutn the template
-									#render the full frame
-									if(return_type or not frame_template):
-										body = tmpl_rendered # partial
-
-									else: # return type is nothing -> return full frame
-										body = frame_template.render(
-											body_content=tmpl_rendered,
-											meta_tags=blaster_response_obj.meta_tags
-										)
-
-						if(isinstance(body, (dict, list))):
-							response_data = body
-							body = json.dumps(body)
-
-						#encode body
-						if(isinstance(body, str)):
-							body = body.encode()
-
-						buffered_socket.send(b'Content-Length: ', str(len(body)), b'\r\n\r\n')
-						buffered_socket.send(body)
-						
-						#close if not keeping alive
-						if(not is_keep_alive):
-							socket.close()
-							process_next_http_request = False
-
-
-						#just some debug for apis
-						if(IS_DEV and DEBUG_LEVEL > 1 and response_data):
-							print(
-								"##API DEBUG",
-								json.dumps({
-									"PATH": request_path,
-									"REQUEST_METHOD": request_type,
-									"GET": request_params._get,
-									"REQUEST_BODY": request_params._post,
-									"REQUEST_CONTENT_TYPE": headers.get("content-type"),
-									"RESPONSE_STATUS": status,
-									"RESPONSE_HEADERS": response_headers,
-									"REPONSE_BODY": response_data
-								}, indent=4)
-							)
-						
-
-
-					else: # close headers and dont rehandle this connection(probably socket if used for sending data in callbacks etc)
-						buffered_socket.send(b'\r\n')
-						process_next_http_request = False
-				else: # return value is None => manually handling
-					process_next_http_request = False
-
-				server_log("http", response_status=status, request_type=request_type , path=request_path, wallclockms=int(1000 * time.time()) - cur_millis)
-
-			except Exception as ex:
-				stacktrace_string = traceback.format_exc()
-				body = None
-				if(blaster_config.server_error_page):
-					body = blaster_config.server_error_page(
-						request_type,
-						request_path,
-						request_params,
-						headers,
-						stacktrace_string=stacktrace_string
-					)
-				if(not body):
-					body = b'Internal server error'
-				buffered_socket.send(
-						b'HTTP/1.1 ', b'502 Server error', b'\r\n',
-						b'Connection: close', b'\r\n',
-						b'Content-Length: ', str(len(body)), b'\r\n\r\n',
-						body
-				)
-				socket.close()
-				server_log(
-					"http_error",
-					cur_millis,
-					exception_str=str(ex),
-					stacktrace_string=stacktrace_string,
-					request_type=request_type,
-					request_path=request_path,
-					request_params=request_params.to_dict()
-				)
-				if(IS_DEV):
-					traceback.print_exc()
-				return
+		if(close_socket):
+			buffered_socket.close()
 
 
 def stop_all_apps():

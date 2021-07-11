@@ -292,6 +292,16 @@ def get_str_id():
 	return int_to_str(get_int_id())
 
 
+def is_almost_equal(a, b, max_diff=0.01):
+	if(a == None and b == None):
+		return True
+	if(a == None or b == None):
+		return False
+	diff = abs(a - b)
+	if(diff < max_diff):
+		return False
+	return True
+
 
 ##### protobuf + mysql utility functions
 def list_to_protobuf(values, message):

@@ -14,7 +14,7 @@ def do_test(request_params=None):
 
 @route_handler("^/hello")
 def say_hello(request_params=None):
-    return {"hello": "world"}
+    return ["content-type: application/json"],  {"hello": "world"}
 
 ##directly return an object , server will automatically convert to json
 @route_handler("^/say/(.*)$")
