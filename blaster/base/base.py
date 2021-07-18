@@ -565,34 +565,31 @@ class App:
 			
 			##app specific headers
 			#handle various return values from handler functions
-			(status, _response_headers, body) = App.response_body_to_parts(ret)
+			(status, response_headers, body) = App.response_body_to_parts(ret)
 
 			if(status != I_AM_HANDLING_THE_STATUS):
 				status = status or '200 OK'
 				buffered_socket.send(b'HTTP/1.1 ', status, b'\r\n')
 
-			response_headers = {}
-			if(isinstance(_response_headers, list)):
+			if(isinstance(response_headers, list)):
 				#send only the specified headers
-				for header in _response_headers:
-					_index = header.index(":")
-					if(_index >= 0):
-						response_headers[header[:_index]] = header[_index + 1:]
+				for header in response_headers:
+					buffered_socket.send(header, b'\r\n')
 
-			elif(isinstance(_response_headers, dict)):
-				#mix default stream headers
-				response_headers = _response_headers
-				#add default stream headers
-				for key, val in default_stream_headers.items():
-					if(key not in _response_headers):
-						buffered_socket.send(key, b': ', val, b'\r\n')
+			else:
+				if(isinstance(response_headers, dict)):
+					#mix default stream headers
+					#add default stream headers
+					for key, val in default_stream_headers.items():
+						if(key not in response_headers):
+							buffered_socket.send(key, b': ', val, b'\r\n')
 
-			elif(_response_headers == None): # no headers => use default stream headers
-				response_headers = default_stream_headers
+				elif(response_headers == None): # no headers => use default stream headers
+					response_headers = default_stream_headers
 
-			#send all basic headers
-			for key, val in response_headers.items():
-				buffered_socket.send(key, b': ', val, b'\r\n')
+				#send all basic headers
+				for key, val in response_headers.items():
+					buffered_socket.send(key, b': ', val, b'\r\n')
 
 			#send any new cookies set
 			if(request_params._cookies_to_set):

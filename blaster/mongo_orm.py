@@ -309,18 +309,10 @@ class Model(object):
 				if(_attr_type_obj._type == dict):
 					if(not self.__is_new and isinstance(v, dict)):
 						v = self.get_custom_dict(k, v)
-					elif(v == None):
-						_default = getattr(_attr_type_obj, "default", _OBJ_END_)
-						if(_default != _OBJ_END_):
-							v = dict(_default)
 
 				elif(_attr_type_obj._type == list):
 					if(not self.__is_new and isinstance(v, list)):
 						v = self.get_custom_list(k, v)
-					elif(v == None):
-						_default = getattr(_attr_type_obj, "default", _OBJ_END_)
-						if(_default != _OBJ_END_):
-							v = list(_default)
 
 			else:
 				cur_value = getattr(self, k, None)
@@ -359,13 +351,28 @@ class Model(object):
 			self._pk = ret
 		return self._pk
 
+	#check all defaults and see if not present in doc, set them on the object
+	def __check_and_set_initial_defaults(self, doc):
+		for attr_name, attr_obj in self.__class__._attrs.items():
+			_default = getattr(attr_obj, "default", _OBJ_END_)
+			#if the value is not the document and have a default do the $set
+			if(_default != _OBJ_END_ and attr_name not in doc):
+				#if there is a default value
+				if(attr_obj._type == dict):
+					self._set_query_updates[attr_name] = _default = dict(_default) # copy
+				elif(attr_obj._type == list):
+					self._set_query_updates[attr_name] = _default = list(_default) # copy
+				self.__dict__[attr_name] = _default
+
 
 	#when retrieving objects from db
 	@classmethod
 	def get_instance_from_document(cls, doc):
-		ret = cls(False)
-		for k, v in cls._attrs.items():
-			setattr(ret, k, None) # set all initial attributes to None
+		ret = cls(False) # not a new item
+
+		#set defaults
+		ret.__check_and_set_initial_defaults(doc)
+
 		for k, v in doc.items():
 			setattr(ret, k, v)
 
@@ -383,8 +390,8 @@ class Model(object):
 		#remove existing pk_tuple in cache
 		cls.remove_from_cache(self)
 		self._initializing = True
-		for k, v in cls._attrs.items():
-			setattr(self, k, None) # set all initial attributes to None
+
+		self.__check_and_set_initial_defaults(doc)
 		for k, v in doc.items():
 			setattr(self, k, v)
 		self._initializing = False
