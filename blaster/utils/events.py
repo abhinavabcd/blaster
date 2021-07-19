@@ -42,6 +42,8 @@ def broadcast_event(_id, *args, _n=-1, **kwargs):
 	return tuple(listeners_ret_values)
 
 def add_listener(_id, listener):
+	print("registering_listener", "0", {"_id": _id, "listener": listener})
+	
 	if(not _id or not listener):
 		return
 	listeners = _event_listeners.get(_id)

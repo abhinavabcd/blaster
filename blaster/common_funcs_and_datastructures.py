@@ -45,7 +45,7 @@ from .utils.xss_html import XssHtml
 from .utils.phone_number_utils import PhoneNumberObj
 
 
-SOME_OBJ = object()
+_OBJ_END_ = object()
 
 def cur_ms():
 	return int(1000 * time.time())
@@ -150,7 +150,7 @@ class ExpiringCache:
 		return removed_entries
 
 	def exists(self, key):
-		return self.cache.get(key, SOME_OBJ) != SOME_OBJ
+		return self.cache.get(key, _OBJ_END_) != _OBJ_END_
 		
 	def delete(self, key):
 		return self.cache.pop(key, None)
@@ -887,7 +887,7 @@ def set_socket_options(sock):
 	sock.setsockopt(socket.SOL_TCP, TCP_USER_TIMEOUT, _tcp_user_timeout) # close means a close understand ?
 
 #wraps send method of websocket which keeps a buffer of messages for 20 seconds
-#if the connection closes
+#if the connection closes, you can use them to resend
 class WebsocketConnection(WebSocket):
 	queue = None# to keep track of how many greenlets are waiting on semaphore to send 
 	msg_assumed_sent = None# queue for older sent messages in case of reset we try to retransmit
@@ -1150,3 +1150,63 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000):
 	output_parser_thread.join()
 	err_parser_thread.join()
 	return state
+
+
+#args is array of strings or array or array of words
+#you can use this to return a bunch of strings to index
+#in elasticsearch with key "search_words"
+def condense_for_search(*args):
+	global_word_map = {}
+	for arg in args:
+		if(not arg):
+			continue
+		word_map = {}
+		if(isinstance(arg, str)):
+			arg = arg.split()
+		for word in arg:
+			key = word[:5]
+			existing_words_of_key = word_map.get(key)
+			if(not existing_words_of_key):
+				word_map[key] = existing_words_of_key = []
+			existing_words_of_key.append(word)
+		for _key, words in word_map.items():
+			_words = global_word_map.get(_key)
+			# when existing matching words list
+			# has more than current arg, ignore
+			if(_words and len(_words) > len(words)):
+				continue
+			global_word_map[_key] = words
+
+	ret = []
+	for key, vals in global_word_map.items():
+		ret.extend(vals)
+
+	return ret
+
+#returns None when there are exceptions instead of throwing
+def ignore_exceptions(*exceptions):
+	def decorator(func):
+		def new_func(*args, **kwargs):
+			try:
+				func(*args, **kwargs)
+			except Exception as ex:
+				for exception in exceptions:
+					if(isinstance(ex, exception)):
+						return None
+				raise ex
+		new_func._original = getattr(func, "_original", func)
+		return new_func
+	return decorator
+
+def original_function(func):
+	_original = getattr(func, "_original", _OBJ_END_)
+	if(_original != _OBJ_END_):
+		return _original
+
+	while(True):
+		func_wrapped = getattr(func, "__wrapped__", _OBJ_END_)
+		if(func_wrapped == _OBJ_END_):
+			break
+		func = func_wrapped
+
+	return func

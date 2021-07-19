@@ -105,7 +105,7 @@ def use_connection_pool(**pool_args):
             #         retry += 1
             #         if retry >= 2:
             #             raise e
-        func_wrap._original = func
+        func_wrap._original = getattr(func, "_original", func)
         return func_wrap
 
     return use_db_connection
