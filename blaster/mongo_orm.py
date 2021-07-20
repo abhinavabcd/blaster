@@ -357,6 +357,8 @@ class Model(object):
 			_default = getattr(attr_obj, "default", _OBJ_END_)
 			#if the value is not the document and have a default do the $set
 			if(_default != _OBJ_END_ and attr_name not in doc):
+				if(isinstance(_default, types.FunctionType)):
+					_default = _default()
 				#if there is a default value
 				if(attr_obj._type == dict):
 					self._set_query_updates[attr_name] = _default = dict(_default) # copy

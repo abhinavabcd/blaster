@@ -181,12 +181,15 @@ class HeadersDict(dict):
 
 _OBJ_END_ = object()
 class RequestParams:
+	sock = None
 	_post = None
 	_get = None
 	_cookies = None
 	_headers = None
 	#cookies to send to client
 	_cookies_to_set = None
+	#url data, doesn't contain query string
+	path = None
 
 	def __init__(self, buffered_socket):
 		self._get = SanitizedDict() # empty params by default
@@ -488,16 +491,22 @@ class App:
 			request_line = request_line.decode("utf-8")
 			request_type, _request_line = request_line.split(" ", 1)
 			_http_protocol_index = _request_line.rfind(" ")
-			request_path = _request_line[: _http_protocol_index]
+			request_path \
+				= request_params.path \
+				= _request_line[: _http_protocol_index]
 			#http_version = _request_line[_http_protocol_index + 1:]
 
 			query_start_index = request_path.find("?")
 			if(query_start_index != -1):
-				request_params._get.update(
-					parse_qs_modified(request_path[query_start_index + 1:])
-				)
-				request_path = request_path[:query_start_index]
-		
+				query_string = request_path[query_start_index + 1:]
+				request_params._get.update(parse_qs_modified(query_string))
+
+				#strip query string from path
+				request_path \
+					= request_params.path \
+					= request_path[:query_start_index]
+
+
 			headers = request_params._headers
 			while(True): # keep reading headers
 				data = buffered_socket.readline()
@@ -766,8 +775,7 @@ def redirect_http_to_https():
 		host = request_params.HEADERS('host')
 		if(not host):
 			return "404", {}, "Not understood"
-		query_string = ("?" + urllib.parse.urlencode(request_params._get)) if request_params._get else ""
-		return "302 Redirect", ["Location: https://%s%s%s"%(host, path, query_string)], "Need Https"
+		return "302 Redirect", ["Location: https://%s%s?%s"%(host, request_params.path, request_params.query_string)], "Need Https"
 
 	http_app = App("port=80")
 	http_app.start(port=80, handlers=[("(.*)", redirect)])

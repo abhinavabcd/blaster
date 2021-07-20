@@ -771,6 +771,7 @@ class SanitizedSetterGetter(object):
 		val = super().__getitem__(k)
 		if(isinstance(val, str)):
 			if(escape_html):
+				#make it html safe
 				return html.escape(val, quote=escape_quotes)
 		return val
 
