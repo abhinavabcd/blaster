@@ -16,6 +16,7 @@ import struct
 import gevent
 import fcntl
 import html
+import types
 
 from functools import reduce as _reduce
 from gevent.lock import BoundedSemaphore
@@ -1211,3 +1212,29 @@ def original_function(func):
 		func = func_wrapped
 
 	return func
+
+
+#calls a function after the function returns given by argument after
+def call_after_func(func):
+
+	if(isinstance(func, str)):
+		# after_func => take from args named by func
+		def decorator(to_decorate_func):
+			def new_func(*args, **kwargs):
+				after_func = kwargs.pop(func, None)
+				ret = to_decorate_func(*args, **kwargs)
+				after_func and after_func()
+				return ret
+
+			new_func._original = getattr(to_decorate_func, "_original", to_decorate_func)
+			return new_func
+		return decorator
+
+	else:
+		def new_func(*args, after=None, **kwargs):
+			ret = func(*args, **kwargs)
+			after and after()
+			return ret
+			
+		new_func._original = getattr(func, "_original", func)
+		return new_func

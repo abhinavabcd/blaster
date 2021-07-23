@@ -1160,14 +1160,14 @@ def initialize_model(Model):
 	if(Model not in [CollectionTracker, ControlJobs]):
 		collection_tracker = CollectionTracker.get(Model._collection_tracker_key_)
 		if(not collection_tracker
-				or not collection_tracker.db_nodes
-				or not collection_tracker.primary_shard_key
+			or not collection_tracker.db_nodes
+			or not collection_tracker.primary_shard_key
 		):
 			print(
 				"#MONGOORM_IMPORTANT_INFO : "
 				"Collection tracker entry not present for '%s'.."
 				"creating table in control node for this time in database '%s'. "
-				"You may want to talk to dba team to move to a proper node"%(Model.__name__, Model._db_name_)
+				"You may want to talk to dba to move to a proper node"%(Model.__name__, Model._db_name_)
 			)
 
 			#check if the Model already has _db_nodes_

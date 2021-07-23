@@ -50,7 +50,9 @@ I_AM_HANDLING_THE_STATUS = object()
 REUSE_SOCKET_FOR_HTTP = object()
 
 ########some random constants
-HTTP_MAX_REQUEST_BODY_SIZE = 11 * 1024 * 1024 # 11 mb
+HTTP_MAX_REQUEST_BODY_SIZE = 1 * 1024 * 1024 # 1 mb
+HTTP_MAX_HEADERS_DATA_SIZE = 16 * 1024 # 16kb
+
 SLASH_N_ORDINAL = ord(b'\n')
 
 
@@ -338,7 +340,16 @@ class App:
 		self.route_handlers = []
 		self.request_handlers = []
 
-	def route(self, regex, methods=None, name='', description='', query_class=None, request_class=None, response_class=None):
+	def route(self,
+			regex,
+			methods=None,
+			name='',
+			description='',
+			query_class=None,
+			request_class=None,
+			response_class=None,
+			max_body_size=None
+	):
 		methods = methods or ("GET", "POST")
 		if(isinstance(methods, str)):
 			methods = (methods,)
@@ -352,7 +363,8 @@ class App:
 				"description": description,
 				"query_class": query_class,
 				"request_class": request_class,
-				"response_class": response_class
+				"response_class": response_class,
+				"max_body_size": max_body_size
 			})
 			#return func as if nothing's decorated! (so you can call function as is)
 			return func
@@ -506,35 +518,7 @@ class App:
 					= request_params.path \
 					= request_path[:query_start_index]
 
-
-			headers = request_params._headers
-			while(True): # keep reading headers
-				data = buffered_socket.readline()
-				if(data == b'\r\n'):
-					break
-				if(not data):
-					return
-				header_name , header_value = data.split(b': ', 1)
-				headers[header_name.lower().decode()] = header_value.rstrip(b'\r\n').decode()
-			
-			#check if there is a content length or transfer encoding chunked
-			content_length = int(headers.get("Content-Length", 0))
-			if(content_length > 0):
-				if(content_length < HTTP_MAX_REQUEST_BODY_SIZE):
-					post_data = buffered_socket.recv(content_length)
-
-			else: # handle chuncked encoding
-				transfer_encoding = headers.get("transfer-encoding")
-				if(transfer_encoding == "chunked"):
-					post_data = bytearray()
-					chunk_size = int(buffered_socket.readline(), 16) # hex
-					while(chunk_size > 0):
-						data = buffered_socket.recv(chunk_size + 2)
-						post_data.extend(data)
-						chunk_size = int(buffered_socket.readline(), 16) # hex
-					#as bytes
-
-			ret = None
+			#find the handler
 			handler = None
 			for regex, method_handlers in self.request_handlers:
 				args = regex.match(request_path)
@@ -555,7 +539,45 @@ class App:
 						break
 
 			if(not handler):
-				raise("method not found")
+				raise Exception("Method not found")
+
+			#parse the headers
+			headers = request_params._headers
+			max_headers_data_size = handler.get("max_headers_data_size") or HTTP_MAX_HEADERS_DATA_SIZE
+			_headers_data_size = 0
+			while(_headers_data_size < max_headers_data_size): # keep reading headers
+				data = buffered_socket.readline(max_size=max_headers_data_size)
+				if(data == b'\r\n'):
+					break
+				if(not data):
+					return # won't resuse socket
+
+				header_name_value_pair = data.split(b':', 1)
+				if(len(header_name_value_pair) == 2):
+					header_name , header_value = header_name_value_pair
+					headers[header_name.lower().decode()] = header_value.lstrip(b' ').rstrip(b'\r\n').decode()
+				
+				_headers_data_size += len(data)
+
+
+			#check if there is a content length or transfer encoding chunked
+			content_length = int(headers.get("Content-Length", 0))
+			_max_body_size = handler.get("max_body_size") or HTTP_MAX_REQUEST_BODY_SIZE
+			if(content_length > 0):
+				if(content_length < _max_body_size):
+					post_data = buffered_socket.recv(content_length)
+
+			else: # handle chuncked encoding
+				transfer_encoding = headers.get("transfer-encoding")
+				if(transfer_encoding == "chunked"):
+					post_data = bytearray()
+					chunk_size = int(buffered_socket.readline(), 16) # hex
+					while(chunk_size > 0 and len(post_data) + chunk_size < _max_body_size):
+						data = buffered_socket.recv(chunk_size + 2)
+						post_data.extend(data)
+						chunk_size = int(buffered_socket.readline(), 16) # hex
+					#as bytes
+
 
 			func = handler.get("func")
 			#process cookies
@@ -570,11 +592,11 @@ class App:
 			request_params.parse_request_body(post_data, headers)
 
 
-			ret = func(*args.groups(), request_params=request_params)
+			response_from_handler = func(*args.groups(), request_params=request_params)
 			
 			##app specific headers
 			#handle various return values from handler functions
-			(status, response_headers, body) = App.response_body_to_parts(ret)
+			(status, response_headers, body) = App.response_body_to_parts(response_from_handler)
 
 			if(status != I_AM_HANDLING_THE_STATUS):
 				status = status or '200 OK'
@@ -612,7 +634,7 @@ class App:
 				buffered_socket.send(b'Connection: keep-alive\r\n')
 
 			if(body == I_AM_HANDLING_THE_SOCKET):
-				if(_response_headers != I_AM_HANDLING_THE_HEADERS):
+				if(response_headers != I_AM_HANDLING_THE_HEADERS):
 					buffered_socket.send(b'\r\n') # close the headers
 
 				return I_AM_HANDLING_THE_SOCKET
