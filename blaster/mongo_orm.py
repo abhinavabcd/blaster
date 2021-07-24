@@ -21,30 +21,7 @@ EVENT_AFTER_CREATE = 4
 #just a random constant object to check for non existent keys without catching KeyNotExist exception
 _OBJ_END_ = object()
 #given a list of [(filter, iter), ....] , flattens them
-class MultiIteratorWithFilter:
-	iter_and_filter_list = []
 
-	def __init__(self, iter_and_filter_list=None):
-		self.iter_and_filter_list = iter_and_filter_list or []
-
-	def add(self, _iter, _filter=None):
-		self.iter_and_filter_list.append((_iter, _filter))
-
-	#ccalls ounts all iters
-	def count(self):
-		_count = 0
-		for _filter, _iter in self.iter_and_filter_list:
-			_count += _iter.count()
-		return _count
-
-	def __iter__(self):
-		for _iter, _filter in self.iter_and_filter_list:
-			for item in _iter:
-				if(_filter):
-					yield _filter(item)
-				else:
-					yield item
-	
 class Attribute(object):
 	_type = None
 
@@ -683,9 +660,6 @@ class Model(object):
 		if(not collections_to_query):
 			collections_to_query = {id(x): (x, queries, cls) for x in cls.get_collections_all_nodes()}
 
-
-		multi_iterator_with_filter = MultiIteratorWithFilter()
-
 		def count_documents(_collection, _query, offset, limit):
 			kwargs = {}
 			if(offset):
@@ -720,14 +694,10 @@ class Model(object):
 						for doc in cls.query(_query):
 							yield doc
 				ret = batched_requery_iter(ret)
-				multi_iterator_with_filter.add(ret, None) # no filter function
 			else:
-				multi_iterator_with_filter.add(ret, cls.get_instance_from_document)
+				ret = map(cls.get_instance_from_document, ret)
 
-
-			#replace the deprecated count method
-			ret.count = partial(count_documents, _collection, _query, offset, limit)
-
+			return ret, lambda: count_documents(_collection, _query, offset, limit)
 
 		threads = []
 		for _collection_shard_id, shard_and_queries in collections_to_query.items():
@@ -751,10 +721,38 @@ class Model(object):
 			)
 			threads.append(thread)
 							
-		#waint on threads and return cursors
-		gevent.joinall(threads)
 
-		return multi_iterator_with_filter
+		class MultiCollectionQueryResult:
+			query_result_iters = None
+			query_count_iters = None
+
+			def __init__(self):
+				self.query_result_iters = []
+				self.query_count_iters = []
+
+			def add(self, query_result_iter, query_count_iter=None):
+				self.query_result_iters.append(query_result_iter)
+				if(query_count_iter):
+					self.query_count_iters.append(query_count_iter)
+
+			def count(self):
+				ret = 0
+				for count_func in self.query_count_iters:
+					ret += count_func()
+				return ret
+
+			def __iter__(self):
+				for _iter in self.query_result_iters:
+					for item in _iter:
+						yield item
+			
+		#waint on threads and return cursors
+		multi_collection_query_result = MultiCollectionQueryResult()
+
+		for thread in gevent.joinall(threads):
+			multi_collection_query_result.add(thread.value[0], thread.value[1])
+
+		return multi_collection_query_result
 
 	'''
 		usually we call this while compile time,
