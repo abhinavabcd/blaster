@@ -750,8 +750,8 @@ def make_xss_safe(_html):
 	parser.close()
 	return parser.getHtml()
 
-
-def batch_iter(iterable, n=1):
+#yeild batches of items from iterator
+def batched_iter(iterable, n=1):
 	current_batch = []
 	for item in iterable:
 		current_batch.append(item)

@@ -5,7 +5,7 @@ Created on 05-Jun-2019
 '''
 from ..connection_pool import use_connection_pool
 from ..aws.push_tasks import push_task
-from ..base import server_log
+from ..base import LOG_WARN
 
 
 @push_task
@@ -51,5 +51,5 @@ def send_email(sender, to_list, subject, body_text=None, body_html=None, ses_cli
         else:
             return None
     except Exception as ex:
-        server_log('ses_error', data=str(ex))
+        LOG_WARN('ses_error', data=str(ex))
         return None

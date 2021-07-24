@@ -18,6 +18,7 @@ import gevent
 import signal
 import functools
 import traceback
+import logging
 from gevent.server import StreamServer
 from gevent.pywsgi import WSGIServer
 from requests_toolbelt.multipart import decoder
@@ -56,15 +57,22 @@ HTTP_MAX_HEADERS_DATA_SIZE = 16 * 1024 # 16kb
 SLASH_N_ORDINAL = ord(b'\n')
 
 
-def server_log(log_type, cur_millis=None, **kwargs):
+def LOG(level, _type, cur_millis=None, **kwargs):
 	if(not cur_millis):
 		cur_millis = cur_ms()
-	print(log_type, cur_millis, json.dumps(kwargs))
+	(level <= LOG_LEVEL) and print(_type, cur_millis, json.dumps(kwargs))
 
-def LOG(level, log_type, cur_millis=None, **kwargs):
-	if(not cur_millis):
-		cur_millis = cur_ms()
-	(level <= LOG_LEVEL) and print(log_type, cur_millis, json.dumps(kwargs))
+def LOG_PRINT(_type, **kwargs):
+	LOG(LOG_LEVEL, _type, **kwargs)
+
+def LOG_DEBUG(_type, **kwargs):
+	LOG(logging.DEBUG, _type, **kwargs)
+
+def LOG_WARN(_type, **kwargs):
+	LOG(logging.WARN, _type, **kwargs)
+
+def LOG_ERROR(_type, **kwargs):
+	LOG(logging.ERROR, _type, **kwargs)
 
 
 def find_new_line(arr):
@@ -459,7 +467,7 @@ class App:
 					# used in case of ssl sockets
 					return self.handle(self.wrap_socket(client_socket, **self.ssl_args), address)
 
-			server_log("server_start", port=port)
+			LOG_WARN("server_start", port=port)
 			self.stream_server = CustomStreamServer(('', port), handle=self.handle_connection, **ssl_args)
 			#keep a track
 		_all_apps.add(self)
@@ -527,7 +535,7 @@ class App:
 					handler = method_handlers.get(request_type)
 					if(not handler):
 						#perform GET call by default
-						server_log(
+						LOG_WARN(
 							"handler_method_not_found",
 							request_type=request_type,
 							msg="performing GET by default"
@@ -707,7 +715,7 @@ class App:
 					}, indent=4)
 				)
 
-			server_log("http", response_status=status, request_type=request_type , path=request_path, wallclockms=int(1000 * time.time()) - cur_millis)
+			LOG_WARN("http", response_status=status, request_type=request_type , path=request_path, wallclockms=int(1000 * time.time()) - cur_millis)
 
 		except Exception as ex:
 			stacktrace_string = traceback.format_exc()
@@ -728,9 +736,8 @@ class App:
 					b'Content-Length: ', str(len(body)), b'\r\n\r\n',
 					body
 			)
-			server_log(
+			LOG_WARN(
 				"http_error",
-				cur_millis,
 				exception_str=str(ex),
 				stacktrace_string=stacktrace_string,
 				request_type=request_type,
@@ -763,7 +770,7 @@ class App:
 
 
 def stop_all_apps():
-	server_log("server_info", data="exiting all servers")
+	LOG_WARN("server_info", data="exiting all servers")
 	global _is_server_running
 	
 	_is_server_running = False

@@ -11,7 +11,7 @@ import traceback
 import ujson as json
 import gevent
 from .. import config
-from ..base import server_log, is_server_running
+from ..base import LOG_WARN, is_server_running
 from ..common_funcs_and_datastructures import get_random_id,\
     cur_ms
 from ..connection_pool import get_from_pool,\
@@ -25,7 +25,7 @@ sqs_reader_greenlets = []
 @use_connection_pool(queue="sqs")
 def start_boto_sqs_readers(num_readers=5, msgs_per_batch=10, queue=None):
     if(not config.sqs_url):
-        server_log("server_info", data="No sqs queue url provided, not starting readers")
+        LOG_WARN("server_info", data="No sqs queue url provided, not starting readers")
         return
         
     queue_url = config.sqs_url
@@ -55,17 +55,17 @@ def start_boto_sqs_readers(num_readers=5, msgs_per_batch=10, queue=None):
                     if func:
                         func(*args, **kwargs)
                     else:
-                        server_log("server_exception", data="Not a push task", func=str(func))
+                        LOG_WARN("server_exception", data="Not a push task", func=str(func))
 
                     _temp = queue.delete_message(
                         QueueUrl=queue_url,
                         ReceiptHandle=sqs_message.get("ReceiptHandle", None)
                     )
                     
-                    server_log("sqs_processed" , data=json.dumps(_temp))
+                    LOG_WARN("sqs_processed", data=json.dumps(_temp))
 
             except Exception as ex:
-                server_log("sqs_exception", stack_trace=traceback.format_exc())
+                LOG_WARN("sqs_exception", stack_trace=traceback.format_exc())
         
     for i in range(num_readers):
         sqs_reader_greenlets.append(gevent.spawn(process_from_sqs))
@@ -114,7 +114,7 @@ def post_a_task(func, *args, **kwargs):
 
     if(not config.sqs_url):
         message_body = pickle.loads(message_body)
-        server_log("server_info", data="calling directly as not queue provided")
+        LOG_WARN("server_info", data="calling directly as not queue provided")
         func = push_tasks.get(
             message_body.get("func_v2", ""),
             None
@@ -132,7 +132,7 @@ def post_a_task(func, *args, **kwargs):
 
 
 def wait_for_push_tasks_processing():
-    server_log("server_info", data="wait called")
+    LOG_WARN("server_info", data="wait called")
     gevent.joinall(sqs_reader_greenlets)
     del sqs_reader_greenlets[:]
 

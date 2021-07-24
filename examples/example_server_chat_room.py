@@ -20,7 +20,7 @@ import random
 from blaster.ws_handler import WebSocketServerHandler
 import time
 from blaster.constants import TYPE_ERROR, TYPE_OK, LOG_TYPE_EXCEPTION
-from blaster.base import route_handler, is_server_running, server_log
+from blaster.base import route_handler, is_server_running, LOG_WARN
 import socket
 from blaster.common_funcs_and_datastructures import cur_ms
 import gevent
@@ -129,7 +129,7 @@ def update_stats_on_main():
 				errors += 1
 			sleep(5 * 60) # 5 minutes sleep
 		except Exception as ex:
-			server_log(LOG_TYPE_EXCEPTION, ex="could not update on main server")
+			LOG_WARN(LOG_TYPE_EXCEPTION, ex="could not update on main server")
 			sleep(1 * 60) # 1 minutes sleep
 
 
@@ -381,7 +381,7 @@ def join_session(session_id, request_params=None, user=None):
 						except Exception as ex:
 							pass
 		except Exception as ex:
-			server_log(LOG_TYPE_EXCEPTION, exception=str(ex))
+			LOG_WARN(LOG_TYPE_EXCEPTION, exception=str(ex))
 	
 	ws.handleClose = delete_connection
 	ws.handleConnected = on_connected
