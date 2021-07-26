@@ -62,10 +62,7 @@ class Model(object):
 
 		if(_is_new_):
 			#setup default values
-			default_values = cls.get_default_values()
-			for k, v in default_values.items():
-				setattr(self, k, v)
-			self._set_query_updates.update(default_values)
+			self.__check_and_set_initial_defaults({}) # from empty doc
 
 		#update given values
 		for k, v in values.items():
@@ -389,22 +386,6 @@ class Model(object):
 		if(cls.__cache__):
 			cls.__cache__.set(self.pk_tuple(), self)
 
-	@classmethod
-	def get_default_values(cls):
-		ret = {}
-		for k, v in cls._attrs.items():
-			default = getattr(v, "default", None)
-			if(default != None):
-				if(isinstance(default, types.FunctionType)):
-					default = default()
-				if(isinstance(default, (list, tuple))):
-					#create a copy
-					default = list(default)
-				if(isinstance(default, (dict,))):
-					#create a copy
-					default = dict(default)
-				ret[k] = default
-		return ret
 
 	# basically finds the node where the shard_key resides
 	# and returns a actual pymongo collection, shard_key must be a string
