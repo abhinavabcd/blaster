@@ -407,18 +407,18 @@ class Model(object):
 		return ret
 
 	# basically finds the node where the shard_key resides
-	# and returns a connection to it, shard_key must be a string
+	# and returns a actual pymongo collection, shard_key must be a string
 	@classmethod
 	def get_collection(Model, shard_key):
 		shard_key = str(shard_key) if shard_key != None else ""
-		_node_with_data = jump_hash(shard_key.encode(), len(Model._db_nodes_))
-		_conn = Model._db_nodes_[_node_with_data]
-		return _conn.get_collection(Model)
+		node_with_data_index = jump_hash(shard_key.encode(), len(Model._db_nodes_))
+		db_node = Model._db_nodes_[node_with_data_index]
+		return db_node.get_collection(Model)
 
 	# returns all nodes and connections to Model inside them
 	@classmethod
-	def get_collections_all_nodes(Model):
-		return map(lambda _conn: _conn.get_collection(Model), Model._db_nodes_)
+	def get_collection_on_all_db_nodes(Model):
+		return map(lambda db_node: db_node.get_collection(Model), Model._db_nodes_)
 
 	#give a shard key from query we return multiple connect
 	@classmethod
@@ -426,19 +426,20 @@ class Model(object):
 		if(isinstance(shard_key, (str, int))):
 			return [cls.get_collection(shard_key)]
 		elif(isinstance(shard_key, dict)):
-			_in_values = shard_key.get("$in", [])
-			collections_to_update = {}
-			for shard_key in _in_values:
-				_collection = cls.get_collection(shard_key)
-				collections_to_update[id(_collection)] = _collection
-			return collections_to_update.values()
+			_in_values = shard_key.get("$in", _OBJ_END_)
+			if(_in_values != _OBJ_END_):
+				collections_to_update = {}
+				for shard_key in _in_values:
+					_collection = cls.get_collection(shard_key)
+					collections_to_update[id(_collection)] = _collection
+				return collections_to_update.values()
 		elif(shard_key == None):
 			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print(
 				"None type shard keys will be ignored and wont be available for query! Let me know feedback!"
 			)
 			return []
-		else:
-			raise Exception("Shard keys must be integers or strings: got %s"%(str(shard_key),))
+
+		raise Exception("Shard keys must be integers or strings or {'$in': [VALUES]}: got %s"%(str(shard_key),))
 
 	@classmethod
 	def get_collections_from_query(cls, _query):
@@ -448,7 +449,7 @@ class Model(object):
 			return cls.get_collections_from_shard_key(shard_key)
 
 		#could'nt finds shards, return all shards
-		return cls.get_collections_all_nodes()
+		return cls.get_collection_on_all_db_nodes()
 
 	#_add_query is more query other than pk
 	# for example, you can say update only when someother field > 0
@@ -658,7 +659,7 @@ class Model(object):
 		# we query all primary shards and assemble queries using chain
 		# which will be dead slow and possibly fucked up!
 		if(not collections_to_query):
-			collections_to_query = {id(x): (x, queries, cls) for x in cls.get_collections_all_nodes()}
+			collections_to_query = {id(x): (x, queries, cls) for x in cls.get_collection_on_all_db_nodes()}
 
 		def count_documents(_collection, _query, offset, limit):
 			kwargs = {}
@@ -1004,7 +1005,7 @@ _cached_mongo_clients = {}
 #DatabaseNode is basically a server
 class DatabaseNode:
 
-	collections = {}
+	_cached_pymongo_collections = {}
 	#mongo connection
 	mongo_connection = None
 	hosts = None
@@ -1041,9 +1042,11 @@ class DatabaseNode:
 
 	#returns collection on the given DatabaseNode
 	def get_collection(self, Model):
-		ret = self.collections.get(Model)
+		ret = self._cached_pymongo_collections.get(Model)
 		if(not ret):
-			self.collections[Model] = ret = self.mongo_connection[Model._db_name_][Model._collection_name_]
+			self._cached_pymongo_collections[Model] \
+				= ret \
+				= self.mongo_connection[Model._db_name_][Model._collection_name_with_shard_]
 		return ret
 
 
@@ -1185,13 +1188,12 @@ def initialize_model(Model):
 	if(not Model._shard_key_):
 		Model._shard_key_ = "_id"
 
-	_model_collection_name_ = Model._collection_name_
 	# set collection name to include shard_keys
-	Model._collection_name_ = _model_collection_name_ + "_shard_" + Model._shard_key_
+	Model._collection_name_with_shard_ = Model._collection_name_ + "_shard_" + Model._shard_key_
 	#if there is no shard key specified use the first primary key
 
 	##find tracking nodes
-	Model._collection_tracker_key_ = "%s__%s"%(Model._db_name_, Model._collection_name_)
+	Model._collection_tracker_key_ = "%s__%s"%(Model._db_name_, Model._collection_name_with_shard_)
 
 	IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO collection tracker key", Model._collection_tracker_key_)
 
@@ -1240,7 +1242,7 @@ def initialize_model(Model):
 			try:
 				ControlJobs(
 					db=Model._db_name_,
-					collection=Model._collection_name_,
+					collection=Model._collection_name_with_shard_,
 					_type=ControlJobs.CREATE_SECONDARY_SHARD,
 					uid=shard_key
 				).commit()
@@ -1266,7 +1268,7 @@ def initialize_model(Model):
 		class_attrs = {
 			"_primary_index_": _seconday_shard.indexes,
 			"_secondary_index_": None,
-			"_collection_name_": _model_collection_name_,
+			"_collection_name_": Model._collection_name_,
 			"_is_secondary_shard": True,
 			"_db_nodes_": None
 		}
