@@ -1,7 +1,7 @@
 import gevent
 import types
 import pymongo
-from functools import partial
+from bson.objectid import ObjectId
 from itertools import chain
 from collections import OrderedDict
 from pymongo import MongoClient
@@ -62,12 +62,11 @@ class Model(object):
 
 		if(_is_new_):
 			#setup default values
-			self.__check_and_set_initial_defaults({}) # from empty doc
+			self.__check_and_set_initial_defaults(values) # from empty doc
 
 		#update given values
 		for k, v in values.items():
-			if(v != None):
-				setattr(self, k, v)
+			setattr(self, k, v)
 
 	def get_id(self):
 		return str(self._id)
@@ -285,17 +284,26 @@ class Model(object):
 		_attr_type_obj = self.__class__._attrs.get(k)
 		if(_attr_type_obj):
 			#change type of objects when initializing
+			if(v and not isinstance(v, _attr_type_obj._type)):
+				#allow float and int implicit conversion/relaxation
+				if(_attr_type_obj._type in (int, float)):
+					v = _attr_type_obj._type(v)
+				elif(isinstance(v, ObjectId)):
+					pass
+				else:
+					raise Exception("Type mismatch in %s, %s: should be %s but got %s"%(type(self), k, _attr_type_obj._type, str(type(v))))
+
 			if(self._initializing):
-				if(_attr_type_obj._type == dict):
-					if(not self.__is_new and isinstance(v, dict)):
-						v = self.get_custom_dict(k, v)
+				if(not self.__is_new):
+					if(_attr_type_obj._type == dict):
+						if(isinstance(v, dict)):
+							v = self.get_custom_dict(k, v)
 
-				elif(_attr_type_obj._type == list):
-					if(not self.__is_new and isinstance(v, list)):
-						v = self.get_custom_list(k, v)
-
+					elif(_attr_type_obj._type == list):
+						if(isinstance(v, list)):
+							v = self.get_custom_list(k, v)
 			else:
-				cur_value = getattr(self, k, None)
+				cur_value = getattr(self, k, _OBJ_END_)
 				if(cur_value != v):
 					self._set_query_updates[k] = v
 		self.__dict__[k] = v
@@ -317,7 +325,7 @@ class Model(object):
 	def pk_from_doc(cls, doc):
 		ret = OrderedDict()
 		for attr in cls._pk_attrs:
-			ret[attr] = doc[attr]
+			ret[attr] = doc.get(attr)
 		return ret
 
 	def pk_tuple(self):
@@ -347,7 +355,7 @@ class Model(object):
 				else:
 					self._set_query_updates[attr_name] = _default # copy
 
-				self.__dict__[attr_name] = _default
+				setattr(self, attr_name, _default)
 
 
 	#when retrieving objects from db
@@ -379,6 +387,7 @@ class Model(object):
 		self.__check_and_set_initial_defaults(doc)
 		for k, v in doc.items():
 			setattr(self, k, v)
+
 		self._initializing = False
 		self._original_doc = doc
 		#renew the pk!
@@ -521,7 +530,7 @@ class Model(object):
 					old_value = self._original_doc.get(attr, _OBJ_END_)
 					new_value = updated_doc.get(attr, _OBJ_END_)
 					if(old_value != new_value):
-						if(new_value == _OBJ_END_):
+						if(new_value == _OBJ_END_): # removed after update
 							_secondary_values_to_unset[attr] = new_value # unset this value as it doesn't exist anymore
 						else:
 							_secondary_values_to_set[attr] = new_value

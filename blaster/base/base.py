@@ -57,22 +57,22 @@ HTTP_MAX_HEADERS_DATA_SIZE = 16 * 1024 # 16kb
 SLASH_N_ORDINAL = ord(b'\n')
 
 
-def LOG(level, _type, cur_millis=None, **kwargs):
+def LOG(level, log_type, cur_millis=None, **kwargs):
 	if(not cur_millis):
 		cur_millis = cur_ms()
-	(level <= LOG_LEVEL) and print(_type, cur_millis, json.dumps(kwargs))
+	(level <= LOG_LEVEL) and print(log_type, cur_millis, json.dumps(kwargs))
 
-def LOG_PRINT(_type, **kwargs):
-	LOG(LOG_LEVEL, _type, **kwargs)
+def LOG_PRINT(log_type, **kwargs):
+	LOG(LOG_LEVEL, log_type, **kwargs)
 
-def LOG_DEBUG(_type, **kwargs):
-	LOG(logging.DEBUG, _type, **kwargs)
+def LOG_DEBUG(log_type, **kwargs):
+	LOG(logging.DEBUG, log_type, **kwargs)
 
-def LOG_WARN(_type, **kwargs):
-	LOG(logging.WARN, _type, **kwargs)
+def LOG_WARN(log_type, **kwargs):
+	LOG(logging.WARN, log_type, **kwargs)
 
-def LOG_ERROR(_type, **kwargs):
-	LOG(logging.ERROR, _type, **kwargs)
+def LOG_ERROR(log_type, **kwargs):
+	LOG(logging.ERROR, log_type, **kwargs)
 
 
 def find_new_line(arr):
