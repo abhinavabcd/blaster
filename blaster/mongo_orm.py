@@ -419,10 +419,16 @@ class Model(object):
 			_in_values = shard_key.get("$in", _OBJ_END_)
 			if(_in_values != _OBJ_END_):
 				collections_to_update = {}
-				for shard_key in _in_values:
-					_collection = cls.get_collection(shard_key)
+				#group all shards into one set
+				for shard_key_value in _in_values:
+					_collection = cls.get_collection(shard_key_value)
 					collections_to_update[id(_collection)] = _collection
 				return collections_to_update.values()
+
+			_eq_value = shard_key.get("$eq", _OBJ_END_)
+			if(_eq_value != _OBJ_END_):
+				return [cls.get_collection(_eq_value)]
+
 		elif(shard_key == None):
 			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print(
 				"None type shard keys will be ignored and wont be available for query! Let me know feedback!"

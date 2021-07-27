@@ -68,6 +68,9 @@ def LOG_PRINT(log_type, **kwargs):
 def LOG_DEBUG(log_type, **kwargs):
 	LOG(logging.DEBUG, log_type, **kwargs)
 
+def LOG_INFO(log_type, **kwargs):
+	LOG(logging.INFO, log_type, **kwargs)
+
 def LOG_WARN(log_type, **kwargs):
 	LOG(logging.WARN, log_type, **kwargs)
 
