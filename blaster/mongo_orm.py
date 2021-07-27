@@ -688,8 +688,8 @@ class Model(object):
 					for docs in batched_iter(ret, n):
 						_query = {"$or": [dict(cls.pk_from_doc(_doc)) for _doc in docs]}
 						IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: requerying", cls, _query)
-						for doc in cls.query(_query):
-							yield doc
+						for item in cls.query(_query):
+							yield item
 				ret = batched_requery_iter(ret)
 			else:
 				ret = map(cls.get_instance_from_document, ret)
