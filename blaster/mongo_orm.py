@@ -42,11 +42,11 @@ class Model(object):
 	_original_doc = None
 	#we execute all functions inside this list, and use the return value to update
 	_insert_result = None
-	#this means the object is being initialized so the updates to object in this phase are ignored
+	#this means the object is being initialized by this orm, and not available to user yet
 	_initializing = False
 	_pk = None
 	_json = None
-	_is_secondary_shard = None # used to identify if it's a primary or secondary shard
+	_is_secondary_shard = False # used to identify if it's a primary or secondary shard
 
 	#initialize a new object
 	def __init__(self, _is_new_=True, **values):
@@ -283,14 +283,13 @@ class Model(object):
 	def __setattr__(self, k, v):
 		_attr_type_obj = self.__class__._attrs.get(k)
 		if(_attr_type_obj):
-			#change type of objects when initializing
+			#change type of objects when setting them
 			if(v and not isinstance(v, _attr_type_obj._type)):
-				#allow float and int implicit conversion/relaxation
-				if(_attr_type_obj._type in (int, float)):
+				if(_attr_type_obj._type in (int, float)): # force cast between int/float
 					v = _attr_type_obj._type(v)
-				elif(isinstance(v, ObjectId)):
-					pass
-				else:
+				elif(_attr_type_obj._type == str): # force cast to string
+					v = str(v)
+				elif(not self._initializing):
 					raise Exception("Type mismatch in %s, %s: should be %s but got %s"%(type(self), k, _attr_type_obj._type, str(type(v))))
 
 			if(self._initializing):
@@ -955,6 +954,26 @@ class CollectionTracker(Model):
 	secondary_shard_keys = Attribute(list)
 
 
+#tags shard keys to the attributes and use it when intializing the model
+def SHARD_BY(primary=None, secondary=None, Model=None):
+	if(primary and isinstance(primary, Attribute)):
+		primary.is_primary_shard_key = True
+	if(secondary):
+		for secondary_shard_attr in secondary:
+			if(secondary_shard_attr and isinstance(secondary_shard_attr, Attribute)):
+				secondary_shard_attr.is_secondary_shard_key = True
+
+#tags indexes_to_create to attributes and retrieve them when initializing the model
+def INDEX(*indexes):
+	for index_key_set in indexes:
+		first_key_of_index_key_set = index_key_set[0]
+		if(isinstance(first_key_of_index_key_set, tuple)): # when it has a sorting order as second key
+			first_key_of_index_key_set = first_key_of_index_key_set[0]
+
+		first_key_of_index_key_set._indexes_to_create = getattr(first_key_of_index_key_set, "_indexes_to_create", [])
+		first_key_of_index_key_set._indexes_to_create.append(index_key_set)
+
+
 '''
 Control Jobs
 - 	every time a job is completed, check if it has parent,
@@ -964,7 +983,6 @@ class ControlJobs(Model):
 	_db_name_ = "control"
 	_collection_name_ = "jobs"
 
-	_id = Attribute(str)
 	parent__id = Attribute(str)
 	num_child_jobs = Attribute(int, default=0) # just for reconcillation
 	_type = Attribute(int) # reshard=>0, create_secondary_index=>1, create_primary_index=>2
@@ -981,14 +999,15 @@ class ControlJobs(Model):
 	created_at = Attribute(int, default=cur_ms)
 	updated_at = Attribute(int, default=cur_ms)
 
-	_primary_index_ = [
+	INDEX(
 		(db, collection, _type, uid),
 		(db, collection, _type, status, {"unique": False}),
-	]
+		(parent__id, {"unique": False})
+	)
 
-	_secondary_index_ = [
-		(parent__id, {"unique": False, "do_not_shard": True})
-	]
+	SHARD_BY(primary=db)
+
+
 
 	##Constants
 	CREATE_SECONDARY_SHARD = 1
@@ -1053,13 +1072,16 @@ def initialize_model(Model):
 			initialize_model(_m)
 		return
 
+	#defaults
+	Model._shard_key_ = getattr(Model, "_shard_key_", "_id")
+	Model._secondary_shards_ = {}
+	Model._indexes_ = getattr(Model, "_indexes_", [("_id",)])
 
-	IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: Initializing Model", Model)
 	# temp usage _id_attr
-	_id_attr = Attribute(str)
+	_id_attr = Attribute(str) # default is of type objectId
 	Model._attrs = _model_attrs = {"_id": _id_attr}
 	Model._pk_attrs = None
-	'''it's used for translating attr objects to string names'''
+	'''it's used for translating attr objects/name to string names'''
 	Model.__attrs_to_name = attrs_to_name = {_id_attr: '_id', '_id': '_id'}
 	for k, v in Model.__dict__.items():
 		if(isinstance(v, Attribute)):
@@ -1069,22 +1091,26 @@ def initialize_model(Model):
 			# and also helps converting if any given attributes as strings
 			attrs_to_name[k] = k
 
-	# ensure indexes created and all collections loaded to memory
-	#Ex: _index_ = [( (a, ASCENDING), (b, DESCENDING), {"unique": False})]
-	_model_primary_indexes = getattr(Model, "_primary_index_", None) or []
-	if(not _model_primary_indexes):
-		#if there are no primary indexes default is _id
-		_model_primary_indexes = [('_id',)]
-	#secondary indexes
-	_model_secondary_indexes = getattr(Model, "_secondary_index_", None) or []
+			#check if it has any shard, then extract indexes, shard key tagged to attributes
+			if(not Model._is_secondary_shard): # very importat check
+				#check indexes_to_create
+				_indexes_to_create = getattr(v, "_indexes_to_create", None)
+				if(_indexes_to_create):
+					delattr(v, "_indexes_to_create") # because we don't need it again after first time
+					Model._indexes_.extend(_indexes_to_create)
 
-	#we create a single list and pass through all indexes and create primary/secondary
-	#automatically
-	_model_indexes = _model_primary_indexes + _model_secondary_indexes
-	# A simple shard key
-	Model._shard_key_ = None
-	# { shard_key : Shard } #a shard is a model class just like a normal table class
-	Model._secondary_shards_ = {}
+				is_primary_shard_key = getattr(v, "is_primary_shard_key", False)
+				is_secondary_shard_key = getattr(v, "is_secondary_shard_key", False)
+				if(is_primary_shard_key is True):
+					Model._shard_key_ = k
+					delattr(v, "is_primary_shard_key") # because we don't need it again after first time
+				elif(is_secondary_shard_key is True):
+					Model._secondary_shards_[k] = SecondaryShard()
+					delattr(v, "is_secondary_shard_key") # because we don't need it again after first time
+
+	IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: Initializing Model", Model,
+		Model._indexes_, Model._shard_key_, Model._secondary_shards_
+	)
 
 	Model._event_listeners_ = getattr(Model, "_event_listeners_", {})
 	#some default event
@@ -1092,7 +1118,7 @@ def initialize_model(Model):
 
 	_pymongo_indexes_to_create = []
 	Model._pk_is_unique_index = False
-	for _index in _model_indexes:
+	for _index in Model._indexes_:
 		mongo_index_args = {}
 		pymongo_index = []
 		if(not isinstance(_index, tuple)):
@@ -1114,44 +1140,31 @@ def initialize_model(Model):
 
 		#convert to tuple again
 		pymongo_index = tuple(pymongo_index)
-		is_unique_index = mongo_index_args.get("unique") is not False
-		do_not_shard = mongo_index_args.pop("do_not_shard", False) or (mongo_index_args.pop("shard", True) is False)
+		is_unique_index = mongo_index_args.get("unique", True) is not False
 
-		_index_shard_key = pymongo_index[0][0]
-		if(do_not_shard):
-			#use it just for index and not as shard key
-			pass
-		#set primary and secondary shard attributes
-		elif(not Model._shard_key_):
-			Model._shard_key_ = _index_shard_key
-		#check and set secondary shard keys
-		elif(Model._shard_key_ != _index_shard_key):
-			#created secondary shards, these are tables
+		_index_shard_key = pymongo_index[0][0] # shard key is the first mentioned key in index
+
+		if(Model._shard_key_ != _index_shard_key):
+			#secondary shard tables
 			_seconday_shard = Model._secondary_shards_.get(_index_shard_key)
 
-			if(not _seconday_shard):
-				Model._secondary_shards_[_index_shard_key] = _seconday_shard = SecondaryShard()
-				print("Warning: Having secondary shard keys is experimental.",
-					"Secondary shard key : ",
-					_index_shard_key, Model
+			if(_seconday_shard):
+				for _attr_name, _ordering in pymongo_index:
+					_seconday_shard.attributes[_attr_name] = getattr(
+						Model,
+						_attr_name
+					)
+				#create _index_ for seconday shards
+				_secondary_shard_index = list(pymongo_index)
+				_secondary_shard_index.append(mongo_index_args)
+				_seconday_shard.indexes.append(
+					tuple(_secondary_shard_index)
 				)
-
-			for _attr_name, _ordering in pymongo_index:
-				_seconday_shard.attributes[_attr_name] = getattr(
-					Model,
-					_attr_name
-				)
-			#create _index_ for seconday shards
-			_secondary_shard_index = list(pymongo_index)
-			_secondary_shard_index.append(mongo_index_args)
-			_seconday_shard.indexes.append(
-				tuple(_secondary_shard_index)
-			)
 
 		ignore_index_creation = False
-		if(	Model._shard_key_ == _index_shard_key or do_not_shard):
-			#set the primary key
-			#prefer unique index as the pk
+		#check if index it belongs to primary shard
+		if(	Model._shard_key_ == _index_shard_key):
+			#index belong to primary shard
 			if(not Model._pk_attrs
 				or (is_unique_index and not Model._pk_is_unique_index)
 			):
@@ -1159,9 +1172,8 @@ def initialize_model(Model):
 				Model._pk_attrs = _pk_attrs = OrderedDict()
 				for i in pymongo_index: # first unique index
 					_pk_attrs[i[0]] = 1
-		else:
-			#if we are sharding, we are creating indexes
-			#only necessary for the sharded table,
+		elif(_index_shard_key in Model._secondary_shards_):
+			#this index goes into the secondary table`
 			#Ex: Table A is sharded by x then we created indexes that has x on A_shard_x table only
 			ignore_index_creation = True
 
@@ -1173,20 +1185,12 @@ def initialize_model(Model):
 		if(not ignore_index_creation):
 			_pymongo_indexes_to_create.append((pymongo_index, mongo_index_args))
 
-	# but if nothing was specified we set the default _id
-	# for index, pk and shard key
-	if(not _model_indexes):
-		_model_indexes = [('_id', pymongo.ASCENDING)]
 
 	if(not Model._pk_attrs): # create default _pk_attrs
 		Model._pk_attrs = OrderedDict(_id=True)
 
-	if(not Model._shard_key_):
-		Model._shard_key_ = "_id"
-
 	# set collection name to include shard_keys
 	Model._collection_name_with_shard_ = Model._collection_name_ + "_shard_" + Model._shard_key_
-	#if there is no shard key specified use the first primary key
 
 	##find tracking nodes
 	Model._collection_tracker_key_ = "%s__%s"%(Model._db_name_, Model._collection_name_with_shard_)
@@ -1230,11 +1234,11 @@ def initialize_model(Model):
 			raise Exception("#MONGO_EXCEPTION: Primary shard key changed for ", Model)
 
 		#create diff jobs
-		to_create_secondary_index, to_delete_secondary_index = list_diff2(
+		to_create_secondary_shard_key, to_delete_secondary_shard_key = list_diff2(
 			Model._secondary_shards_.keys(),
 			collection_tracker.secondary_shard_keys
 		)
-		for shard_key in to_create_secondary_index:
+		for shard_key in to_create_secondary_shard_key:
 			try:
 				ControlJobs(
 					db=Model._db_name_,
@@ -1242,7 +1246,7 @@ def initialize_model(Model):
 					_type=ControlJobs.CREATE_SECONDARY_SHARD,
 					uid=shard_key
 				).commit()
-				IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: create a control job to add secondary shard", Model, shard_key)
+				IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: create a control job to create secondary sharding", Model, shard_key)
 			except DuplicateKeyError as ex:
 				pass
 
@@ -1251,7 +1255,7 @@ def initialize_model(Model):
 		mongo_index_args = {"unique": True}
 		mongo_index_args.update(**additional_mongo_index_args)
 
-		IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: creating_indexes", pymongo_index, mongo_index_args)
+		IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: creating_indexes", Model, pymongo_index, mongo_index_args)
 		#in each node create indexes
 		for db_node in Model._db_nodes_:
 			db_node.get_collection(Model).create_index(pymongo_index, **mongo_index_args)
@@ -1262,8 +1266,8 @@ def initialize_model(Model):
 			raise Exception("Cannot have secondary shard keys for non unique indexes! %s"%(Model,))
 
 		class_attrs = {
-			"_primary_index_": _seconday_shard.indexes,
-			"_secondary_index_": None,
+			"_indexes_": _seconday_shard.indexes,
+			"_shard_key_": _seconday_shard_key,
 			"_collection_name_": Model._collection_name_,
 			"_is_secondary_shard": True,
 			"_db_nodes_": None
