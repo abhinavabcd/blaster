@@ -470,7 +470,7 @@ class App:
 					# used in case of ssl sockets
 					return self.handle(self.wrap_socket(client_socket, **self.ssl_args), address)
 
-			LOG_WARN("server_start", port=port)
+			LOG_PRINT("server_start", port=port)
 			self.stream_server = CustomStreamServer(('', port), handle=self.handle_connection, **ssl_args)
 			#keep a track
 		_all_apps.add(self)
@@ -538,7 +538,7 @@ class App:
 					handler = method_handlers.get(request_type)
 					if(not handler):
 						#perform GET call by default
-						LOG_WARN(
+						LOG_PRINT(
 							"handler_method_not_found",
 							request_type=request_type,
 							msg="performing GET by default"
@@ -718,7 +718,7 @@ class App:
 					}, indent=4)
 				)
 
-			LOG_WARN("http", response_status=status, request_type=request_type , path=request_path, wallclockms=int(1000 * time.time()) - cur_millis)
+			LOG_PRINT("http", response_status=status, request_type=request_type , path=request_path, wallclockms=int(1000 * time.time()) - cur_millis)
 
 		except Exception as ex:
 			stacktrace_string = traceback.format_exc()
@@ -739,7 +739,7 @@ class App:
 					b'Content-Length: ', str(len(body)), b'\r\n\r\n',
 					body
 			)
-			LOG_WARN(
+			LOG_ERROR(
 				"http_error",
 				exception_str=str(ex),
 				stacktrace_string=stacktrace_string,
@@ -773,7 +773,7 @@ class App:
 
 
 def stop_all_apps():
-	LOG_WARN("server_info", data="exiting all servers")
+	LOG_PRINT("server_info", data="exiting all servers")
 	global _is_server_running
 	
 	_is_server_running = False

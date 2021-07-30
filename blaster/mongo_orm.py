@@ -1,3 +1,4 @@
+import heapq
 import gevent
 import types
 import pymongo
@@ -589,8 +590,17 @@ class Model(object):
 		if(not queries):
 			return []
 
-		if(sort and not isinstance(sort, list)):
-			sort = [sort]
+		#normalize sort param to [('attr_name', ASCENDING/DESCENDING)...]
+		if(sort):
+			if(not isinstance(sort, list)):
+				sort = [sort]
+			_sort_keys = []
+			for _sort_key_tuple in sort:
+				if(not isinstance(_sort_key_tuple, tuple)):
+					_sort_keys.append((cls._attrs_to_name[_sort_key_tuple], 1))
+				else:
+					_sort_keys.append((cls._attrs_to_name[_sort_key_tuple[0]], _sort_key_tuple[1]))
+			sort = _sort_keys
 
 		#map of collection: [_query]
 		collections_to_query = {}
@@ -717,10 +727,35 @@ class Model(object):
 			)
 			threads.append(thread)
 							
+		class SortKey(object):
+			def __init__(self, obj):
+				self.obj = obj
 
+			def __lt__(self, other_obj):
+				if(not sort):
+					return True
+				for sort_key, sort_direction in sort:
+					value1 = getattr(self.obj, sort_key, None)
+					value2 = getattr(other_obj, sort_key, None)
+					if(sort_direction > 0):
+						if(value1 == value2):
+							continue
+						if(value1 == None or value2 == None):
+							return True if not value1 else False
+						return value1 < value2
+					else:
+						if(value1 == value2):
+							continue
+						if(value1 == None or value2 == None):
+							return False if not value1 else True
+						return value1 > value2
+				return True
+
+		#does local sorting on results from multiple query iterators using a heap
 		class MultiCollectionQueryResult:
 			query_result_iters = None
 			query_count_iters = None
+			buffer = None
 
 			def __init__(self):
 				self.query_result_iters = []
@@ -737,11 +772,34 @@ class Model(object):
 					ret += count_func()
 				return ret
 
+			def push_query_iter_into_heap(self, _query_result_iter):
+				try:
+					next_value = next(_query_result_iter)
+					heapq.heappush(self.buffer, (SortKey(next_value), _query_result_iter, next_value))
+				except StopIteration:
+					pass
+
 			def __iter__(self):
-				for _iter in self.query_result_iters:
-					for item in _iter:
-						yield item
-			
+				if(len(self.query_result_iters) == 1):
+					return self.query_result_iters[0]
+				#else we sort results for each if there is a sorting key given
+				self.buffer = []
+				heapq.heapify(self.buffer)
+				for _query_result_iter in self.query_result_iters:
+					self.push_query_iter_into_heap(_query_result_iter)
+				return self
+
+			def __next__(self):
+				_ret = None
+				try:
+					sort_value, _query_result_iter, _ret = heapq.heappop(self.buffer)
+					self.push_query_iter_into_heap(_query_result_iter)
+				except IndexError:
+					raise StopIteration
+
+				return _ret
+
+
 		#waint on threads and return cursors
 		multi_collection_query_result = MultiCollectionQueryResult()
 
@@ -1082,7 +1140,7 @@ def initialize_model(Model):
 	Model._attrs = _model_attrs = {"_id": _id_attr}
 	Model._pk_attrs = None
 	'''it's used for translating attr objects/name to string names'''
-	Model.__attrs_to_name = attrs_to_name = {_id_attr: '_id', '_id': '_id'}
+	Model._attrs_to_name = attrs_to_name = {_id_attr: '_id', '_id': '_id'}
 	for k, v in Model.__dict__.items():
 		if(isinstance(v, Attribute)):
 			_model_attrs[k] = v

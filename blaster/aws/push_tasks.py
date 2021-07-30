@@ -75,13 +75,14 @@ def start_boto_sqs_readers(num_readers=5, msgs_per_batch=10, queue=None):
 
 def push_task(func):
     if(isinstance(func, str)):
-        #return decorator
+        #named push task
         def decorator(func2):
             push_tasks[func] = func2
             return func2
 
         return decorator
     else:
+        #grab original function
         _original = getattr(func, "_original", func)
         push_tasks[_original.__name__] = func
         return func
@@ -148,5 +149,5 @@ def run_later(func):
             **kwargs
         )
 
-    wrapper._original = func
+    wrapper._original = getattr(func, "_original", func)
     return wrapper
