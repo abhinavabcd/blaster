@@ -19,6 +19,7 @@ import signal
 import functools
 import traceback
 import logging
+from datetime import datetime
 from gevent.server import StreamServer
 from gevent.pywsgi import WSGIServer
 from requests_toolbelt.multipart import decoder
@@ -57,10 +58,8 @@ HTTP_MAX_HEADERS_DATA_SIZE = 16 * 1024 # 16kb
 SLASH_N_ORDINAL = ord(b'\n')
 
 
-def LOG(level, log_type, cur_millis=None, **kwargs):
-	if(not cur_millis):
-		cur_millis = cur_ms()
-	(level <= LOG_LEVEL) and print(log_type, cur_millis, json.dumps(kwargs))
+def LOG(level, log_type, **kwargs):
+	(level >= LOG_LEVEL) and print(log_type, datetime.now(), json.dumps(kwargs))
 
 def LOG_PRINT(log_type, **kwargs):
 	LOG(LOG_LEVEL, log_type, **kwargs)

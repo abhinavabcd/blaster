@@ -916,8 +916,7 @@ class Model(object):
 				)
 
 				# try removing all primary keys
-				# although this unnecessary it's good
-				# to mongo ?
+				# although this is unnecessary i feel it's better this way
 				if("_id" in self._set_query_updates):
 					del self._set_query_updates["_id"]
 
@@ -1010,6 +1009,7 @@ class CollectionTracker(Model):
 	db_nodes = Attribute(list)
 	primary_shard_key = Attribute(str)
 	secondary_shard_keys = Attribute(list)
+	pk_attrs = Attribute(list)
 
 
 #tags shard keys to the attributes and use it when intializing the model
@@ -1282,7 +1282,8 @@ def initialize_model(Model):
 				_id=Model._collection_tracker_key_,
 				db_nodes=db_nodes,
 				primary_shard_key=Model._shard_key_,
-				secondary_shard_keys=list(Model._secondary_shards_.keys())
+				secondary_shard_keys=list(Model._secondary_shards_.keys()),
+				pk_attrs=list(Model._pk_attrs.keys())
 			).commit(force=True)
 
 		Model._db_nodes_ = [DatabaseNode(**_db_node) for _db_node in collection_tracker.db_nodes]

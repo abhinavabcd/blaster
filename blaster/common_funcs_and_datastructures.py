@@ -424,7 +424,7 @@ def decode_signed_value(name, value, max_age_days=-1, secret=None):
 	if(max_age_days > 0):
 		timestamp = int(parts[1])
 		if timestamp < time.time() - max_age_days * 86400:
-			print(-1, cur_ms(), "Expired cookie %s"%value)
+			print(-1, datetime.now(), "Expired cookie %s"%value)
 			return None
 		if timestamp > time.time() + 31 * 86400:
 			# _cookie_signature does not hash a delimiter between the
@@ -432,7 +432,7 @@ def decode_signed_value(name, value, max_age_days=-1, secret=None):
 			# digits from the payload to the timestamp without altering the
 			# signature.  For backwards compatibility, sanity-check timestamp
 			# here instead of modifying _cookie_signature.
-			print(-1, cur_ms(), "Cookie timestamp in future; possible tampering %s"%value)
+			print(-1, datetime.now(), "Cookie timestamp in future; possible tampering %s"%value)
 			return None
 	if parts[1].startswith(b"0"):
 		logging.warning("Tampered cookie %r", value)
