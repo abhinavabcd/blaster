@@ -11,6 +11,7 @@ from pymongo import ReturnDocument, ReadPreference
 from .common_funcs_and_datastructures import jump_hash, ExpiringCache, cur_ms, list_diff2, batched_iter
 from .config import DEBUG_LEVEL as BLASTER_DEBUG_LEVEL, IS_DEV
 
+_VERSION_ = 100
 MONGO_DEBUG_LEVEL = BLASTER_DEBUG_LEVEL
 EVENT_BEFORE_DELETE = -2
 EVENT_AFTER_DELETE = -1
@@ -178,13 +179,12 @@ class Model(object):
 		class DictObj(dict):
 			def __setitem__(this, k, v):
 				if(not _initializing):
-					new_path = path + "." + str(k)
-					self._set_query_updates[new_path] = v
+					self._set_query_updates[path + "." + str(k)] = v
 				if(_initializing):
 					if(isinstance(v, dict)):
-						v = self.get_custom_dict(new_path, v)
+						v = self.get_custom_dict(path + "." + str(k), v)
 					elif(isinstance(v, list)):
-						v = self.get_custom_list(new_path, v)
+						v = self.get_custom_list(path + "." + str(k), v)
 
 				super(DictObj, this).__setitem__(k, v)
 
@@ -214,7 +214,7 @@ class Model(object):
 				#allow chaining
 				return self
 
-		ret = DictObj(**_obj)
+		ret = DictObj().update(_obj)
 		_initializing = False
 		return ret
 
@@ -224,20 +224,18 @@ class Model(object):
 		class ListObj(list):
 			def __setitem__(this, k, v):
 				if(not _initializing):
-					new_path = path + "." + str(k)
-					self._set_query_updates[new_path] = v
+					self._set_query_updates[path + "." + str(k)] = v
 				if(_initializing):
 					if(isinstance(v, dict)):
-						v = self.get_custom_dict(new_path, v)
+						v = self.get_custom_dict(path + "." + str(k), v)
 					elif(isinstance(v, list)):
-						v = self.get_custom_list(new_path, v)
+						v = self.get_custom_list(path + "." + str(k), v)
 				super(ListObj, this).__setitem__(k, v)
 
 			def remove(this, item): # can raise value exception
 				super(ListObj, this).remove(item)
 				# reset full array very inefficient : (
 				self._set_query_updates[path] = this
-
 
 			def pop(this, i=None):
 				if(i == None):
@@ -261,11 +259,9 @@ class Model(object):
 			def append(this, item):
 				if(_initializing):
 					if(isinstance(item, dict)):
-						new_path = path + "." + str(len(this))
-						item = self.get_custom_dict(new_path, item)
+						item = self.get_custom_dict(path + "." + str(len(this)), item)
 					elif(isinstance(item, list)):
-						new_path = path + "." + str(len(this))
-						item = self.get_custom_list(new_path, item)
+						item = self.get_custom_list(path + "." + str(len(this)), item)
 
 				super(ListObj, this).append(item)
 
@@ -1249,6 +1245,7 @@ def initialize_model(Model):
 		if(not collection_tracker
 			or not collection_tracker.db_nodes
 			or not collection_tracker.primary_shard_key
+			#to support _VERSION_ < 100
 			or (not Model._is_secondary_shard and not collection_tracker.pk_attrs) # secondary shard keys are there and not pk_attrs
 		):
 			print(
