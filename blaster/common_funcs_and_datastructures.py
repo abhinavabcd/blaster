@@ -524,7 +524,7 @@ def sanitize_to_id(text):
 	return non_alpha_regex_2.sub("", text.lower())
 
 
-EMAIL_REGEX = re.compile('^[_a-z0-9-]+(\.[_a-z0-9-]+)*(\+[_a-z0-9-]+)?\@[a-z0-9-]+(\.[a-z0-9-]+)*(\.[a-z]{2,4})$')
+EMAIL_REGEX = re.compile('^[_a-z0-9-]+(\.[_a-z0-9-]+)*(\+[_a-z0-9-]+)?\@[a-z0-9-]+(\.[a-z0-9-]+)*(\.[a-z]{2,6})$')
 def is_valid_email(email):
 	return EMAIL_REGEX.match(email)
 	

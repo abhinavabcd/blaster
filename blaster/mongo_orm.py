@@ -717,9 +717,16 @@ class Model(object):
 				#TODO: make it batch wise fetch
 				def batched_requery_iter(ret, n=200):
 					for docs in batched_iter(ret, n):
+						_ids_order = [_doc["_id"] for _doc in docs]
 						_query = {"$or": [dict(cls.pk_from_doc(_doc)) for _doc in docs]}
+
 						IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: requerying", cls, _query)
-						for item in cls.query(_query):
+						_requeried_from_primary = {_doc._id: _doc for _doc in cls.query(_query)}
+						for _id in _ids_order:
+							item = _requeried_from_primary.get(_id)
+							if(not item):
+								IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: WARNING: missing from primary", _id)
+								continue
 							yield item
 				ret = batched_requery_iter(ret)
 			else:
