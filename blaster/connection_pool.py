@@ -2,7 +2,7 @@ from gevent.queue import Queue, Empty
 import boto3
 
 from . import config
-from .config import aws_config, IS_DEV
+from .config import IS_DEV
 #import umysql
 
 conn_pools = {}
@@ -29,22 +29,25 @@ def get_sqs_conn():
     return boto_sessions[0].client('sqs')
 
 def get_ses_conn():
-    return boto_sessions[0].client('ses', region_name="eu-west-1")
+    return boto_sessions[0].client('ses')
 
 
 #default connection generators
-connection_generators = {
+_pool_item_generators = {
     "dynamodb": get_dynamodb_conn,
     "s3" : get_s3_conn,
     "sqs": get_sqs_conn,
     "ses": get_ses_conn
 }
 
+def register_pool_item_generator(pool_name, func):
+    _pool_item_generators[pool_name] = func
+
+
 def get_from_pool(pool_id):
     # check and initialize
-    if(boto_sessions[0] == None and aws_config):
-        boto_sessions[0] = boto3.session.Session(**aws_config)
-        connection_generators.update(**config.connection_generators)
+    if(boto_sessions[0] == None and config.aws_config):
+        boto_sessions[0] = boto3.session.Session(**config.aws_config)
 
     conn = None
     conn_pool = conn_pools.get(pool_id, None)
@@ -58,8 +61,8 @@ def get_from_pool(pool_id):
     # print "reusing from pool"
     except Empty:
         #if queue is empty create a connection for use.
-        if(pool_id in connection_generators):
-            conn = connection_generators[pool_id]()
+        if(pool_id in _pool_item_generators):
+            conn = _pool_item_generators[pool_id]()
 
     return conn
 

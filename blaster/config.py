@@ -30,7 +30,6 @@ aws_config = {
 es_http_host = None
 es_aws_host = None
 
-connection_generators = {}
 
 sqs_url = None
 

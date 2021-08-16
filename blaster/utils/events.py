@@ -1,9 +1,12 @@
+from datetime import datetime
+
 _event_listeners = {} # {int : [listeners]}
 
 PASS = NOT_HANDLING = object()
 
 def register_as_listener(_id):
 	if(callable(_id)):
+		#id is func here
 		original_func = getattr(_id, "_original", _id)
 		add_listener(original_func.__name__, _id)
 		return _id
@@ -42,8 +45,7 @@ def broadcast_event(_id, *args, _n=-1, **kwargs):
 	return tuple(listeners_ret_values)
 
 def add_listener(_id, listener):
-	print("registering_listener", "0", {"_id": _id, "listener": listener})
-	
+	print("registering_listener", datetime.now(), {"_id": _id, "listener": listener})
 	if(not _id or not listener):
 		return
 	listeners = _event_listeners.get(_id)

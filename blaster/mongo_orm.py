@@ -524,53 +524,50 @@ class Model(object):
 						_secondary_updates["$unset"] = _secondary_values_to_unset
 					IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: updating secondary", _secondary_pk, _secondary_updates)
 					#find that doc and update
-					_secondary_collection.find_one_and_update(
+					seconday_shard_update_return_value = _secondary_collection.find_one_and_update(
 						_secondary_pk,
 						_secondary_updates
 					)
 
+					if(not seconday_shard_update_return_value):
+						print("#MONGO:WARNING!! secondary couldn't be propagated, probably due to concurrent update",
+								cls, _secondary_pk
+							)
 
 	#_add_query is more query other than pk
 	# for example, you can say update only when someother field > 0
 
-	#force_update_secondary = [shard1, shard2]
-	def update(self, _update_query, more_conditions=None, force_update_secondary=None, **kwargs):
+	def update(self, _update_query, more_conditions=None, **kwargs):
 		cls = self.__class__
 		
 		cls._trigger_event(EVENT_BEFORE_UPDATE, self)
 
 		updated_doc = None
-		if(_update_query):
-			_query = dict(self.pk())
-			if(more_conditions == None):
-				more_conditions = {}
+		_query = dict(self.pk())
+		if(more_conditions == None):
+			more_conditions = {}
 
-			#TODO: add existing values to more_conditions to be
-			# super consistent on updates and probably
-			# raise concurrent update exception if not modified
-			_query.update(more_conditions)
+		#TODO: add existing values to more_conditions to be
+		# super consistent on updates and probably
+		# raise concurrent update exception if not modified
+		_query.update(more_conditions)
 
-			#get the shard where current object is
-			primary_collection_shard = cls.get_collection(
-				getattr(self, cls._shard_key_)
-			)
-			#query and update the document
-			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print(
-				"#MONGO: update before and query",
-				cls, _query, self._original_doc, _update_query
-			)
-			updated_doc = primary_collection_shard.find_one_and_update(
-				_query,
-				_update_query,
-				return_document=ReturnDocument.AFTER,
-				**kwargs
-			)
-			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: after update::", cls, updated_doc)
-			
-		elif(force_update_secondary):
-			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: force updating secondary shards", cls, self.pk(), force_update_secondary)
-			#we are foce updating secondary shards
-			updated_doc = self._original_doc
+		#get the shard where current object is
+		primary_collection_shard = cls.get_collection(
+			getattr(self, cls._shard_key_)
+		)
+		#query and update the document
+		IS_DEV and MONGO_DEBUG_LEVEL > 1 and print(
+			"#MONGO: update before and query",
+			cls, _query, self._original_doc, _update_query
+		)
+		updated_doc = primary_collection_shard.find_one_and_update(
+			_query,
+			_update_query,
+			return_document=ReturnDocument.AFTER,
+			**kwargs
+		)
+		IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: after update::", cls, updated_doc)
 
 		if(not updated_doc):
 			#update was unsuccessful
@@ -1287,8 +1284,9 @@ def initialize_model(Model):
 			raise Exception("#MONGO_EXCEPTION: Primary shard key changed for ", Model)
 
 		if(not Model._is_secondary_shard and tuple(collection_tracker.pk_attrs) != tuple(Model._pk_attrs.keys())):
-			raise Exception("#MONGO_EXCEPTION: primary keys cannot be changed for a primary shard," +\
-					" they are used to retrieve back original documents from secondary shards", Model
+			raise Exception("#MONGO_EXCEPTION: primary keys cannot be changed for a primary shard, " +\
+					"they are used to retrieve back original documents from secondary shards, if you absolutely " + \
+					"have to, reindex all data again", Model
 				)
 
 		#create diff jobs
