@@ -16,12 +16,9 @@ import struct
 import gevent
 import fcntl
 import html
-import types
 
 from functools import reduce as _reduce
 from gevent.lock import BoundedSemaphore
-from gevent.fileobject import FileObject
-from gevent.socket import wait_read
 from collections import namedtuple
 from datetime import timezone
 from datetime import datetime
@@ -44,8 +41,9 @@ from .websocket._core import WebSocket
 from .config import IS_DEV
 from .utils.xss_html import XssHtml
 from .utils.phone_number_utils import PhoneNumberObj
+from .utils import events
 
-
+_this_ = sys.modules[__name__]
 _OBJ_END_ = object()
 
 def cur_ms():
@@ -400,24 +398,20 @@ def utf8(value) -> bytes:
 		return value
 	return value.encode("utf-8")
 
-def create_signed_value(name, value, secret_key_version="v0", secret=None):
+def create_signed_value(name, value, secret):
 	timestamp = utf8(str(int(time.time())))
 	value = base64.b64encode(utf8(value))
-	secret = secret or config.secrets.get(secret_key_version)
 	signature = _create_signature(secret, name, value, timestamp)
-	value = b"|".join([value, timestamp, signature, utf8(secret_key_version)])
-	return value
+	signed_value = b"|".join([value, timestamp, signature])
+	return signed_value
 
-def decode_signed_value(name, value, max_age_days=-1, secret=None):
+def decode_signed_value(name, value, secret, max_age_days=-1):
 	if not value:
 		return None
 	parts = utf8(value).split(b"|")
-	secret_key_version = b"v0"
-	if len(parts) == 4:
-		secret_key_version = parts[3]
 	if(len(parts) < 3):
 		return None
-	secret = secret or config.secrets.get(secret_key_version.decode())
+	#check signature matches or not
 	signature = _create_signature(secret, name, parts[0], parts[1])
 	if not _time_independent_equals(parts[2], signature):
 		return None
@@ -703,19 +697,22 @@ def set_non_blocking(fd):
 #generic thread pool to submit tasks which will be
 #picked up wokers and processed
 class Worker(Thread):
+	
+	is_running = True
+
 	""" Thread executing tasks from a given tasks queue """
 	def __init__(self, tasks):
 		Thread.__init__(self)
 		self.tasks = tasks
 		self.daemon = True
-		self.start()
 
 	def run(self):
-		while True:
+		while self.is_running:
+			#get a task from queue
 			func, args, kargs = self.tasks.get()
 			try:
 				func(*args, **kargs)
-			except Exception as e:
+			except Exception:
 				# An exception happened in this thread
 				traceback.print_exc()
 			finally:
@@ -723,24 +720,33 @@ class Worker(Thread):
 				self.tasks.task_done()
 
 class ThreadPool:
-	""" Pool of threads consuming tasks from a queue """
+	""" Pool of threads consuming tasks from a single queue """
+	#queue of tasks
+	tasks = None
+	worker_threads = None
+
 	def __init__(self, num_threads):
 		self.tasks = Queue(num_threads)
+		self.worker_threads = []
 		for _ in range(num_threads):
-			Worker(self.tasks)
+			worker_thread = Worker(self.tasks)
+			self.worker_threads.append(worker_thread)
+			#start the worker thread
+			worker_thread.start()
 
 	def add_task(self, func, *args, **kargs):
 		""" Add a task to the queue """
 		self.tasks.put((func, args, kargs))
 
-	def map(self, func, args_list):
-		""" Add a list of tasks to the queue """
-		for args in args_list:
-			self.add_task(func, args)
-
-	def wait_completion(self):
+	def join(self):
 		""" Wait for completion of all the tasks in the queue """
 		self.tasks.join()
+		#stop processing
+		for worker_thread in self.worker_threads:
+			worker_thread.is_running = False
+		#join all threads
+		for worker_thread in self.worker_threads:
+			worker_thread.join()
 
 def make_xss_safe(_html):
 	if(not _html):
@@ -1213,6 +1219,50 @@ def original_function(func):
 
 	return func
 
+
+
+_bg_threads = Queue() # list if all running tasks
+_bg_tasks_cleanup_thread = None # thread that joins _bg_threads
+_bg_tasks_cleanup_is_running = False # flag to indicate that cleanup is runing/ used to stop
+#runs in a thread an joins all spawned events
+def cleanup_backround_tasks():
+	#or condition check below, so as not to stop any tasks when exiting
+	while _bg_tasks_cleanup_is_running or not _bg_threads.empty():
+		#cleans all tasks from queue and stops
+		_spawned_gevent_thread = _bg_threads.get()
+		_spawned_gevent_thread.join()
+
+
+#when server shutsdown
+@events.register_as_listener("blaster_after_shutdown")
+def cleanup_all_bg_tasks():
+	global _bg_tasks_cleanup_thread
+	global _bg_tasks_cleanup_is_running
+	if(_bg_tasks_cleanup_thread):
+		_bg_tasks_cleanup_is_running = False
+		_bg_tasks_cleanup_thread.join()
+		IS_DEV and print("background_thread_cleaner", datetime.now(), {"stopped": True})
+
+#fire and forget
+def run_in_background(func):
+	def wrapper(*args, **kwargs):
+		#span the thread
+		_bg_threads.put(gevent.spawn(func, *args, **kwargs))
+
+		#if there is no cleanup for the first time, so start one
+		global _bg_tasks_cleanup_thread
+		if(_bg_tasks_cleanup_thread == None):
+			#spin a cleaner thread
+			_bg_tasks_cleanup_thread = Thread(
+				target=cleanup_backround_tasks
+			)
+			#start the cleaner thread
+			_bg_tasks_cleanup_thread.start()
+		IS_DEV and print("background_thread_cleaner", datetime.now(), {"started": True})
+
+		return True
+	wrapper._original = getattr(func, "_original", func)
+	return wrapper
 
 #calls a function after the function returns given by argument after
 def call_after_func(func):

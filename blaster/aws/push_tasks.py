@@ -12,12 +12,9 @@ import ujson as json
 import gevent
 from .. import config
 from ..base import LOG_WARN, is_server_running
-from ..common_funcs_and_datastructures import get_random_id,\
-    cur_ms
-from ..connection_pool import get_from_pool,\
-    use_connection_pool
-from ..base import base
-
+from ..common_funcs_and_datastructures import get_random_id
+from ..connection_pool import use_connection_pool
+from ..utils import events
 
 push_tasks = {}
 sqs_reader_greenlets = []
@@ -64,13 +61,12 @@ def start_boto_sqs_readers(num_readers=5, msgs_per_batch=10, queue=None):
                     
                     LOG_WARN("sqs_processed", data=json.dumps(_temp))
 
-            except Exception as ex:
+            except Exception:
                 LOG_WARN("sqs_exception", stack_trace=traceback.format_exc())
         
     for i in range(num_readers):
         sqs_reader_greenlets.append(gevent.spawn(process_from_sqs))
 
-    base.exit_listeners.append(wait_for_push_tasks_processing)
 
 
 def push_task(func):
@@ -131,11 +127,12 @@ def post_a_task(func, *args, **kwargs):
     return response
     
 
-
+@events.register_as_listener("blaster_after_shutdown")
 def wait_for_push_tasks_processing():
-    LOG_WARN("server_info", data="wait called")
-    gevent.joinall(sqs_reader_greenlets)
-    del sqs_reader_greenlets[:]
+    if(sqs_reader_greenlets):
+        LOG_WARN("server_info", data="finishing pending push tasks via SQS")
+        gevent.joinall(sqs_reader_greenlets)
+        del sqs_reader_greenlets[:]
 
 def run_later(func):
     _original = getattr(func, "_original", func)

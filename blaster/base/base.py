@@ -26,11 +26,11 @@ from requests_toolbelt.multipart import decoder
 
 from .. import config as blaster_config
 from ..config import IS_DEV, DEBUG_LEVEL, LOG_LEVEL
-from ..common_funcs_and_datastructures import cur_ms, SanitizedDict
+from ..common_funcs_and_datastructures import SanitizedDict
+from ..utils import events
 
 _is_server_running = True
 
-exit_listeners = []
 
 default_wsgi_headers = [
 	('Content-Type', 'text/html; charset=utf-8')
@@ -777,13 +777,12 @@ def stop_all_apps():
 	
 	_is_server_running = False
 	
-	for i in exit_listeners:
-		i()
+	events.broadcast_event("blaster_before_shutdown")
 
 	for app in list(_all_apps):
 		app.stop() # should handle all connections gracefully
 
-	#wait for queue to flush/process
+	events.broadcast_event("blaster_after_shutdown")
 
 
 gevent.signal_handler(signal.SIGINT, stop_all_apps)

@@ -6,10 +6,6 @@ Created on 04-Nov-2017
 from os import environ
 import logging
 
-secrets = {
-	"v0": "something_random_secret_here"
-}
-
 DEBUG_LEVEL = int(environ.get("DEBUG_LEVEL") or 1) # higher implies more debug information
 
 IS_PROD = environ.get("IS_PROD") == "1"

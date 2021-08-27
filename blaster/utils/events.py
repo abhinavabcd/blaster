@@ -22,6 +22,7 @@ def broadcast_event(_id, *args, _n=-1, **kwargs):
 	if(not listeners):
 		return
 	listeners_ret_values = []
+	#pass handled_count argument to receive previous number of handlers before it receives
 	set_arg_handled_count = "handled_count" in kwargs
 	count = 0 # number of handlers handled this event, use case: not handling more than once
 	for listener in listeners:
