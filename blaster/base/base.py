@@ -59,7 +59,9 @@ SLASH_N_ORDINAL = ord(b'\n')
 
 
 def LOG(level, log_type, **kwargs):
-	(level >= LOG_LEVEL) and print(log_type, datetime.now(), json.dumps(kwargs))
+	if(level < LOG_LEVEL):
+		return
+	print(logging.getLevelName(level), log_type, datetime.now(), json.dumps(kwargs))
 
 def LOG_PRINT(log_type, **kwargs):
 	LOG(LOG_LEVEL, log_type, **kwargs)

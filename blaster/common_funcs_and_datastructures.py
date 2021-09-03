@@ -1219,50 +1219,89 @@ def original_function(func):
 
 	return func
 
+def empty_func():
+	pass
 
 
+#when server shutsdown
+_joinables = []
+_bg_threads_can_run = True # flag to indicate that cleanup is runing/ used to stop
+def start_a_thread(func, args=(), kwargs=None):
+	if(not _bg_threads_can_run):
+		print("Cannot run background threads. Correct copepaths")
+		return
+
+	_thread_to_start = Thread(
+		target=func,
+		args=args,
+		kwargs=kwargs
+	)
+	_joinables.append(_thread_to_start)
+	_thread_to_start.start()
+
+
+####run in background
 _bg_threads = Queue() # list if all running tasks
-_bg_tasks_cleanup_thread = None # thread that joins _bg_threads
-_bg_tasks_cleanup_is_running = False # flag to indicate that cleanup is runing/ used to stop
 #runs in a thread an joins all spawned events
 def cleanup_backround_tasks():
 	#or condition check below, so as not to stop any tasks when exiting
-	while _bg_tasks_cleanup_is_running or not _bg_threads.empty():
+	while _bg_threads_can_run or not _bg_threads.empty():
 		#cleans all tasks from queue and stops
 		_spawned_gevent_thread = _bg_threads.get()
 		_spawned_gevent_thread.join()
 
 
-#when server shutsdown
-@events.register_as_listener("blaster_after_shutdown")
-def cleanup_all_bg_tasks():
-	global _bg_tasks_cleanup_thread
-	global _bg_tasks_cleanup_is_running
-	if(_bg_tasks_cleanup_thread):
-		_bg_tasks_cleanup_is_running = False
-		_bg_tasks_cleanup_thread.join()
-		IS_DEV and print("background_thread_cleaner", datetime.now(), {"stopped": True})
+##this joins other spawned threads
+start_a_thread(cleanup_backround_tasks)
 
 #fire and forget
 def run_in_background(func):
 	def wrapper(*args, **kwargs):
-		#span the thread
+		#spawn the thread
+		if(not _bg_threads_can_run):
+			print("Cannot run background threads. Correct codepaths")
+			return
+			
 		_bg_threads.put(gevent.spawn(func, *args, **kwargs))
-
-		#if there is no cleanup for the first time, so start one
-		global _bg_tasks_cleanup_thread
-		if(_bg_tasks_cleanup_thread == None):
-			#spin a cleaner thread
-			_bg_tasks_cleanup_thread = Thread(
-				target=cleanup_backround_tasks
-			)
-			#start the cleaner thread
-			_bg_tasks_cleanup_thread.start()
 		IS_DEV and print("background_thread_cleaner", datetime.now(), {"started": True})
 
 		return True
 	wrapper._original = getattr(func, "_original", func)
 	return wrapper
+##run in background end
+
+
+#partioned queues
+_partitioned_queues = [Queue() for i in range(4)]
+def _process_partitioned_queue_items(_queue):
+	while _bg_threads_can_run or not _queue.empty():
+		func, args, kwargs = _queue.get()
+
+		func(*args, **kwargs)
+
+
+for _queue in _partitioned_queues:
+	start_a_thread(_process_partitioned_queue_items, args=(_queue,))
+
+def run_in_partioned_queues(partition_key, func, *args, **kwargs):
+	_partitioned_queues[hash(str(partition_key)) % len(_partitioned_queues)]\
+			.put((func, args, kwargs))
+
+
+@events.register_as_listener("blaster_after_shutdown")
+def join_all_pending_threads():
+	global _bg_threads_can_run
+	_bg_threads_can_run = False
+
+	_bg_threads.put(gevent.spawn(empty_func))
+	for _partitioned_queue in _partitioned_queues:
+		_partitioned_queue.put((empty_func, [], {}))
+
+	#reap all joinables
+	for _joinable in _joinables:
+		_joinable.join()
+	IS_DEV and print("joining all threads", datetime.now(), {"stopped": True})
+
 
 #calls a function after the function returns given by argument after
 def call_after_func(func):

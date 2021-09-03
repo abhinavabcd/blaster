@@ -8,7 +8,7 @@ from collections import OrderedDict
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 from pymongo import ReturnDocument, ReadPreference
-from .common_funcs_and_datastructures import jump_hash, ExpiringCache, cur_ms, list_diff2, batched_iter
+from .common_funcs_and_datastructures import jump_hash, ExpiringCache, cur_ms, list_diff2, batched_iter, run_in_partioned_queues
 from .config import DEBUG_LEVEL as BLASTER_DEBUG_LEVEL, IS_DEV
 
 _VERSION_ = 100
@@ -531,7 +531,7 @@ class Model(object):
 
 					if(not seconday_shard_update_return_value):
 						print("#MONGO:WARNING!! secondary couldn't be propagated, probably due to concurrent update",
-								cls, _secondary_pk
+								cls, _secondary_pk, _secondary_updates
 							)
 
 	#_add_query is more query other than pk
@@ -553,8 +553,9 @@ class Model(object):
 		_query.update(more_conditions)
 
 		#get the shard where current object is
+		primary_shard_key = getattr(self, cls._shard_key_)
 		primary_collection_shard = cls.get_collection(
-			getattr(self, cls._shard_key_)
+			primary_shard_key
 		)
 		#query and update the document
 		IS_DEV and MONGO_DEBUG_LEVEL > 1 and print(
@@ -574,7 +575,9 @@ class Model(object):
 			return False
 
 		#propage the updates to secondary shards
-		cls.propagate_update_to_secondary_shards(self._original_doc, updated_doc)
+		run_in_partioned_queues(
+			primary_shard_key, cls.propagate_update_to_secondary_shards, self._original_doc, updated_doc
+		)
 
 		#reset all values
 		self.reinitialize_from_doc(updated_doc)

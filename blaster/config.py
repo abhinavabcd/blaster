@@ -23,10 +23,6 @@ aws_config = {
 	# 'region_name': "ap-south-1"
 }
 
-es_http_host = None
-es_aws_host = None
-
-
 sqs_url = None
 
 server_error_page = None
