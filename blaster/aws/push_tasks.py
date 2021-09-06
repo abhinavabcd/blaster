@@ -11,7 +11,8 @@ import traceback
 import ujson as json
 import gevent
 from .. import config
-from ..base import LOG_WARN, is_server_running
+from ..base import is_server_running
+from ..base.logging import LOG_WARN
 from ..common_funcs_and_datastructures import get_random_id
 from ..connection_pool import use_connection_pool
 from ..utils import events

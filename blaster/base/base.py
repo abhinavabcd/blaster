@@ -18,17 +18,15 @@ import gevent
 import signal
 import functools
 import traceback
-import logging
-from datetime import datetime
 from gevent.server import StreamServer
 from gevent.pywsgi import WSGIServer
 from requests_toolbelt.multipart import decoder
 
 from .. import config as blaster_config
-from ..config import IS_DEV, DEBUG_LEVEL, LOG_LEVEL
+from ..config import IS_DEV, DEBUG_LEVEL
 from ..common_funcs_and_datastructures import SanitizedDict
 from ..utils import events
-
+from .logging import LOG_ERROR, LOG_SERVER
 _is_server_running = True
 
 
@@ -58,25 +56,6 @@ HTTP_MAX_HEADERS_DATA_SIZE = 16 * 1024 # 16kb
 SLASH_N_ORDINAL = ord(b'\n')
 
 
-def LOG(level, log_type, **kwargs):
-	if(level < LOG_LEVEL):
-		return
-	print(logging.getLevelName(level), log_type, datetime.now(), json.dumps(kwargs))
-
-def LOG_PRINT(log_type, **kwargs):
-	LOG(LOG_LEVEL, log_type, **kwargs)
-
-def LOG_DEBUG(log_type, **kwargs):
-	LOG(logging.DEBUG, log_type, **kwargs)
-
-def LOG_INFO(log_type, **kwargs):
-	LOG(logging.INFO, log_type, **kwargs)
-
-def LOG_WARN(log_type, **kwargs):
-	LOG(logging.WARN, log_type, **kwargs)
-
-def LOG_ERROR(log_type, **kwargs):
-	LOG(logging.ERROR, log_type, **kwargs)
 
 
 def find_new_line(arr):
@@ -471,7 +450,7 @@ class App:
 					# used in case of ssl sockets
 					return self.handle(self.wrap_socket(client_socket, **self.ssl_args), address)
 
-			LOG_PRINT("server_start", port=port)
+			LOG_SERVER("server_start", port=port)
 			self.stream_server = CustomStreamServer(('', port), handle=self.handle_connection, **ssl_args)
 			#keep a track
 		_all_apps.add(self)
@@ -539,7 +518,7 @@ class App:
 					handler = method_handlers.get(request_type)
 					if(not handler):
 						#perform GET call by default
-						LOG_PRINT(
+						LOG_SERVER(
 							"handler_method_not_found",
 							request_type=request_type,
 							msg="performing GET by default"
@@ -719,7 +698,7 @@ class App:
 					}, indent=4)
 				)
 
-			LOG_PRINT("http", response_status=status, request_type=request_type , path=request_path, wallclockms=int(1000 * time.time()) - cur_millis)
+			LOG_SERVER("http", response_status=status, request_type=request_type , path=request_path, wallclockms=int(1000 * time.time()) - cur_millis)
 
 		except Exception as ex:
 			stacktrace_string = traceback.format_exc()
@@ -774,7 +753,7 @@ class App:
 
 
 def stop_all_apps():
-	LOG_PRINT("server_info", data="exiting all servers")
+	LOG_SERVER("server_info", data="exiting all servers")
 	global _is_server_running
 	
 	_is_server_running = False

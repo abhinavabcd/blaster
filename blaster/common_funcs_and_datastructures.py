@@ -1293,6 +1293,7 @@ def join_all_pending_threads():
 	global _bg_threads_can_run
 	_bg_threads_can_run = False
 
+	#push an empty function to queues to flush them off
 	_bg_threads.put(gevent.spawn(empty_func))
 	for _partitioned_queue in _partitioned_queues:
 		_partitioned_queue.put((empty_func, [], {}))
@@ -1300,6 +1301,7 @@ def join_all_pending_threads():
 	#reap all joinables
 	for _joinable in _joinables:
 		_joinable.join()
+	_joinables.clear()
 	IS_DEV and print("joining all threads", datetime.now(), {"stopped": True})
 
 
