@@ -15,7 +15,6 @@ import re
 import urllib.parse
 import time
 import gevent
-import signal
 import functools
 import traceback
 from gevent.server import StreamServer
@@ -752,6 +751,7 @@ class App:
 			buffered_socket.close()
 
 
+@events.register_as_listener("sigint")
 def stop_all_apps():
 	LOG_SERVER("server_info", data="exiting all servers")
 	global _is_server_running
@@ -764,9 +764,6 @@ def stop_all_apps():
 		app.stop() # should handle all connections gracefully
 
 	events.broadcast_event("blaster_after_shutdown")
-
-
-gevent.signal_handler(signal.SIGINT, stop_all_apps)
 
 
 # create a global app for generic single server use

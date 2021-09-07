@@ -16,6 +16,7 @@ import struct
 import gevent
 import fcntl
 import html
+import atexit
 
 from functools import reduce as _reduce
 from gevent.lock import BoundedSemaphore
@@ -1287,10 +1288,13 @@ def run_in_partioned_queues(partition_key, func, *args, **kwargs):
 	_partitioned_queues[hash(str(partition_key)) % len(_partitioned_queues)]\
 			.put((func, args, kwargs))
 
-
-@events.register_as_listener("blaster_after_shutdown")
+@events.register_as_listener(["sigint", "blaster_atexit", "blaster_after_shutdown"])
 def join_all_pending_threads():
 	global _bg_threads_can_run
+
+	if(not _bg_threads_can_run):
+		return # double calling function
+
 	_bg_threads_can_run = False
 
 	#push an empty function to queues to flush them off
@@ -1329,3 +1333,6 @@ def call_after_func(func):
 			
 		new_func._original = getattr(func, "_original", func)
 		return new_func
+
+
+atexit.register(events.broadcast_event, "blaster_atexit")

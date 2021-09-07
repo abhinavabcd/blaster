@@ -12,7 +12,11 @@ def register_as_listener(_id):
 		return _id
 	else:
 		def decorator(func):
-			add_listener(_id, func)
+			if(isinstance(_id, list)):
+				for _id_item in _id:
+					add_listener(_id_item, func)
+			else:
+				add_listener(_id, func)
 			return func
 		return decorator
 
