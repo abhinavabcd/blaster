@@ -5,7 +5,7 @@ Created on 05-Jun-2019
 '''
 from ..connection_pool import use_connection_pool
 from ..aws.push_tasks import push_task
-from ..base.logging import LOG_WARN
+from ..logging import LOG_WARN
 
 
 @push_task

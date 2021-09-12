@@ -25,7 +25,7 @@ from .. import config as blaster_config
 from ..config import IS_DEV, DEBUG_LEVEL
 from ..common_funcs_and_datastructures import SanitizedDict
 from ..utils import events
-from .logging import LOG_ERROR, LOG_SERVER
+from ..logging import LOG_ERROR, LOG_SERVER
 _is_server_running = True
 
 

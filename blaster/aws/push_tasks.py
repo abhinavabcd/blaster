@@ -12,10 +12,10 @@ import ujson as json
 import gevent
 from .. import config
 from ..base import is_server_running
-from ..base.logging import LOG_WARN
 from ..common_funcs_and_datastructures import get_random_id
 from ..connection_pool import use_connection_pool
 from ..utils import events
+from ..logging import LOG_WARN, LOG_SERVER
 
 push_tasks = {}
 sqs_reader_greenlets = []
@@ -60,7 +60,7 @@ def start_boto_sqs_readers(num_readers=5, msgs_per_batch=10, queue=None):
                         ReceiptHandle=sqs_message.get("ReceiptHandle", None)
                     )
                     
-                    LOG_WARN("sqs_processed", data=json.dumps(_temp))
+                    LOG_SERVER("sqs_processed", data=json.dumps(_temp))
 
             except Exception:
                 LOG_WARN("sqs_exception", stack_trace=traceback.format_exc())

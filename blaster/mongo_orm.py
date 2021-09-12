@@ -2,13 +2,14 @@ import heapq
 import gevent
 import types
 import pymongo
-from bson.objectid import ObjectId
+#from bson.objectid import ObjectId
 from itertools import chain
 from collections import OrderedDict
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 from pymongo import ReturnDocument, ReadPreference
-from .common_funcs_and_datastructures import jump_hash, ExpiringCache, cur_ms, list_diff2, batched_iter, run_in_partioned_queues
+from .common_funcs_and_datastructures import jump_hash, ExpiringCache,\
+	cur_ms, list_diff2, batched_iter, submit_background_task
 from .config import DEBUG_LEVEL as BLASTER_DEBUG_LEVEL, IS_DEV
 
 _VERSION_ = 100
@@ -575,8 +576,11 @@ class Model(object):
 			return False
 
 		#propage the updates to secondary shards
-		run_in_partioned_queues(
-			primary_shard_key, cls.propagate_update_to_secondary_shards, self._original_doc, updated_doc
+		submit_background_task(
+			primary_shard_key,
+			cls.propagate_update_to_secondary_shards,
+			self._original_doc,
+			updated_doc
 		)
 
 		#reset all values

@@ -4,6 +4,7 @@ Created on 04-Nov-2017
 @author: abhinav
 '''
 
+import gevent
 import os
 import sys
 import subprocess
@@ -13,10 +14,8 @@ import random
 import string
 import socket
 import struct
-import gevent
 import fcntl
 import html
-import atexit
 
 from functools import reduce as _reduce
 from gevent.lock import BoundedSemaphore
@@ -28,21 +27,21 @@ import time
 import hmac
 import base64
 import hashlib
-from gevent.threading import Lock
+from gevent.threading import Lock, Thread
+from gevent.queue import Queue
 import re
 import six
 from urllib.parse import urlencode
 
-from queue import Queue
-from threading import Thread
 import traceback
 
-from . import config
 from .websocket._core import WebSocket
 from .config import IS_DEV
 from .utils.xss_html import XssHtml
 from .utils.phone_number_utils import PhoneNumberObj
 from .utils import events
+from .logging import LOG_APP_INFO, LOG_WARN
+
 
 _this_ = sys.modules[__name__]
 _OBJ_END_ = object()
@@ -419,7 +418,7 @@ def decode_signed_value(name, value, secret, max_age_days=-1):
 	if(max_age_days > 0):
 		timestamp = int(parts[1])
 		if timestamp < time.time() - max_age_days * 86400:
-			print(-1, datetime.now(), "Expired cookie %s"%value)
+			LOG_APP_INFO("cookie", msg="Expired cookie %s"%value)
 			return None
 		if timestamp > time.time() + 31 * 86400:
 			# _cookie_signature does not hash a delimiter between the
@@ -427,7 +426,7 @@ def decode_signed_value(name, value, secret, max_age_days=-1):
 			# digits from the payload to the timestamp without altering the
 			# signature.  For backwards compatibility, sanity-check timestamp
 			# here instead of modifying _cookie_signature.
-			print(-1, datetime.now(), "Cookie timestamp in future; possible tampering %s"%value)
+			LOG_APP_INFO("cookie", msg="Cookie timestamp in future; possible tampering %s"%value)
 			return None
 	if parts[1].startswith(b"0"):
 		logging.warning("Tampered cookie %r", value)
@@ -1226,12 +1225,12 @@ def empty_func():
 
 #when server shutsdown
 _joinables = []
-_bg_threads_can_run = True # flag to indicate that cleanup is runing/ used to stop
-def start_a_thread(func, args=(), kwargs=None):
-	if(not _bg_threads_can_run):
-		print("Cannot run background threads. Correct copepaths")
+def start_background_thread(func, args=(), kwargs=None):
+	if(not start_background_thread.can_run):
+		LOG_WARN("background_threads", msg="Cannot run background threads. Correct copepaths")
 		return
 
+	LOG_APP_INFO("background_threads", msg="starting background thread", func=func.__name__)
 	_thread_to_start = Thread(
 		target=func,
 		args=args,
@@ -1241,72 +1240,68 @@ def start_a_thread(func, args=(), kwargs=None):
 	_thread_to_start.start()
 
 
-####run in background
-_bg_threads = Queue() # list if all running tasks
-#runs in a thread an joins all spawned events
-def cleanup_backround_tasks():
-	#or condition check below, so as not to stop any tasks when exiting
-	while _bg_threads_can_run or not _bg_threads.empty():
-		#cleans all tasks from queue and stops
-		_spawned_gevent_thread = _bg_threads.get()
-		_spawned_gevent_thread.join()
-
-
-##this joins other spawned threads
-start_a_thread(cleanup_backround_tasks)
-
-#fire and forget
-def run_in_background(func):
-	def wrapper(*args, **kwargs):
-		#spawn the thread
-		if(not _bg_threads_can_run):
-			print("Cannot run background threads. Correct codepaths")
-			return
-			
-		_bg_threads.put(gevent.spawn(func, *args, **kwargs))
-		IS_DEV and print("background_thread_cleaner", datetime.now(), {"started": True})
-
-		return True
-	wrapper._original = getattr(func, "_original", func)
-	return wrapper
-##run in background end
-
+start_background_thread.can_run = True
 
 #partioned queues
-_partitioned_queues = [Queue() for i in range(4)]
-def _process_partitioned_queue_items(_queue):
-	while _bg_threads_can_run or not _queue.empty():
+_partitioned_background_task_queues = tuple(Queue() for i in range(4))
+def _process_partitioned_task_queue_items(_queue):
+	while start_background_thread.can_run or not _queue.empty():
 		func, args, kwargs = _queue.get()
-
 		func(*args, **kwargs)
 
+#singleton
+def __start_task_processors():
+	#start threads to process entries in partitioned queues
+	for _queue in _partitioned_background_task_queues:
+		start_background_thread(_process_partitioned_task_queue_items, args=(_queue,))
+	__start_task_processors.started = True
 
-for _queue in _partitioned_queues:
-	start_a_thread(_process_partitioned_queue_items, args=(_queue,))
 
-def run_in_partioned_queues(partition_key, func, *args, **kwargs):
-	_partitioned_queues[hash(str(partition_key)) % len(_partitioned_queues)]\
-			.put((func, args, kwargs))
+#set initial flag
+__start_task_processors.started = False
+
+def submit_background_task(partition_key, func, *args, **kwargs):
+	
+	#start processors if not started already
+	if(not __start_task_processors.started):
+		__start_task_processors()
+
+	if(partition_key == None):
+		partition_key = cur_ms() # choose a random key
+	_partitioned_background_task_queues[hash(str(partition_key)) % len(_partitioned_background_task_queues)]\
+		.put((func, args, kwargs))
+
+
+#decorator/wrapper to fire and forget
+def background_task(func):
+	def wrapper(*args, **kwargs):
+		#spawn the thread
+		if(not start_background_thread.can_run):
+			LOG_WARN("background_threads", msg="Cannot run background threads. Correct copepaths")
+			return
+		submit_background_task(None, func, *args, **kwargs)
+		return True
+
+	wrapper._original = getattr(func, "_original", func)
+	return wrapper
 
 @events.register_as_listener(["sigint", "blaster_atexit", "blaster_after_shutdown"])
-def join_all_pending_threads():
-	global _bg_threads_can_run
+def cleanup_before_exit():
 
-	if(not _bg_threads_can_run):
+	if(not start_background_thread.can_run):
 		return # double calling function
 
-	_bg_threads_can_run = False
+	start_background_thread.can_run = False
 
 	#push an empty function to queues to flush them off
-	_bg_threads.put(gevent.spawn(empty_func))
-	for _partitioned_queue in _partitioned_queues:
-		_partitioned_queue.put((empty_func, [], {}))
+	for _partitioned_task_queue in _partitioned_background_task_queues:
+		_partitioned_task_queue.put((empty_func, [], {}))
 
 	#reap all joinables
 	for _joinable in _joinables:
 		_joinable.join()
 	_joinables.clear()
-	IS_DEV and print("joining all threads", datetime.now(), {"stopped": True})
+	LOG_APP_INFO("background_threads", msg="cleanedup")
 
 
 #calls a function after the function returns given by argument after
@@ -1335,4 +1330,3 @@ def call_after_func(func):
 		return new_func
 
 
-atexit.register(events.broadcast_event, "blaster_atexit")
