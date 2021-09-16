@@ -1002,7 +1002,7 @@ def static_file_handler(_base_folder_path_, default_file_path="index.html", file
 	cached_file_data = {}
 	gevent_lock = Lock()
 
-	def file_handler(path, request_params=None):
+	def file_handler(path, request_params):
 		if(not path):
 			path = default_file_path
 		#from given base_path

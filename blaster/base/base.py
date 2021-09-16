@@ -345,8 +345,15 @@ class App:
 			methods = (methods,)
 
 		def _decorator(func):
+			_path_regex = regex
+			if(isinstance(_path_regex, str)):
+				#special case where path params can be {:varname} {:+varname}
+				#replacing regex with regex haha!
+				_path_regex = re.sub(r'\{:(\w+)\}', '(?P<\g<1>>[^/]*)', _path_regex)
+				_path_regex = re.sub(r'\{:\+(\w+)\}', '(?P<\g<1>>[^/]+)', _path_regex)
+
 			self.route_handlers.append({
-				"regex": regex,
+				"regex": _path_regex,
 				"func": func,
 				"methods": methods,
 				"name": name,
@@ -371,11 +378,10 @@ class App:
 				kwargs = {}
 				kwargs["request_params"] = urllib.parse.parse_qs(environ['QUERY_STRING'])
 
-				fargs = args.groups()
+				fargs = args.groupdict()
 				if(fargs):
-					ret = func(None, *fargs , **kwargs)
-				else:
-					ret = func(None, **kwargs)
+					kwargs.update(fargs)
+				ret = func(None, **kwargs)
 				
 				break
 			
@@ -511,9 +517,9 @@ class App:
 			#find the handler
 			handler = None
 			for regex, method_handlers in self.request_handlers:
-				args = regex.match(request_path)
+				request_path_match = regex.match(request_path)
 				
-				if(args != None):
+				if(request_path_match != None):
 					handler = method_handlers.get(request_type)
 					if(not handler):
 						#perform GET call by default
@@ -581,8 +587,13 @@ class App:
 			#process cookies end
 			request_params.parse_request_body(post_data, headers)
 
+			_path_named_params = request_path_match.groupdict()
+			#Note: cannot contain both names and unnamed
+			if(_path_named_params):
+				response_from_handler = func(request_params, **_path_named_params)
+			else:
+				response_from_handler = func(*request_path_match.groups(), request_params)
 
-			response_from_handler = func(*args.groups(), request_params=request_params)
 			
 			##app specific headers
 			#handle various return values from handler functions

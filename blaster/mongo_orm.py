@@ -446,7 +446,7 @@ class Model(object):
 
 
 	@classmethod
-	def propagate_update_to_secondary_shards(cls, before_doc, after_doc):
+	def propagate_update_to_secondary_shards(cls, before_doc, after_doc, force=False):
 		#CONS of this multi table sharding:
 		#- Primary index updated but secondary constraint can fail
 		#- in that case, the data exists in primary shard, but it's not valid data
@@ -477,7 +477,7 @@ class Model(object):
 			_secondary_collection = (_before_shard_key != None) and secondary_Model.get_collection(_before_shard_key)
 
 			#shard key has changed
-			if(is_shard_key_changed):
+			if(is_shard_key_changed or force):
 				# belonged to a shard delete it
 				if(_secondary_collection and _before_id != None):
 					_secondary_collection.find_one_and_delete(_secondary_pk)
@@ -551,6 +551,18 @@ class Model(object):
 		#TODO: add existing values to more_conditions to be
 		# super consistent on updates and probably
 		# raise concurrent update exception if not modified
+
+		#all the fields that we are supposed to update
+		for k, v in _update_query.items():
+			if(k[0] == "$"): # it should start with $
+				for p, q in v.items():
+					#consistency checks of the current document
+					#to that exists in db
+					existing_attr_val = self._original_doc.get(p, _OBJ_END_)
+					if(existing_attr_val != _OBJ_END_):
+						_query.update({p: existing_attr_val})
+
+		#override with any given conditions
 		_query.update(more_conditions)
 
 		#get the shard where current object is
@@ -598,7 +610,6 @@ class Model(object):
 		projection=None,
 		offset=None,
 		limit=None,
-		_no_requery=False,
 		read_preference=ReadPreference.PRIMARY,
 		**kwargs
 	):
@@ -628,7 +639,7 @@ class Model(object):
 					_sort_keys.append((cls._attrs_to_name[_sort_key_tuple[0]], _sort_key_tuple[1]))
 			sort = _sort_keys
 
-		#map of collection: [_query]
+		# collection: [_query,...]
 		collections_to_query = {}
 		for _query in queries:
 			not_possible_in_the_secondary_shard = True
@@ -716,13 +727,22 @@ class Model(object):
 
 
 			# we queried from the secondary shard, will not have all fields
-			if(_Model._is_secondary_shard and not _no_requery):
+			if(_Model._is_secondary_shard):
 				# do a requery to fetch full document
 				#TODO: make it batch wise fetch
 				def batched_requery_iter(ret, n=200):
 					for docs in batched_iter(ret, n):
+						#use this to put them in the same order after or query
 						_ids_order = [_doc["_id"] for _doc in docs]
-						_query = {"$or": [dict(cls.pk_from_doc(_doc)) for _doc in docs]}
+
+						if(cls._shard_key_ != "_id"):
+							_query = {
+								"$or": [
+									{cls._shard_key_: _doc[cls._shard_key_], "_id": _doc["_id"]} for _doc in docs
+								]
+							}
+						else:
+							_query = {"$or": [{"_id": _doc["_id"]} for _doc in docs]}
 
 						IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: requerying", cls, _query)
 						_requeried_from_primary = {_doc._id: _doc for _doc in cls.query(_query)}
@@ -943,7 +963,26 @@ class Model(object):
 			if(not _update_query and not force):
 				return self # nothing to update
 
-			self.update(_update_query) # , hint=self.__class__._pk_attrs)
+			is_committed = False
+			retry = 3
+			while(retry > 0 and not is_committed): # , hint=self.__class__._pk_attrs)
+				is_committed = self.update(_update_query)
+				if(is_committed):
+					break
+
+				print("#MONGO:WARNING!! commit failed, could be concurrent updates ?, retrying",
+					cls, self.pk()
+				)
+				#reinitialize from db
+				_collection_shard = cls.get_collection(getattr(self, cls._shard_key_))
+				self.reinitialize_from_doc(
+					_collection_shard.find_one(self.pk())
+				)
+				retry -= 1
+			if(not is_committed):
+				raise Exception("Couldn't commit, either a concurrent update modified this or query has issues", self.pk())
+
+
 
 
 		#clear and reset pk to new
@@ -1126,7 +1165,7 @@ def initialize_model(Model):
 			initialize_model(_m)
 		return
 
-	#defaults
+	#defaults, do not change the code below
 	Model._shard_key_ = getattr(Model, "_shard_key_", "_id")
 	Model._secondary_shards_ = {}
 	Model._indexes_ = getattr(Model, "_indexes_", [("_id",)])
@@ -1157,7 +1196,7 @@ def initialize_model(Model):
 				is_secondary_shard_key = getattr(v, "is_secondary_shard_key", False)
 				if(is_primary_shard_key is True):
 					Model._shard_key_ = k
-					delattr(v, "is_primary_shard_key") # because we don't need it again after first time
+					delattr(v, "is_primary_shard_key") # because we don't need it again after first time and won't rewrite secondary shard keys
 				elif(is_secondary_shard_key is True):
 					Model._secondary_shards_[k] = SecondaryShard()
 					delattr(v, "is_secondary_shard_key") # because we don't need it again after first time
@@ -1335,11 +1374,10 @@ def initialize_model(Model):
 			"_is_secondary_shard": True,
 			"_db_nodes_": None
 		}
-		# add primary key attributes of the main class to
-		# secondary shards too
 
-		for attr_name in Model._pk_attrs:
-			_seconday_shard.attributes[attr_name] = getattr(Model, attr_name)
+		# add primary shard attributes of the main class to
+		# secondary shards too, to identify the original document shard
+		_seconday_shard.attributes[Model._shard_key_] = getattr(Model, Model._shard_key_)
 
 		secondary_id_attr = getattr(Model, '_id', None)
 		if(secondary_id_attr):
