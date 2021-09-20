@@ -1,7 +1,9 @@
 import heapq
 import gevent
 import types
+import json
 import pymongo
+from datetime import datetime
 #from bson.objectid import ObjectId
 from itertools import chain
 from collections import OrderedDict
@@ -9,7 +11,7 @@ from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 from pymongo import ReturnDocument, ReadPreference
 from .common_funcs_and_datastructures import jump_hash, ExpiringCache,\
-	cur_ms, list_diff2, batched_iter, submit_background_task
+	cur_ms, list_diff2, batched_iter, get_by_key_list
 from .config import DEBUG_LEVEL as BLASTER_DEBUG_LEVEL, IS_DEV
 
 _VERSION_ = 100
@@ -514,7 +516,7 @@ class Model(object):
 						else:
 							_secondary_values_to_set[attr] = new_value
 						#also add this for query for a little bit of more consistency check in query
-						if(old_value != _OBJ_END_): # means it exists
+						if(old_value != _OBJ_END_ and old_value != new_value): # means it exists and changed, add this to consistency checks
 							_secondary_pk[attr] = old_value
 
 				if(_secondary_values_to_set or _secondary_values_to_unset):
@@ -540,58 +542,85 @@ class Model(object):
 
 	def update(self, _update_query, more_conditions=None, **kwargs):
 		cls = self.__class__
+
+		if(not _update_query):
+			return
 		
 		cls._trigger_event(EVENT_BEFORE_UPDATE, self)
 
-		updated_doc = None
-		_query = dict(self.pk())
-		if(more_conditions == None):
-			more_conditions = {}
+		retries = 3
+		_consistency_checks = None # this is the dict of modified fields
+		while(retries > 0):
+			retries -= 1
 
-		#TODO: add existing values to more_conditions to be
-		# super consistent on updates and probably
-		# raise concurrent update exception if not modified
+			updated_doc = None
+			_query = dict(self.pk())
+			#no additional conditions, retries ensure the state of
+			#current object with us matches remote before updateing
 
-		#all the fields that we are supposed to update
-		for k, v in _update_query.items():
-			if(k[0] == "$"): # it should start with $
-				for p, q in v.items():
-					#consistency checks of the current document
-					#to that exists in db
-					existing_attr_val = self._original_doc.get(p, _OBJ_END_)
-					if(existing_attr_val != _OBJ_END_):
-						_query.update({p: existing_attr_val})
 
-		#override with any given conditions
-		_query.update(more_conditions)
+			_consistency_checks = {} # consistency between local copy and that on the db, to check concurrent updates
+			#all the fields that we are supposed to update
+			for _k, _v in _update_query.items():
+				if(_k[0] == "$"): # it should start with $
+					for p, q in _v.items():
+						#consistency checks of the current document
+						#to that exists in db
+						existing_attr_val = self._original_doc.get(p, _OBJ_END_)
+						if(existing_attr_val != _OBJ_END_):
+							_consistency_checks.update({p: existing_attr_val})
 
-		#get the shard where current object is
-		primary_shard_key = getattr(self, cls._shard_key_)
-		primary_collection_shard = cls.get_collection(
-			primary_shard_key
-		)
-		#query and update the document
-		IS_DEV and MONGO_DEBUG_LEVEL > 1 and print(
-			"#MONGO: update before and query",
-			cls, _query, self._original_doc, _update_query
-		)
-		updated_doc = primary_collection_shard.find_one_and_update(
-			_query,
-			_update_query,
-			return_document=ReturnDocument.AFTER,
-			**kwargs
-		)
-		IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: after update::", cls, updated_doc)
+			#override with any given conditions
+			_query.update(_consistency_checks)
+			#update with more given conditions
+			if(more_conditions):
+				_consistency_checks.update(more_conditions)
 
-		if(not updated_doc):
+			#get the shard where current object is
+			primary_shard_key = getattr(self, cls._shard_key_)
+			primary_collection_shard = cls.get_collection(
+				primary_shard_key
+			)
+			#query and update the document
+			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print(
+				"#MONGO: update before and query",
+				cls, _query, self._original_doc, _update_query
+			)
+			updated_doc = primary_collection_shard.find_one_and_update(
+				_query,
+				_update_query,
+				return_document=ReturnDocument.AFTER,
+				**kwargs
+			)
+			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: after update::", cls, updated_doc)
+
+			if(updated_doc):
+				break # no retry again , all is good
+
 			#update was unsuccessful
-			return False
+			#is this concurrent update by someone else?
+			#is this because of more conditions given by user?
+			#1. fetch from db again
+			_collection_shard = cls.get_collection(getattr(self, cls._shard_key_))
+			_doc_in_db = _collection_shard.find_one(self.pk())
+			if(not _doc_in_db): # moved out of shard or pk changed
+				return False
+			#2. update our local copy
+			self.reinitialize_from_doc(_doc_in_db)
+			can_retry = False
+			#3. check if basic consistency checks failed
+			for _k, _v in _consistency_checks.items():
+				remote_db_val = get_by_key_list(self._original_doc, *_k.split("."))
+				if(_v != remote_db_val):
+					can_retry = True # local copy consistency check has failed, retry again
+					print("MONGO", "concurrent_update", datetime.now(), json.dumps({"model": cls.__name__, "_query": _query}))
+
+			if(not can_retry):
+				return False
 
 		#propage the updates to secondary shards
-		submit_background_task(
-			primary_shard_key,
-			cls.propagate_update_to_secondary_shards,
-			self._original_doc,
+		cls.propagate_update_to_secondary_shards(
+			self._original_doc, # latest from db
 			updated_doc
 		)
 
@@ -963,27 +992,9 @@ class Model(object):
 			if(not _update_query and not force):
 				return self # nothing to update
 
-			is_committed = False
-			retry = 3
-			while(retry > 0 and not is_committed): # , hint=self.__class__._pk_attrs)
-				is_committed = self.update(_update_query)
-				if(is_committed):
-					break
-
-				print("#MONGO:WARNING!! commit failed, could be concurrent updates ?, retrying",
-					cls, self.pk()
-				)
-				#reinitialize from db
-				_collection_shard = cls.get_collection(getattr(self, cls._shard_key_))
-				self.reinitialize_from_doc(
-					_collection_shard.find_one(self.pk())
-				)
-				retry -= 1
+			is_committed = self.update(_update_query)
 			if(not is_committed):
 				raise Exception("Couldn't commit, either a concurrent update modified this or query has issues", self.pk())
-
-
-
 
 		#clear and reset pk to new
 		self.pk(renew=True)

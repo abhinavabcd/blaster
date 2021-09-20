@@ -297,21 +297,11 @@ class RequestParams:
 	def to_dict(self):
 		return {"get": self._get, "post": self._post}
 
-class BlasterResponse:
-	data = None
-	templates = None
-	frame_template = None
-	meta_tags = None
-
-	def __init__(self, data, template=None,
-			frame_template=None, templates=None, meta_tags=None
-		):
-		self.data = data
-		self.frame_template = frame_template
-		self.meta_tags = meta_tags
-		self.templates = {"content": template}
-		if(templates):
-			self.templates.update(templates)
+#type, required, in (query, body)
+class Param(object):
+	#ex:  "a": Param(in="query/body", required=False, type="List[str]")
+	pass
+#RequestObject
 
 
 #contains all running apps
@@ -330,15 +320,15 @@ class App:
 		self.route_handlers = []
 		self.request_handlers = []
 
-	def route(self,
-			regex,
-			methods=None,
-			name='',
-			description='',
-			query_class=None,
-			request_class=None,
-			response_class=None,
-			max_body_size=None
+	def route(
+		self,
+		regex,
+		methods=None,
+		name='',
+		description='',
+		request_spec=None,
+		response_spec=None, # -type: data
+		max_body_size=None
 	):
 		methods = methods or ("GET", "POST")
 		if(isinstance(methods, str)):
@@ -358,9 +348,8 @@ class App:
 				"methods": methods,
 				"name": name,
 				"description": description,
-				"query_class": query_class,
-				"request_class": request_class,
-				"response_class": response_class,
+				"request_spec": request_spec,# -type: data
+				"response_spec": response_spec,# -type: data
 				"max_body_size": max_body_size
 			})
 			#return func as if nothing's decorated! (so you can call function as is)
@@ -642,40 +631,6 @@ class App:
 			else:
 				#just a variable to track api type responses
 				response_data = None
-				if(isinstance(body, BlasterResponse)):
-					#just keep a reference as we overwrite body variable
-					blaster_response_obj = body
-					#set body as default to repose_obj.data
-					body = response_data = blaster_response_obj.data
-					return_type = request_params.get("return_type")
-
-					#standard return_types -> json, content, None(=>content inside frame)
-					if(return_type != "json"):
-						#if template file is given and body should be a dict for the template
-						templates = blaster_response_obj.templates
-						#if no template given or returns just the blaster_response_obj.data
-						template_exists \
-							= (return_type and templates.get(return_type))\
-							or blaster_response_obj.templates.get("content")
-
-						if(template_exists and isinstance(response_data, dict)):
-							tmpl_rendered = template_exists.render(
-								request_params=request_params,
-								**response_data
-							)
-
-							frame_template = blaster_response_obj.frame_template
-							#if there is a return type, just retutn the template
-							#render the full frame
-							if(return_type or not frame_template):
-								body = tmpl_rendered # partial
-
-							else: # return type is nothing -> return full frame
-								body = frame_template.render(
-									body_content=tmpl_rendered,
-									meta_tags=blaster_response_obj.meta_tags
-								)
-
 				if(isinstance(body, (dict, list))):
 					response_data = body
 					body = json.dumps(body)
