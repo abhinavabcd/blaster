@@ -467,7 +467,7 @@ class App:
 			if(body_len > 1):
 				response_headers = ret[-2]
 			if(body_len > 2):
-				status = str(ret[-3])
+				status = ret[-3]
 		else:
 			body = ret
 
@@ -586,10 +586,10 @@ class App:
 			
 			##app specific headers
 			#handle various return values from handler functions
-			(status, response_headers, body) = App.response_body_to_parts(response_from_handler)
+			status, response_headers, body = App.response_body_to_parts(response_from_handler)
 
 			if(status != I_AM_HANDLING_THE_STATUS):
-				status = status or '200 OK'
+				status = str(status) if status else '200 OK'
 				buffered_socket.send(b'HTTP/1.1 ', status, b'\r\n')
 
 			if(isinstance(response_headers, list)):
@@ -645,7 +645,7 @@ class App:
 				buffered_socket.send(b'Content-Length: ', str(len(body)), b'\r\n\r\n')
 				buffered_socket.send(body)
 			else:
-				buffered_socket.send(b'Content-Length: 0', b'\r\n\r\n')
+				buffered_socket.send(b'\r\n')
 
 			#just some debug for apis
 			if(IS_DEV and DEBUG_LEVEL > 1 and response_data):
