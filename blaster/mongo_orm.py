@@ -39,7 +39,9 @@ class Model(object):
 	_attrs = None
 	_pk_attrs = None
 
-	__cache__ = ExpiringCache(10000)
+	__cache__ = None
+	_is_secondary_shard = False # used to identify if it's a primary or secondary shard
+	
 	#instance level
 	__is_new = True
 	_set_query_updates = None
@@ -51,7 +53,6 @@ class Model(object):
 	_initializing = False
 	_pk = None
 	_json = None
-	_is_secondary_shard = False # used to identify if it's a primary or secondary shard
 
 	#initialize a new object
 	def __init__(self, _is_new_=True, **values):
@@ -1180,6 +1181,8 @@ def initialize_model(Model):
 	Model._shard_key_ = getattr(Model, "_shard_key_", "_id")
 	Model._secondary_shards_ = {}
 	Model._indexes_ = getattr(Model, "_indexes_", [("_id",)])
+	#create a default cache
+	Model.__cache__ = getattr(Model, "_cache_", ExpiringCache(10000))
 
 	# temp usage _id_attr
 	_id_attr = Attribute(str) # default is of type objectId
