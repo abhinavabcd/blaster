@@ -138,7 +138,7 @@ def update_stats_on_main():
 @route_handler('^/get_sessions')
 @decode_user
 @need_user
-def get_sessions(request_params=None, user=None):
+def get_sessions(request_params, user=None):
 	recent_sessions = public_sessions.cache.items()[:-100]
 	return {"type": TYPE_SESSIONS, "sessions": [session_obj for session_id, session_obj in recent_sessions]}
 
@@ -147,7 +147,7 @@ def get_sessions(request_params=None, user=None):
 @route_handler('^/get_session/(.*)')
 @decode_user
 @need_user
-def get_session(session_id, request_params=None, user=None):
+def get_session(session_id, request_params, user=None):
 	session_id = request_params.get("session_id", session_id)
 	session = None
 	if(session_id and session_id.startswith("private__")):
@@ -166,7 +166,7 @@ def get_session(session_id, request_params=None, user=None):
 @route_handler('^/update_session_data')
 @decode_user
 @need_user
-def update_session_data(session_id, request_params=None, user=None):
+def update_session_data(session_id, request_params, user=None):
 	if(user["user_id"] != "internal"):
 		return {"type": TYPE_ERROR, "error_message": "not authorized"} # empty body
 	if(session_id):
@@ -178,7 +178,7 @@ def update_session_data(session_id, request_params=None, user=None):
 @route_handler('^/send_session_message/(.*)')
 @decode_user
 @need_user
-def send_session_message(session_id, request_params=None, user=None):
+def send_session_message(session_id, request_params, user=None):
 	if(user["user_id"] != "internal"):
 		return {"type": TYPE_ERROR, "error_message": "not authorized"} # empty body
 	
@@ -223,7 +223,7 @@ def send_session_message(session_id, request_params=None, user=None):
 @route_handler('^/update_server_stats')
 @decode_user
 @need_user
-def update_server_stats(request_params=None, user=None):
+def update_server_stats(request_params, user=None):
 	server_addr = urllib.request.unquote(request_params.get("server_addr", None))
 	if(user["user_id"] == "internal"):
 		server_info = json.loads(request_params.POST().decode())
@@ -239,7 +239,7 @@ def update_server_stats(request_params=None, user=None):
 @process_post_params
 @decode_user
 @need_user
-def create_new_session(request_params=None, user=None, session_id=None):
+def create_new_session(request_params, user=None, session_id=None):
 	#create on some random server a
 	description = request_params.get("description", None)
 	image = request_params.get("image", None)
@@ -283,7 +283,7 @@ session_data = LRUCache(10000)
 @route_handler('^/after_new_session_created')
 @decode_user
 @need_user
-def after_new_session_created(request_params=None, user=None):
+def after_new_session_created(request_params, user=None):
 	if(user["user_id"] != "internal"):
 		return {"type": TYPE_ERROR, "error_message": "invalid user"} # empty body
 	
@@ -301,7 +301,7 @@ def after_new_session_created(request_params=None, user=None):
 
 @route_handler('^/create_or_update_user')
 @decode_user
-def create_or_update_user(request_params=None, user=None):
+def create_or_update_user(request_params, user=None):
 	user_name = request_params.get("name", None) or get_random_name()
 	user_id = None
 	if(user):
@@ -312,7 +312,7 @@ def create_or_update_user(request_params=None, user=None):
 @route_handler('^/join_session/(.*)')
 @decode_user
 @need_user
-def join_session(session_id, request_params=None, user=None):
+def join_session(session_id, request_params, user=None):
 	session_id = session_id or request_params.get("session_id", None)
 	session_obj = session_data.exists(session_id)
 	if(not session_obj):

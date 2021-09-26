@@ -32,6 +32,7 @@ _is_server_running = True
 default_wsgi_headers = [
 	('Content-Type', 'text/html; charset=utf-8')
 ]
+
 default_stream_headers = {
 	'Content-Type': 'text/html; charset=utf-8',
 	'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
@@ -43,6 +44,7 @@ default_stream_headers = {
 }
 
 I_AM_HANDLING_THE_SOCKET = object()
+I_AM_HANDLING_THE_BODY = object()
 I_AM_HANDLING_THE_HEADERS = object()
 I_AM_HANDLING_THE_STATUS = object()
 
@@ -53,8 +55,6 @@ HTTP_MAX_REQUEST_BODY_SIZE = 1 * 1024 * 1024 # 1 mb
 HTTP_MAX_HEADERS_DATA_SIZE = 16 * 1024 # 16kb
 
 SLASH_N_ORDINAL = ord(b'\n')
-
-
 
 
 def find_new_line(arr):
@@ -82,6 +82,7 @@ class BufferedSocket():
 		self.is_eof = True
 
 	def send(self, *_data):
+		total_sent = 0
 		for data in _data:
 			if(isinstance(data, str)):
 				data = data.encode()
@@ -89,12 +90,22 @@ class BufferedSocket():
 			data_len = len(data)
 			while(n < data_len):
 				sent = self.sock.send(data[n:])
-				n += sent
 				if(sent < 0):
-					return False
-		return True
+					return sent
+				n += sent
+			total_sent += n
+		return total_sent
 				
 	def recv(self, n):
+		if(self.is_eof):
+			return None
+		if(self.store):
+			ret = self.store
+			self.store = bytearray()
+			return ret
+		return self.sock.recv(n)
+
+	def recvn(self, n):
 		if(self.is_eof):
 			return None
 		while(len(self.store) < n):
@@ -103,12 +114,14 @@ class BufferedSocket():
 				self.is_eof = True
 				break
 			self.store.extend(data)
+
 		#return n bytes for now
 		ret = self.store[:n]
 		#set remaining to new store
 		self.store = self.store[n:]
 		return ret
 		
+
 	def readline(self, max_size=HTTP_MAX_REQUEST_BODY_SIZE):
 		if(self.is_eof):
 			return None
@@ -550,7 +563,7 @@ class App:
 			_max_body_size = handler.get("max_body_size") or HTTP_MAX_REQUEST_BODY_SIZE
 			if(content_length > 0):
 				if(content_length < _max_body_size):
-					post_data = buffered_socket.recv(content_length)
+					post_data = buffered_socket.recvn(content_length)
 
 			else: # handle chuncked encoding
 				transfer_encoding = headers.get("transfer-encoding")
@@ -558,7 +571,7 @@ class App:
 					post_data = bytearray()
 					chunk_size = int(buffered_socket.readline(), 16) # hex
 					while(chunk_size > 0 and len(post_data) + chunk_size < _max_body_size):
-						data = buffered_socket.recv(chunk_size + 2)
+						data = buffered_socket.recvn(chunk_size + 2)
 						post_data.extend(data)
 						chunk_size = int(buffered_socket.readline(), 16) # hex
 					#as bytes
@@ -583,51 +596,57 @@ class App:
 			else:
 				response_from_handler = func(*request_path_match.groups(), request_params)
 
+			#check and respond to keep alive
+			resuse_socket_for_next_http_request = headers.get('Connection', "").lower() == "keep-alive"
 			
 			##app specific headers
 			#handle various return values from handler functions
 			status, response_headers, body = App.response_body_to_parts(response_from_handler)
 
+			if(body == I_AM_HANDLING_THE_SOCKET):
+				body = I_AM_HANDLING_THE_BODY
+				status = I_AM_HANDLING_THE_STATUS
+				response_headers = I_AM_HANDLING_THE_HEADERS
+
 			if(status != I_AM_HANDLING_THE_STATUS):
 				status = str(status) if status else '200 OK'
 				buffered_socket.send(b'HTTP/1.1 ', status, b'\r\n')
 
-			if(isinstance(response_headers, list)):
-				#send only the specified headers
-				for header in response_headers:
-					buffered_socket.send(header, b'\r\n')
+			if(response_headers != I_AM_HANDLING_THE_HEADERS):
+				if(isinstance(response_headers, list)):
+					#send only the specified headers
+					for header in response_headers:
+						buffered_socket.send(header, b'\r\n')
 
-			else:
-				if(isinstance(response_headers, dict)):
-					#mix default stream headers
-					#add default stream headers
-					for key, val in default_stream_headers.items():
-						if(key not in response_headers):
-							buffered_socket.send(key, b': ', val, b'\r\n')
+				else:
+					if(isinstance(response_headers, dict)):
+						#mix default stream headers
+						#add default stream headers
+						for key, val in default_stream_headers.items():
+							if(key not in response_headers):
+								buffered_socket.send(key, b': ', val, b'\r\n')
 
-				elif(response_headers == None): # no headers => use default stream headers
-					response_headers = default_stream_headers
+					elif(response_headers == None): # no headers => use default stream headers
+						response_headers = default_stream_headers
 
-				#send all basic headers
-				for key, val in response_headers.items():
-					buffered_socket.send(key, b': ', val, b'\r\n')
+					#send all basic headers
+					for key, val in response_headers.items():
+						buffered_socket.send(key, b': ', val, b'\r\n')
 
-			#send any new cookies set
-			if(request_params._cookies_to_set):
-				for cookie_name, cookie_val in request_params._cookies_to_set.items():
-					buffered_socket.send(b'Set-Cookie: ', cookie_name, b'=', cookie_val, b'\r\n')
+				#send any new cookies set
+				if(request_params._cookies_to_set):
+					for cookie_name, cookie_val in request_params._cookies_to_set.items():
+						buffered_socket.send(b'Set-Cookie: ', cookie_name, b'=', cookie_val, b'\r\n')
 
-			#check and respond to keep alive
-			resuse_socket_for_next_http_request = headers.get('Connection', "").lower() == "keep-alive"
-			#send back keep alive
-			if(resuse_socket_for_next_http_request):
-				buffered_socket.send(b'Connection: keep-alive\r\n')
+				#send back keep alive
+				if(resuse_socket_for_next_http_request):
+					buffered_socket.send(b'Connection: keep-alive\r\n')
 
-			if(body == I_AM_HANDLING_THE_SOCKET):
+			if(body == I_AM_HANDLING_THE_BODY):
 				if(response_headers != I_AM_HANDLING_THE_HEADERS):
 					buffered_socket.send(b'\r\n') # close the headers
 
-				return I_AM_HANDLING_THE_SOCKET
+				return I_AM_HANDLING_THE_BODY
 			else:
 				#just a variable to track api type responses
 				response_data = None
@@ -709,7 +728,7 @@ class App:
 			ret = self.process_http_request(buffered_socket)
 			if(ret == REUSE_SOCKET_FOR_HTTP):
 				continue # try again
-			elif(ret == I_AM_HANDLING_THE_SOCKET):
+			elif(ret == I_AM_HANDLING_THE_BODY):
 				close_socket = False
 			break
 

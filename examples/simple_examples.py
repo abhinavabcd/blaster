@@ -22,9 +22,13 @@ def do_test2(something, request_params=None):
     return {"message" : something} # something is a byte array !sorry
 
 ##directly return an object , server will automatically convert to json
-@route_handler("^/echo_params/(.*)$")
+@route_handler("^/echo_params/{:something}$")
 def do_test3(something, request_params=None):
-    return {"request_params" : request_params}
+    return {"request_params" : request_params._get}
+
+@route_handler("^/echo_params/{:+something}$")
+def do_test_with_something(something, request_params=None):
+    return {"request_params" : request_params._get}
 
 ##FOR handling you post arguments as key=value&key2=value2 data
 @route_handler("^/echo_post_params")
