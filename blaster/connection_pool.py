@@ -1,6 +1,6 @@
 from gevent.queue import Queue, Empty
 import boto3
-
+from functools import update_wrapper
 from . import config
 from .config import IS_DEV
 #import umysql
@@ -74,7 +74,7 @@ def release_to_pool(conn, pool_id):
 
 def use_connection_pool(**pool_args):
     def use_db_connection(func):
-        def func_wrap(*args, **kwargs):
+        def wrapper(*args, **kwargs):
 
             conn_args = {}
             for pool_arg, pool_id in pool_args.items():
@@ -108,8 +108,9 @@ def use_connection_pool(**pool_args):
             #         retry += 1
             #         if retry >= 2:
             #             raise e
-        func_wrap._original = getattr(func, "_original", func)
-        return func_wrap
+        update_wrapper(wrapper, func)
+        wrapper._original = getattr(func, "_original", func)
+        return wrapper
 
     return use_db_connection
 

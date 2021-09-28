@@ -17,7 +17,7 @@ import struct
 import fcntl
 import html
 
-from functools import reduce as _reduce
+from functools import reduce as _reduce, update_wrapper
 from gevent.lock import BoundedSemaphore
 from collections import namedtuple
 from datetime import timezone
@@ -1202,6 +1202,8 @@ def ignore_exceptions(*exceptions):
 					if(isinstance(ex, exception)):
 						return None
 				raise ex
+
+		update_wrapper(new_func, func)
 		new_func._original = getattr(func, "_original", func)
 		return new_func
 	return decorator
@@ -1282,6 +1284,7 @@ def background_task(func):
 		submit_background_task(None, func, *args, **kwargs)
 		return True
 
+	update_wrapper(wrapper, func)
 	wrapper._original = getattr(func, "_original", func)
 	return wrapper
 
@@ -1309,14 +1312,15 @@ def call_after_func(func):
 
 	if(isinstance(func, str)):
 		# after_func => take from args named by func
-		def decorator(to_decorate_func):
+		def decorator(func):
 			def new_func(*args, **kwargs):
 				after_func = kwargs.pop(func, None)
-				ret = to_decorate_func(*args, **kwargs)
+				ret = func(*args, **kwargs)
 				after_func and after_func()
 				return ret
 
-			new_func._original = getattr(to_decorate_func, "_original", to_decorate_func)
+			update_wrapper(new_func, func)
+			new_func._original = getattr(func, "_original", func)
 			return new_func
 		return decorator
 
@@ -1326,6 +1330,7 @@ def call_after_func(func):
 			after and after()
 			return ret
 			
+		update_wrapper(new_func, func)
 		new_func._original = getattr(func, "_original", func)
 		return new_func
 

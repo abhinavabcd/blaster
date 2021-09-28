@@ -17,6 +17,7 @@ import time
 import gevent
 import functools
 import traceback
+import inspect
 from gevent.server import StreamServer
 from gevent.pywsgi import WSGIServer
 from requests_toolbelt.multipart import decoder
@@ -53,18 +54,6 @@ REUSE_SOCKET_FOR_HTTP = object()
 ########some random constants
 HTTP_MAX_REQUEST_BODY_SIZE = 1 * 1024 * 1024 # 1 mb
 HTTP_MAX_HEADERS_DATA_SIZE = 16 * 1024 # 16kb
-
-SLASH_N_ORDINAL = ord(b'\n')
-
-
-def find_new_line(arr):
-	n = len(arr)
-	i = 0
-	while(i < n):
-		if(arr[i] == SLASH_N_ORDINAL):
-			return i
-		i += 1
-	return -1
 
 
 class BufferedSocket():
@@ -121,40 +110,74 @@ class BufferedSocket():
 		self.store = self.store[n:]
 		return ret
 		
-
-	def readline(self, max_size=HTTP_MAX_REQUEST_BODY_SIZE):
+	#fails if it couldn't find the delimiter until max_size
+	def readuntil(self, delimiter, max_size, discard_delimiter):
 		if(self.is_eof):
 			return None
-		#indicates the index in store where we find the new line
-		line_found = find_new_line(self.store)
 		#check in store
-		while(line_found == -1 and len(self.store) < max_size):
-			data = self.sock.recv(4096)
-			if(not data):
+		if(isinstance(delimiter, str)):
+			delimiter = delimiter.encode()
+		
+		delimiter_len = len(delimiter)
+		#scan the store until end, if not found extend and continue until store > max_size
+		to_scan_len = len(self.store)
+		i = 0 # how much we scanned already
+			
+		while(True):
+			if(i > max_size):
 				self.is_eof = True
-				break
+				return None
+			if(i >= delimiter_len):
+				j = 0
+				lookup_from = i - delimiter_len
+				while(j < delimiter_len and self.store[lookup_from + j] == delimiter[j]):
+					j += 1
 
-			line_found = find_new_line(data)
-			if(line_found != -1):
-				line_found = len(self.store) + line_found
+				if(j == delimiter_len):
+					#found
+					ret = None
+					if(discard_delimiter):
+						ret = self.store[:i - delimiter_len]
+					else:
+						ret = self.store[:i]
+					self.store = self.store[i:] # unscanned/pending
+					return ret
+			if(i >= to_scan_len):
+				#scanned all buffer
+				data = self.sock.recv(4096)
+				if(not data):
+					self.is_eof = True
+					return None
 
-			self.store.extend(data) # fetch more data
-
-		ret = None
-		if(line_found != -1):
-			ret = self.store[:line_found + 1]
-			self.store = self.store[line_found + 1 :]
-		else: # EOF, return everything in buffer
-			ret = self.store
-			self.store = bytearray()
-			self.is_eof = True
-		return ret
+				self.store.extend(data) # fetch more data
+				to_scan_len = len(self.store)
+			i += 1
 
 	def __getattr__(self, key):
 		ret = getattr(self.sock, key, _OBJ_END_)
 		if(ret == _OBJ_END_):
 			raise AttributeError()
 		return ret
+
+def get_chunk_size_from_header(chunk_header):
+	ret = 0
+	i = 0
+	l = len(chunk_header)
+	A = ord('A')
+	Z = ord('Z')
+	_0 = ord('0')
+	_9 = ord('9')
+	while(i < l):
+		c = ord(chunk_header[i])
+		if(c >= A and c <= Z):
+			ret = ret * 16 + (10 + c - A)
+		elif(c >= _0 and c <= _9):
+			ret = ret * 16 + (c - _0)
+		else:
+			return ret
+		i += 1
+	return ret
+
 
 ####parse query string
 def parse_qs_modified(qs, keep_blank_values=True, strict_parsing=False):
@@ -184,8 +207,22 @@ class HeadersDict(dict):
 		return header_value
 
 
+
+class Query(object):
+	arg = None
+
+	def __init__(self, arg):
+		self.arg = arg
+
+class Headers(object):
+	arg = None
+
+	def __init__(self, arg):
+		self.arg = arg
+
+
 _OBJ_END_ = object()
-class RequestParams:
+class Request:
 	sock = None
 	_post = None
 	_get = None
@@ -306,15 +343,38 @@ class RequestParams:
 
 		return self
 
+	#type: hook function to call to create that arugmnet
+	__argument_creator_hooks = {}
+
+	@classmethod
+	def set_type_hook(cls, _type, hook):
+		cls.__argument_creator_hooks[_type] = hook
+
+	def make_arg(self, _type, arg=None):
+		if(_type == Request):
+			return self
+		elif(_type == Query):
+			return self._get
+		elif(issubclass(_type, Query)):
+			if(_type.arg):
+				return self._get.get(_type.arg)
+			else:
+				#use pydantic to construct the object using get request params
+				pass
+		elif(_type == Headers):
+			return self._headers
+
+		elif(issubclass(_type, Headers)):
+			if(_type.arg):
+				return self._get.get(_type.arg)
+			return self._headers
+		else:
+			#use pydantic to construct the object using _post request params
+			pass
+
 
 	def to_dict(self):
 		return {"get": self._get, "post": self._post}
-
-#type, required, in (query, body)
-class Param(object):
-	#ex:  "a": Param(in="query/body", required=False, type="List[str]")
-	pass
-#RequestObject
 
 
 #contains all running apps
@@ -339,15 +399,13 @@ class App:
 		methods=None,
 		name='',
 		description='',
-		request_spec=None,
-		response_spec=None, # -type: data
 		max_body_size=None
 	):
 		methods = methods or ("GET", "POST")
 		if(isinstance(methods, str)):
 			methods = (methods,)
 
-		def _decorator(func):
+		def wrapper(func):
 			_path_regex = regex
 			if(isinstance(_path_regex, str)):
 				#special case where path params can be {:varname} {:+varname}
@@ -355,20 +413,28 @@ class App:
 				_path_regex = re.sub(r'\{:(\w+)\}', '(?P<\g<1>>[^/]*)', _path_regex)
 				_path_regex = re.sub(r'\{:\+(\w+)\}', '(?P<\g<1>>[^/]+)', _path_regex)
 
+			args_spec = inspect.getargspec(func)
+			args = args_spec.args
+			default_values = args_spec.defaults
+			annotations = args_spec.annotations
+
+			#arguments order
+			#all untyped arguments are ignores should possiblly come from regex groups
+			#typed args should be constructed, some may be constructed by hooks
+			#named arguments not typed as passed on as with defaults
+
 			self.route_handlers.append({
 				"regex": _path_regex,
 				"func": func,
 				"methods": methods,
 				"name": name,
 				"description": description,
-				"request_spec": request_spec,# -type: data
-				"response_spec": response_spec,# -type: data
 				"max_body_size": max_body_size
 			})
 			#return func as if nothing's decorated! (so you can call function as is)
 			return func
 
-		return _decorator
+		return wrapper
 
 
 	def handle_wsgi(self, environ, start_response):
@@ -488,11 +554,11 @@ class App:
 
 	def process_http_request(self, buffered_socket):
 		resuse_socket_for_next_http_request = True
-		request_line = buffered_socket.readline(4096) # ignore request lines > 4096 bytes
+		request_line = buffered_socket.readuntil('\r\n', 4096, True) # ignore request lines > 4096 bytes
 		if(not request_line):
 			return
 		post_data = None
-		request_params = RequestParams(buffered_socket)
+		request_params = Request(buffered_socket)
 		cur_millis = int(1000 * time.time())
 		request_type = None
 		request_path = None
@@ -544,16 +610,16 @@ class App:
 			max_headers_data_size = handler.get("max_headers_data_size") or HTTP_MAX_HEADERS_DATA_SIZE
 			_headers_data_size = 0
 			while(_headers_data_size < max_headers_data_size): # keep reading headers
-				data = buffered_socket.readline(max_size=max_headers_data_size)
-				if(data == b'\r\n'):
+				data = buffered_socket.readuntil('\r\n', max_headers_data_size, True)
+				if(data == b''):
 					break
-				if(not data):
+				elif(data == None):
 					return # won't resuse socket
 
 				header_name_value_pair = data.split(b':', 1)
 				if(len(header_name_value_pair) == 2):
 					header_name , header_value = header_name_value_pair
-					headers[header_name.lower().decode()] = header_value.lstrip(b' ').rstrip(b'\r\n').decode()
+					headers[header_name.lower().decode()] = header_value.lstrip(b' ').decode()
 				
 				_headers_data_size += len(data)
 
@@ -569,11 +635,12 @@ class App:
 				transfer_encoding = headers.get("transfer-encoding")
 				if(transfer_encoding == "chunked"):
 					post_data = bytearray()
-					chunk_size = int(buffered_socket.readline(), 16) # hex
+					chunk_size = get_chunk_size_from_header(buffered_socket.readuntil('\r\n', 512, True))# hex
 					while(chunk_size > 0 and len(post_data) + chunk_size < _max_body_size):
-						data = buffered_socket.recvn(chunk_size + 2)
+						data = buffered_socket.recvn(chunk_size)
 						post_data.extend(data)
-						chunk_size = int(buffered_socket.readline(), 16) # hex
+						buffered_socket.readuntil('\r\n', 8, False) # remove the trailing \r\n
+						chunk_size = get_chunk_size_from_header(buffered_socket.readuntil('\r\n', 512, True))# hex
 					#as bytes
 
 
@@ -755,7 +822,7 @@ def stop_all_apps():
 _main_app = App()
 
 #generic global route handler
-route_handler = _main_app.route
+route = _main_app.route
 
 #generic glonal route handler
 def start_stream_server(*args, **kwargs):

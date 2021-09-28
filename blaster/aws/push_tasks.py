@@ -80,8 +80,7 @@ def push_task(func):
         return decorator
     else:
         #grab original function
-        _original = getattr(func, "_original", func)
-        push_tasks[_original.__name__] = func
+        push_tasks[func.__name__] = func
         return func
 
 @use_connection_pool(queue="sqs")
@@ -92,10 +91,7 @@ def post_a_task(func, *args, **kwargs):
     if isinstance(func, str) or isinstance(func, bytes):
         func_name = func
     elif isinstance(func, types.FunctionType):
-        if hasattr(func, "_original"):
-            func_name = func._original.__name__
-        else:
-            func_name = func.__name__
+        func_name = func.__name__
     else:
         return None
 

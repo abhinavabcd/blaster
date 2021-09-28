@@ -528,12 +528,12 @@ class Model(object):
 						_secondary_updates["$unset"] = _secondary_values_to_unset
 					IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: updating secondary", _secondary_pk, _secondary_updates)
 					#find that doc and update
-					seconday_shard_update_return_value = _secondary_collection.find_one_and_update(
+					secondary_shard_update_return_value = _secondary_collection.find_one_and_update(
 						_secondary_pk,
 						_secondary_updates
 					)
 
-					if(not seconday_shard_update_return_value):
+					if(not secondary_shard_update_return_value):
 						print("#MONGO:WARNING!! secondary couldn't be propagated, probably due to concurrent update",
 								cls, _secondary_pk, _secondary_updates
 							)
@@ -1253,18 +1253,18 @@ def initialize_model(Model):
 
 		if(Model._shard_key_ != _index_shard_key):
 			#secondary shard tables
-			_seconday_shard = Model._secondary_shards_.get(_index_shard_key)
+			_secondary_shard = Model._secondary_shards_.get(_index_shard_key)
 
-			if(_seconday_shard):
+			if(_secondary_shard):
 				for _attr_name, _ordering in pymongo_index:
-					_seconday_shard.attributes[_attr_name] = getattr(
+					_secondary_shard.attributes[_attr_name] = getattr(
 						Model,
 						_attr_name
 					)
-				#create _index_ for seconday shards
+				#create _index_ for secondary shards
 				_secondary_shard_index = list(pymongo_index)
 				_secondary_shard_index.append(mongo_index_args)
-				_seconday_shard.indexes.append(
+				_secondary_shard.indexes.append(
 					tuple(_secondary_shard_index)
 				)
 
@@ -1377,13 +1377,13 @@ def initialize_model(Model):
 			db_node.get_collection(Model).create_index(pymongo_index, **mongo_index_args)
 	
 	#create secondary shards
-	for _seconday_shard_key, _seconday_shard in Model._secondary_shards_.items():
+	for _secondary_shard_key, _secondary_shard in Model._secondary_shards_.items():
 		if(not Model._pk_is_unique_index):
 			raise Exception("Cannot have secondary shard keys for non unique indexes! %s"%(Model,))
 
 		class_attrs = {
-			"_indexes_": _seconday_shard.indexes,
-			"_shard_key_": _seconday_shard_key,
+			"_indexes_": _secondary_shard.indexes,
+			"_shard_key_": _secondary_shard_key,
 			"_collection_name_": Model._collection_name_,
 			"_is_secondary_shard": True,
 			"_db_nodes_": None
@@ -1391,23 +1391,23 @@ def initialize_model(Model):
 
 		# add primary shard attributes of the main class to
 		# secondary shards too, to identify the original document shard
-		_seconday_shard.attributes[Model._shard_key_] = getattr(Model, Model._shard_key_)
+		_secondary_shard.attributes[Model._shard_key_] = getattr(Model, Model._shard_key_)
 
 		secondary_id_attr = getattr(Model, '_id', None)
 		if(secondary_id_attr):
-			_seconday_shard.attributes['_id'] = secondary_id_attr
+			_secondary_shard.attributes['_id'] = secondary_id_attr
 
-		class_attrs.update(_seconday_shard.attributes)
+		class_attrs.update(_secondary_shard.attributes)
 		#also include the primary key of the primary shard
 		#into secondary shards
 
-		_seconday_shard._Model_ = type(
-			"%s_%s"%(Model.__name__, _seconday_shard_key.upper()),
+		_secondary_shard._Model_ = type(
+			"%s_%s"%(Model.__name__, _secondary_shard_key.upper()),
 			(Model,),
 			class_attrs
 		)
 		#initialize this new model
-		initialize_model(_seconday_shard._Model_)
+		initialize_model(_secondary_shard._Model_)
 
 
 #initialize control Tr
