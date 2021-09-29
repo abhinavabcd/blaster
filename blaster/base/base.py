@@ -393,7 +393,7 @@ class Request:
 
 	def make_arg(self, name, _type, default):
 		if(not _type):
-			return default
+			return self.get(name, default)
 		if(_type == Request):
 			return self
 		elif(_type == Query):
@@ -724,8 +724,9 @@ class App:
 			request_params.parse_request_body(post_data, headers)
 
 			handler_kwargs = dict(request_path_match.groupdict())
-			handler_args = list(request_path_match.groups())
-			#update the get params also
+
+			#can't use both named and unnamed at once in the arguments
+			handler_args = list(request_path_match.groups()) if not handler_kwargs else []
 
 			if(handler_kwargs):
 				request_params._get.update(handler_kwargs)
