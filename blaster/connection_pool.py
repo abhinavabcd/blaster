@@ -1,6 +1,5 @@
 from gevent.queue import Queue, Empty
 import boto3
-from functools import update_wrapper
 from . import config
 from .config import IS_DEV
 #import umysql
@@ -108,7 +107,6 @@ def use_connection_pool(**pool_args):
             #         retry += 1
             #         if retry >= 2:
             #             raise e
-        update_wrapper(wrapper, func)
         wrapper._original = getattr(func, "_original", func)
         return wrapper
 

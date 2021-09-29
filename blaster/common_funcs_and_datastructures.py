@@ -17,7 +17,7 @@ import struct
 import fcntl
 import html
 
-from functools import reduce as _reduce, update_wrapper
+from functools import reduce as _reduce
 from gevent.lock import BoundedSemaphore
 from collections import namedtuple
 from datetime import timezone
@@ -27,11 +27,10 @@ import time
 import hmac
 import base64
 import hashlib
-from gevent.threading import Lock, Thread
+from gevent.threading import Thread
 from gevent.queue import Queue
 import re
 import six
-from urllib.parse import urlencode
 
 import traceback
 
@@ -994,57 +993,6 @@ def get_mime_type_from_filename(file_name):
 
 
 
-
-
-
-# File handler for blaster server
-def static_file_handler(_base_folder_path_, default_file_path="index.html", file_not_found_page_cb=None):
-	cached_file_data = {}
-	gevent_lock = Lock()
-
-	def file_handler(path, request_params):
-		if(not path):
-			path = default_file_path
-		#from given base_path
-		path = _base_folder_path_ + str(path)
-		file_data = cached_file_data.get(path, None)
-		resp_headers = None
-
-		if(not file_data or time.time() * 1000 - file_data[2] > 1000 if IS_DEV else 2 * 60 * 1000): # 1 millis
-			gevent_lock.acquire()
-			file_hash_key = path + urlencode(request_params._get)[:400]
-			file_data = cached_file_data.get(file_hash_key, None)
-			if(not file_data or time.time() * 1000 - file_data[2] > 1000): # 1 millis
-				#put a lock here
-				try:
-					data = open(path, "rb").read()
-					mime_type_headers = get_mime_type_from_filename(path)
-					if(mime_type_headers):
-						resp_headers = {
-											'Content-Type': mime_type_headers.mime_type,
-											'Cache-Control': 'max-age=31536000'
-									}
-					
-					file_data = (data, resp_headers, time.time() * 1000)
-					cached_file_data[file_hash_key] = file_data
-				except Exception as ex:
-					if(file_not_found_page_cb):
-						file_data = (
-										file_not_found_page_cb(path, request_params=None, headers=None, post_data=None),
-										None,
-										time.time() * 1000
-									)
-					else:
-						file_data = ("--NO-FILE--", None, time.time() * 1000)
-					
-			gevent_lock.release()
-					
-		data, resp_headers, last_updated = file_data
-		return resp_headers, data
-	
-	return file_handler
-
-
 def parse_cmd_line_arguments():
 	from sys import argv
 	args_map = {}
@@ -1203,7 +1151,6 @@ def ignore_exceptions(*exceptions):
 						return None
 				raise ex
 
-		update_wrapper(new_func, func)
 		new_func._original = getattr(func, "_original", func)
 		return new_func
 	return decorator
@@ -1284,7 +1231,6 @@ def background_task(func):
 		submit_background_task(None, func, *args, **kwargs)
 		return True
 
-	update_wrapper(wrapper, func)
 	wrapper._original = getattr(func, "_original", func)
 	return wrapper
 
@@ -1319,7 +1265,6 @@ def call_after_func(func):
 				after_func and after_func()
 				return ret
 
-			update_wrapper(new_func, func)
 			new_func._original = getattr(func, "_original", func)
 			return new_func
 		return decorator
@@ -1330,7 +1275,6 @@ def call_after_func(func):
 			after and after()
 			return ret
 			
-		update_wrapper(new_func, func)
 		new_func._original = getattr(func, "_original", func)
 		return new_func
 

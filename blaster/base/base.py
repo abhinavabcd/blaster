@@ -18,13 +18,17 @@ import gevent
 import functools
 import traceback
 import inspect
+from typing import Optional
+from urllib.parse import urlencode
+
+from gevent.threading import Lock
 from gevent.server import StreamServer
 from gevent.pywsgi import WSGIServer
 from requests_toolbelt.multipart import decoder
 
 from .. import config as blaster_config
 from ..config import IS_DEV, DEBUG_LEVEL
-from ..common_funcs_and_datastructures import SanitizedDict
+from ..common_funcs_and_datastructures import SanitizedDict, get_mime_type_from_filename
 from ..utils import events
 from ..logging import LOG_ERROR, LOG_SERVER
 _is_server_running = True
@@ -209,16 +213,53 @@ class HeadersDict(dict):
 
 
 class Query(object):
+	#cls level
+	_schema = None
+	#instance level
 	arg = None
+	_query = None
 
 	def __init__(self, arg):
 		self.arg = arg
+
+	def set_dict(self, _query, required_keys):
+		self._query = _query
+
+	def __getattr__(self, key):
+		return self._query.get(key, default=None)
+
 
 class Headers(object):
-	arg = None
+	#instance level
+	_arg_ = None
+	_headers = None
 
 	def __init__(self, arg):
-		self.arg = arg
+		self._arg_ = arg
+
+	def set_dict(self, _headers, required_keys):
+		self._headers = _headers
+		#do required key checks
+
+	def __getattr__(self, key):
+		return self._headers.get(key, default=None)
+
+class Body(object):
+	#cls level
+	_schema = None
+	#instance level
+	_arg_ = None
+	_request = None
+	
+	def __init__(self, arg):
+		self._arg_ = arg
+
+	def set_dict(self, _request, required_keys):
+		self._request = _request
+		#do required key checks
+
+	def __getattr__(self, key):
+		return self._request.POST(key, default=None)
 
 
 _OBJ_END_ = object()
@@ -350,25 +391,33 @@ class Request:
 	def set_type_hook(cls, _type, hook):
 		cls.__argument_creator_hooks[_type] = hook
 
-	def make_arg(self, _type, arg=None):
+	def make_arg(self, name, _type, default):
+		if(not _type):
+			return default
 		if(_type == Request):
 			return self
 		elif(_type == Query):
 			return self._get
 		elif(issubclass(_type, Query)):
-			if(_type.arg):
-				return self._get.get(_type.arg)
-			else:
-				#use pydantic to construct the object using get request params
-				pass
+			#use pydantic to construct the object using get request params
+			#get all attributes, check non optional ones
+			return _type(**self._get)
+		elif(isinstance(_type, Query)):
+			return self._get.get(_type._arg_)
+
 		elif(_type == Headers):
 			return self._headers
-
 		elif(issubclass(_type, Headers)):
-			if(_type.arg):
-				return self._get.get(_type.arg)
 			return self._headers
+		elif(isinstance(_type, Headers)):
+			return self._headers.get(_type._arg_)
 		else:
+			has_arg_creator_hook = Request.__argument_creator_hooks.get(_type)
+			if(has_arg_creator_hook):
+				ret = has_arg_creator_hook(self)
+				if(not ret and default != Optional):
+					raise Exception("argument was not optional")
+				return ret
 			#use pydantic to construct the object using _post request params
 			pass
 
@@ -413,13 +462,9 @@ class App:
 				_path_regex = re.sub(r'\{:(\w+)\}', '(?P<\g<1>>[^/]*)', _path_regex)
 				_path_regex = re.sub(r'\{:\+(\w+)\}', '(?P<\g<1>>[^/]+)', _path_regex)
 
-			args_spec = inspect.getargspec(func)
-			args = args_spec.args
-			default_values = args_spec.defaults
-			annotations = args_spec.annotations
 
 			#arguments order
-			#all untyped arguments are ignores should possiblly come from regex groups
+			#all untyped arguments are ignored should possiblly come from regex groups
 			#typed args should be constructed, some may be constructed by hooks
 			#named arguments not typed as passed on as with defaults
 
@@ -504,6 +549,28 @@ class App:
 
 			for method in handler["methods"]:
 				existing_regex_method_handlers[method.upper()] = handler
+
+			#infer arguments from the typing
+			func = handler["func"]
+			original_func = getattr(func, "_original", func)
+			func_signature = inspect.signature(original_func)
+			args_spec = func_signature.parameters
+
+			args = [] # typed or untyped
+			kwargs = []
+			for arg_name, _def in args_spec.items():
+				_type = _def.annotation if _def.annotation != inspect._empty else None
+				if(_def.default == inspect._empty):
+					if(not _type):
+						continue
+					args.append((arg_name, _type, None))
+				else:
+					#named arg
+					kwargs.append((arg_name, _type, _def.default))
+
+			handler["args"] = args
+			handler["kwargs"] = kwargs
+			handler["return"] = func_signature.return_annotation
 		
 		#sort ascending because we iterated in reverse earlier
 		self.request_handlers.reverse()
@@ -656,12 +723,20 @@ class App:
 			#process cookies end
 			request_params.parse_request_body(post_data, headers)
 
-			_path_named_params = request_path_match.groupdict()
-			#Note: cannot contain both names and unnamed
-			if(_path_named_params):
-				response_from_handler = func(request_params, **_path_named_params)
-			else:
-				response_from_handler = func(*request_path_match.groups(), request_params)
+			handler_kwargs = dict(request_path_match.groupdict())
+			handler_args = list(request_path_match.groups())
+			#update the get params also
+
+			if(handler_kwargs):
+				request_params._get.update(handler_kwargs)
+
+			for name, _type, _default in handler["args"]:
+				handler_args.append(request_params.make_arg(name, _type, _default))
+
+			for name, _type, _default in handler["kwargs"]:
+				handler_kwargs[name] = request_params.make_arg(name, _type, _default)
+
+			response_from_handler = func(*handler_args, **handler_kwargs)
 
 			#check and respond to keep alive
 			resuse_socket_for_next_http_request = headers.get('Connection', "").lower() == "keep-alive"
@@ -845,3 +920,54 @@ def redirect_http_to_https():
 
 def is_server_running():
 	return _is_server_running
+
+
+#### additional utils
+
+
+# File handler for blaster server
+def static_file_handler(_base_folder_path_, default_file_path="index.html", file_not_found_page_cb=None):
+	cached_file_data = {}
+	gevent_lock = Lock()
+
+	def file_handler(path, request_params: Request):
+		if(not path):
+			path = default_file_path
+		#from given base_path
+		path = _base_folder_path_ + str(path)
+		file_data = cached_file_data.get(path, None)
+		resp_headers = None
+
+		if(not file_data or time.time() * 1000 - file_data[2] > 1000 if IS_DEV else 2 * 60 * 1000): # 1 millis
+			gevent_lock.acquire()
+			file_hash_key = path + urlencode(request_params._get)[:400]
+			file_data = cached_file_data.get(file_hash_key, None)
+			if(not file_data or time.time() * 1000 - file_data[2] > 1000): # 1 millis
+				#put a lock here
+				try:
+					data = open(path, "rb").read()
+					mime_type_headers = get_mime_type_from_filename(path)
+					if(mime_type_headers):
+						resp_headers = {
+											'Content-Type': mime_type_headers.mime_type,
+											'Cache-Control': 'max-age=31536000'
+									}
+					
+					file_data = (data, resp_headers, time.time() * 1000)
+					cached_file_data[file_hash_key] = file_data
+				except Exception as ex:
+					if(file_not_found_page_cb):
+						file_data = (
+										file_not_found_page_cb(path, request_params=None, headers=None, post_data=None),
+										None,
+										time.time() * 1000
+									)
+					else:
+						file_data = ("--NO-FILE--", None, time.time() * 1000)
+					
+			gevent_lock.release()
+					
+		data, resp_headers, last_updated = file_data
+		return resp_headers, data
+	
+	return file_handler
