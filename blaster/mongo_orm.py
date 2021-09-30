@@ -1,5 +1,4 @@
 import heapq
-import gevent
 import types
 import json
 import pymongo
@@ -13,6 +12,7 @@ from pymongo import ReturnDocument, ReadPreference
 from .common_funcs_and_datastructures import jump_hash, ExpiringCache,\
 	cur_ms, list_diff2, batched_iter, get_by_key_list
 from .config import DEBUG_LEVEL as BLASTER_DEBUG_LEVEL, IS_DEV
+from gevent.threading import Thread
 
 _VERSION_ = 100
 MONGO_DEBUG_LEVEL = BLASTER_DEBUG_LEVEL
@@ -741,75 +741,8 @@ class Model(object):
 				kwargs["limit"] = limit
 			return _collection.count_documents(_query, **kwargs)
 
-		def query_collection(_Model, _collection, _query, offset=None):
-
-			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print(
-				"#MONGO: querying", _Model, _collection, _query, sort, offset, limit
-			)
-
-			ret = _collection.find(_query, **kwargs)
-			if(sort): # from global arg
-				ret = ret.sort(sort)
-			if(offset): # from global arg
-				ret = ret.skip(offset)
-			if(limit):
-				ret = ret.limit(limit)
 
 
-			# we queried from the secondary shard, will not have all fields
-			if(_Model._is_secondary_shard):
-				# do a requery to fetch full document
-				#TODO: make it batch wise fetch
-				def batched_requery_iter(ret, n=200):
-					for docs in batched_iter(ret, n):
-						#use this to put them in the same order after or query
-						_ids_order = [_doc["_id"] for _doc in docs]
-
-						if(cls._shard_key_ != "_id"):
-							_query = {
-								"$or": [
-									{cls._shard_key_: _doc[cls._shard_key_], "_id": _doc["_id"]} for _doc in docs
-								]
-							}
-						else:
-							_query = {"$or": [{"_id": _doc["_id"]} for _doc in docs]}
-
-						IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: requerying", cls, _query)
-						_requeried_from_primary = {_doc._id: _doc for _doc in cls.query(_query)}
-						for _id in _ids_order:
-							item = _requeried_from_primary.get(_id)
-							if(not item):
-								IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: WARNING: missing from primary", _id)
-								continue
-							yield item
-				ret = batched_requery_iter(ret)
-			else:
-				ret = map(cls.get_instance_from_document, ret)
-
-			return ret, lambda: count_documents(_collection, _query, offset, limit)
-
-		threads = []
-		for _collection_shard_id, shard_and_queries in collections_to_query.items():
-			_collection_shard, _queries, _Model = shard_and_queries
-			new_query = None
-			if(len(_queries) == 1):
-				new_query = _queries[0]
-			else:
-				new_query = {"$or": _queries}
-
-			if(offset and len(collections_to_query) > 1):
-				offset = None
-				print("Warning: Cannot use offset when query spans multiple collections shards, improve your query")
-
-			thread = gevent.spawn(
-				query_collection,
-				_Model,
-				_collection_shard,
-				new_query,
-				offset=offset
-			)
-			threads.append(thread)
-							
 		class SortKey(object):
 			def __init__(self, obj):
 				self.obj = obj
@@ -883,11 +816,81 @@ class Model(object):
 				return _ret
 
 
-		#waint on threads and return cursors
 		multi_collection_query_result = MultiCollectionQueryResult()
 
-		for thread in gevent.joinall(threads):
-			multi_collection_query_result.add(thread.value[0], thread.value[1])
+		def query_collection(_Model, _collection, _query, offset=None):
+
+			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print(
+				"#MONGO: querying", _Model, _collection, _query, sort, offset, limit
+			)
+
+			ret = _collection.find(_query, **kwargs)
+			if(sort): # from global arg
+				ret = ret.sort(sort)
+			if(offset): # from global arg
+				ret = ret.skip(offset)
+			if(limit):
+				ret = ret.limit(limit)
+
+
+			# we queried from the secondary shard, will not have all fields
+			if(_Model._is_secondary_shard):
+				# do a requery to fetch full document
+				#TODO: make it batch wise fetch
+				def batched_requery_iter(ret, n=200):
+					for docs in batched_iter(ret, n):
+						#use this to put them in the same order after or query
+						_ids_order = [_doc["_id"] for _doc in docs]
+
+						if(cls._shard_key_ != "_id"):
+							_query = {
+								"$or": [
+									{cls._shard_key_: _doc[cls._shard_key_], "_id": _doc["_id"]} for _doc in docs
+								]
+							}
+						else:
+							_query = {"$or": [{"_id": _doc["_id"]} for _doc in docs]}
+
+						IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: requerying", cls, _query)
+						_requeried_from_primary = {_doc._id: _doc for _doc in cls.query(_query)}
+						for _id in _ids_order:
+							item = _requeried_from_primary.get(_id)
+							if(not item):
+								IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: WARNING: missing from primary", _id)
+								continue
+							yield item
+				ret = batched_requery_iter(ret)
+			else:
+				ret = map(cls.get_instance_from_document, ret)
+
+			multi_collection_query_result.add(ret, lambda: count_documents(_collection, _query, offset, limit))
+
+		threads = []
+		for _collection_shard_id, shard_and_queries in collections_to_query.items():
+			_collection_shard, _queries, _Model = shard_and_queries
+			new_query = None
+			if(len(_queries) == 1):
+				new_query = _queries[0]
+			else:
+				new_query = {"$or": _queries}
+
+			if(offset and len(collections_to_query) > 1):
+				offset = None
+				print("Warning: Cannot use offset when query spans multiple collections shards, improve your query")
+
+			thread = Thread(
+				target=query_collection,
+				args=(_Model, _collection_shard, new_query),
+				kwargs={"offset": offset}
+			)
+			thread.start()
+			threads.append(thread)
+							
+
+
+		#wait on sub queries to finish
+		for thread in threads:
+			thread.join()
 
 		return multi_collection_query_result
 
@@ -1060,7 +1063,7 @@ class CollectionTracker(Model):
 
 
 #tags shard keys to the attributes and use it when intializing the model
-def SHARD_BY(primary=None, secondary=None, Model=None):
+def SHARD_BY(primary=None, secondary=None):
 	if(primary and isinstance(primary, Attribute)):
 		primary.is_primary_shard_key = True
 	if(secondary):

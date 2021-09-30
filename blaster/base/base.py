@@ -23,21 +23,16 @@ from urllib.parse import urlencode
 
 from gevent.threading import Lock
 from gevent.server import StreamServer
-from gevent.pywsgi import WSGIServer
 from requests_toolbelt.multipart import decoder
 
 from .. import config as blaster_config
 from ..config import IS_DEV, DEBUG_LEVEL
-from ..common_funcs_and_datastructures import SanitizedDict, get_mime_type_from_filename
+from ..common_funcs_and_datastructures import SanitizedDict, get_mime_type_from_filename, DummyObject
 from ..utils import events
 from ..logging import LOG_ERROR, LOG_SERVER
+from ..schema import Object, schema as schema_func
+
 _is_server_running = True
-
-
-default_wsgi_headers = [
-	('Content-Type', 'text/html; charset=utf-8')
-]
-
 default_stream_headers = {
 	'Content-Type': 'text/html; charset=utf-8',
 	'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
@@ -48,12 +43,13 @@ default_stream_headers = {
 	'X-XSS-Protection': '0'
 }
 
-I_AM_HANDLING_THE_SOCKET = object()
+I_AM_HANDLING_THE_SOCKET = object() # handler takes care of status line, headers and body
 I_AM_HANDLING_THE_BODY = object()
 I_AM_HANDLING_THE_HEADERS = object()
 I_AM_HANDLING_THE_STATUS = object()
 
 REUSE_SOCKET_FOR_HTTP = object()
+_OBJ_END_ = object()
 
 ########some random constants
 HTTP_MAX_REQUEST_BODY_SIZE = 1 * 1024 * 1024 # 1 mb
@@ -211,59 +207,31 @@ class HeadersDict(dict):
 		return header_value
 
 
+class Query(Object):
+	def __init__(self, **kwargs):
+		super().__init__(**kwargs)
 
-class Query(object):
-	#cls level
-	_schema = None
-	#instance level
-	arg = None
-	_query = None
+class Headers(Object):
+	def __init__(self, **kwargs):
+		super().__init__(**kwargs)
 
-	def __init__(self, arg):
-		self.arg = arg
+class Cookie(Object):
+	def __init__(self, **kwargs):
+		super().__init__(**kwargs)
 
-	def set_dict(self, _query, required_keys):
-		self._query = _query
+class Body(Object):
+	def __init__(self, **kwargs):
+		super().__init__(**kwargs)
 
-	def __getattr__(self, key):
-		return self._query.get(key, default=None)
-
-
-class Headers(object):
-	#instance level
-	_arg_ = None
-	_headers = None
-
-	def __init__(self, arg):
-		self._arg_ = arg
-
-	def set_dict(self, _headers, required_keys):
-		self._headers = _headers
-		#do required key checks
-
-	def __getattr__(self, key):
-		return self._headers.get(key, default=None)
-
-class Body(object):
-	#cls level
-	_schema = None
-	#instance level
-	_arg_ = None
-	_request = None
-	
-	def __init__(self, arg):
-		self._arg_ = arg
-
-	def set_dict(self, _request, required_keys):
-		self._request = _request
-		#do required key checks
-
-	def __getattr__(self, key):
-		return self._request.POST(key, default=None)
-
-
-_OBJ_END_ = object()
+#Array(str), Array((int, str), default=None), Array(Object), Array(Pet)
+#Object(id=int, name=str ), class Pet: id = int, name = str, friend = Pet
 class Request:
+	#class level
+	before = ()
+	after = ()
+	__argument_creator_hooks = {}
+
+	#instance level
 	sock = None
 	_post = None
 	_get = None
@@ -384,43 +352,67 @@ class Request:
 
 		return self
 
-	#type: hook function to call to create that arugmnet
-	__argument_creator_hooks = {}
+	#{type: hook...} function to call to create that argument
 
 	@classmethod
-	def set_type_hook(cls, _type, hook):
+	def set_arg_hook(cls, _type, hook):
 		cls.__argument_creator_hooks[_type] = hook
 
+	#create the value of the argument based on type, default
 	def make_arg(self, name, _type, default):
 		if(not _type):
 			return self.get(name, default)
-		if(_type == Request):
+		if(_type == Request):  # request_params: Request
 			return self
-		elif(_type == Query):
+		elif(_type == Query):  # query: Query
 			return self._get
-		elif(issubclass(_type, Query)):
-			#use pydantic to construct the object using get request params
-			#get all attributes, check non optional ones
-			return _type(**self._get)
-		elif(isinstance(_type, Query)):
-			return self._get.get(_type._arg_)
-
-		elif(_type == Headers):
+		elif(_type == Headers):# headers: Headers
 			return self._headers
-		elif(issubclass(_type, Headers)):
-			return self._headers
-		elif(isinstance(_type, Headers)):
-			return self._headers.get(_type._arg_)
-		else:
-			has_arg_creator_hook = Request.__argument_creator_hooks.get(_type)
-			if(has_arg_creator_hook):
-				ret = has_arg_creator_hook(self)
-				if(not ret and default != Optional):
-					raise Exception("argument was not optional")
-				return ret
-			#use pydantic to construct the object using _post request params
-			pass
+		elif(_type == Body):# headers: Headers
+			return self._post
 
+		elif(isinstance(_type, Query)): # Query('a')
+			if(not _type._validations):
+				return self._get
+			ret = {}
+			for k, attr_validation in _type._validations.items():
+				ret[k] = attr_validation(self._get.get(k, escape_quotes=False))
+			return DummyObject(ret)
+
+		elif(isinstance(_type, Headers)): # Headers('user-agent')
+			if(not _type._validations):
+				return self._get
+			ret = {}
+			for k, attr_validation in _type._validations.items():
+				ret.k = attr_validation(self._headers.get(k))
+			return DummyObject(ret)
+
+		elif(isinstance(_type, Body)): # Headers('user-agent')
+			if(not _type._post):
+				return None
+			ret = {}
+			for k, attr_validation in _type._validations.items():
+				ret.k = attr_validation(self._post.get(k, escape_quotes=False))
+			return DummyObject(ret)
+
+		#type should be class at this point
+		has_arg_creator_hook = Request.__argument_creator_hooks.get(_type) # if has an arg injector, use it
+		if(has_arg_creator_hook):
+			return has_arg_creator_hook(self)
+
+		elif(issubclass(_type, Query)): # :LoginRequestQuery
+			ret = _type()
+			for k, v in _type.__dict__.items():
+				setattr(ret, k, self._get.get(k))
+			return _type.validate(ret)
+
+		elif(issubclass(_type, Body) and self._post):
+			ret = _type()
+			for k, v in _type.__dict__.items():
+				setattr(ret, k, self._post.get(k))
+			return _type.validate(ret)
+
+		return default
 
 	def to_dict(self):
 		return {"get": self._get, "post": self._post}
@@ -437,8 +429,8 @@ class App:
 	name = None
 	stream_server = None
 
-	def __init__(self, name=None):
-		self.name = name
+	def __init__(self, **kwargs):
+		self.info = {k: v for k, v in kwargs.items() if k in {"title", "description", "version"}}
 		self.route_handlers = []
 		self.request_handlers = []
 
@@ -446,9 +438,11 @@ class App:
 		self,
 		regex,
 		methods=None,
-		name='',
+		title='',
 		description='',
-		max_body_size=None
+		max_body_size=None,
+		before=None,
+		after=None
 	):
 		methods = methods or ("GET", "POST")
 		if(isinstance(methods, str)):
@@ -456,9 +450,13 @@ class App:
 
 		def wrapper(func):
 			_path_regex = regex
+			_path_params = {}
 			if(isinstance(_path_regex, str)):
 				#special case where path params can be {:varname} {:+varname}
 				#replacing regex with regex haha!
+				_path_params.update({x: False for x in re.findall(r'\{:(\w+)\}', _path_regex)}) # optional
+				_path_params.update({x: True for x in re.findall(r'\{:\+(\w+)\}', _path_regex)}) # required
+
 				_path_regex = re.sub(r'\{:(\w+)\}', '(?P<\g<1>>[^/]*)', _path_regex)
 				_path_regex = re.sub(r'\{:\+(\w+)\}', '(?P<\g<1>>[^/]+)', _path_regex)
 
@@ -472,9 +470,12 @@ class App:
 				"regex": _path_regex,
 				"func": func,
 				"methods": methods,
-				"name": name,
+				"title": title,
 				"description": description,
-				"max_body_size": max_body_size
+				"max_body_size": max_body_size,
+				"after": (after,) if callable(after) else after,
+				"before": (before,) if callable(before) else before,
+				"path_params": _path_params
 			})
 			#return func as if nothing's decorated! (so you can call function as is)
 			return func
@@ -482,45 +483,7 @@ class App:
 		return wrapper
 
 
-	def handle_wsgi(self, environ, start_response):
-		ret = None
-		for regex, method_handler in self.request_handlers:
-			args = regex.match(environ['PATH_INFO'])
-			func = method_handler.get(environ["REQUEST_METHOD"].upper())
-			if(args != None and func):
-				kwargs = {}
-				kwargs["request_params"] = urllib.parse.parse_qs(environ['QUERY_STRING'])
-
-				fargs = args.groupdict()
-				if(fargs):
-					kwargs.update(fargs)
-				ret = func(None, **kwargs)
-				
-				break
-			
-		status = response_headers = body = None
-		if(ret != None):
-			if(isinstance(ret, tuple)):
-				l = len(ret)
-				if(l > 0):
-					body = ret[-1]
-				if(l > 1):
-					response_headers = ret[-2]
-				if(l > 2):
-					status = ret[-3]
-			else:
-				body = ret
-			
-			response_headers = response_headers or default_wsgi_headers
-			status = status or "200 OK"
-			start_response(status, response_headers)
-			if(isinstance(body, list)):
-				return body
-			return [body]
-		#close socket
-
-
-	def start(self, port=80, handlers=[], use_wsgi=False, **ssl_args):
+	def start(self, port=80, handlers=[], **ssl_args):
 		self.route_handlers.sort(key=functools.cmp_to_key(lambda x, y: len(y["regex"]) - len(x["regex"]))) # reverse sort by length
 		
 		handlers_with_methods = []
@@ -538,6 +501,9 @@ class App:
 		#add them to all route handlers
 		self.route_handlers.extend(handlers_with_methods)
 
+		#create all schemas
+		schema_func.init()
+		self.openapi = {"components": {"schemas": dict(schema_func.defs)}, "paths": {}}
 		regexes_map = {}
 		#build {regex: {GET: handler,...}...}
 		for handler in reversed(self.route_handlers):
@@ -545,6 +511,13 @@ class App:
 			existing_regex_method_handlers = regexes_map.get(regex)
 			if(not existing_regex_method_handlers):
 				regexes_map[regex] = existing_regex_method_handlers = {}
+
+				#check for full path matches, if the given regex doesn't match or end
+				if(not regex.startswith("^")):
+					regex = "^" + regex
+				if(not regex.endswith("$")):
+					regex = regex + "$"
+
 				self.request_handlers.append((re.compile(regex), existing_regex_method_handlers))
 
 			for method in handler["methods"]:
@@ -570,31 +543,131 @@ class App:
 
 			handler["args"] = args
 			handler["kwargs"] = kwargs
-			handler["return"] = func_signature.return_annotation
+			if(func_signature.return_annotation != inspect._empty):
+				handler["return"] = func_signature.return_annotation
+
+			#openapi docs
+			self.generate_openapi_doc(handler)
 		
 		#sort ascending because we iterated in reverse earlier
 		self.request_handlers.reverse()
 		if(IS_DEV):
-			for regex, method_handlers in self.request_handlers:
-				print(regex.pattern, {method: handler["func"] for method, handler in method_handlers.items()})
+			self.request_handlers.insert(
+				len(self.request_handlers) - 1,
+				(
+					re.compile(r"^\/openapi\.json$"),
+					{
+						"GET": {
+							"func": lambda: (["Content-type: application/json"], json.dumps(self.openapi)),
+							"args": [],
+							"kwargs": []
+						}
+					}
+				)
+			)
 
-		if(use_wsgi):
-			self.stream_server = WSGIServer(('', port), self.handle_wsgi).serve_forever()
-		else:
-			class CustomStreamServer(StreamServer):
-				def do_close(self, *args):
-					return
+		class CustomStreamServer(StreamServer):
+			def do_close(self, *args):
+				return
 
-				#lets handle closing ourself
-				def wrap_socket_and_handle(self, client_socket, address):
-					# used in case of ssl sockets
-					return self.handle(self.wrap_socket(client_socket, **self.ssl_args), address)
+			#lets handle closing ourself
+			def wrap_socket_and_handle(self, client_socket, address):
+				# used in case of ssl sockets
+				return self.handle(self.wrap_socket(client_socket, **self.ssl_args), address)
 
-			LOG_SERVER("server_start", port=port)
-			self.stream_server = CustomStreamServer(('', port), handle=self.handle_connection, **ssl_args)
-			#keep a track
+		LOG_SERVER("server_start", port=port)
+		self.stream_server = CustomStreamServer(('', port), handle=self.handle_connection, **ssl_args)
+		#keep a track
+
 		_all_apps.add(self)
 
+	def generate_openapi_doc(self, handler):
+		regex_path = handler["regex"]
+		regex_path = regex_path.replace("\\.", ".")
+		self.openapi["paths"][regex_path] = _api = {}
+		func = handler["func"]
+		args = handler["args"]
+		kwargs = handler["kwargs"]
+		return_type = handler.get("return", None)
+
+		for method in handler["methods"]:
+			_parameters = []
+			_body_classes = []
+			_api[method.lower()] = _method_def = {
+				"summary": handler.get("title", ""),
+				"description": handler.get("description", "")
+			}
+			#add header, query, cookie params
+			for arg in (args + kwargs):
+				_type = arg[1]
+				if(_type and isinstance(_type, type)):
+					if(issubclass(_type, Query)):
+						for _key, _schema in _type._schema_["properties"].items():
+							_parameters.append({
+								"required": _key in _type._required,
+								"in": "query",
+								"name": _key,
+								"schema": _schema
+							})
+
+					if(issubclass(_type, Body)):
+						_body_classes.append(_type)
+
+				if(isinstance(_type, (Headers, Query, Cookie))):
+					_in = "header" if isinstance(_type, Headers) else ("query" if isinstance(_type, Query) else "cookie")
+					for _k, _s in _type._properties.items():
+						_parameters.append({
+							"in": _in,
+							"required": _k in _type._required,
+							"name": _k,
+							"schema": _s
+						})
+
+
+			#add path params
+			for _name, _required in handler.get("path_params", {}).items():
+				_parameters.append({
+					"in": "path",
+					"required": _required,
+					"name": _name,
+					"schema": {"type": "string"}
+				})
+
+			if(_parameters):
+				_method_def["parameters"] = _parameters
+
+			if(_body_classes):
+				_schema_name = ""
+				if(len(_body_classes) == 1):
+					_schema_name = getattr(func, "_original", func).__name__
+				elif(len(_body_classes) > 1):
+					#merge multiple body classes
+					_schema_name = "And".join(sorted([getattr(func, "_original", func).__name__ for x in _body_classes]))
+					_properties = {}
+					for _key, _schema in _type._schema_["properties"].items():
+						_properties[_key] = _schema
+
+					#add schemas
+					self.openapi["components"]["schemas"][_schema_name] = {"type": "object", "properties": _properties}
+
+				_method_def["requestBody"] = {
+					"content": {
+						"application/json": {"schema": {"$ref": "#/components/schemas/" + _schema_name}},
+						"application/x-www-form-urlencoded": {"schema": {"$ref": "#/components/schemas/" + _schema_name}}
+					},
+					"required": True
+				}
+
+			_method_def["responses"] = _reponse = {"200": "OK"}
+
+			if(return_type):
+				_reponse["content"] = {
+					"application/*": {
+						"schema": {
+							"$ref": "#/components/schemas/" + getattr(func, "_original", func).__name__
+						}
+					}
+				}
 
 	def serve(self):
 		self.stream_server.serve_forever()
@@ -737,14 +810,28 @@ class App:
 			for name, _type, _default in handler["kwargs"]:
 				handler_kwargs[name] = request_params.make_arg(name, _type, _default)
 
-			response_from_handler = func(*handler_args, **handler_kwargs)
+			before_handling_hooks = handler.get("before") or Request.before
+			after_handling_hooks = handler.get("after") or Request.after
 
-			#check and respond to keep alive
-			resuse_socket_for_next_http_request = headers.get('Connection', "").lower() == "keep-alive"
+			response_from_handler = None
+			for before_handling_hook in before_handling_hooks: # pre processing
+				response_from_handler = before_handling_hook(request_params)
+				if(response_from_handler):
+					break
 			
-			##app specific headers
-			#handle various return values from handler functions
-			status, response_headers, body = App.response_body_to_parts(response_from_handler)
+			if(not response_from_handler):
+				#if before handlers return already something
+				response_from_handler = func(*handler_args, **handler_kwargs)
+				
+				for after_handling_hook in after_handling_hooks: # post processing
+					response_from_handler = after_handling_hook(request_params, response_from_handler)
+
+				#check and respond to keep alive
+				resuse_socket_for_next_http_request = headers.get('Connection', "").lower() == "keep-alive"
+				
+				##app specific headers
+				#handle various return values from handler functions
+				status, response_headers, body = App.response_body_to_parts(response_from_handler)
 
 			if(body == I_AM_HANDLING_THE_SOCKET):
 				body = I_AM_HANDLING_THE_BODY

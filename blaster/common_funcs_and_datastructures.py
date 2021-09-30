@@ -597,7 +597,9 @@ class DummyObject:
 
 	def __init__(self, entries=None, **kwargs):
 		self.entries = entries or {}
-		self.entries.update(kwargs)
+		if(kwargs):
+			self.entries = _entries = dict(entries)
+			_entries.update(kwargs)
 
 	def __setattr__(self, key, val):
 		if(self.entries):
@@ -1277,5 +1279,3 @@ def call_after_func(func):
 			
 		new_func._original = getattr(func, "_original", func)
 		return new_func
-
-
