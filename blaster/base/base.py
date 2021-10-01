@@ -18,7 +18,6 @@ import gevent
 import functools
 import traceback
 import inspect
-from typing import Optional
 from urllib.parse import urlencode
 
 from gevent.threading import Lock
@@ -26,7 +25,7 @@ from gevent.server import StreamServer
 from requests_toolbelt.multipart import decoder
 
 from .. import config as blaster_config
-from ..config import IS_DEV, DEBUG_LEVEL
+from ..config import IS_DEV
 from ..common_funcs_and_datastructures import SanitizedDict, get_mime_type_from_filename, DummyObject
 from ..utils import events
 from ..logging import LOG_ERROR, LOG_SERVER
@@ -44,9 +43,7 @@ default_stream_headers = {
 }
 
 I_AM_HANDLING_THE_SOCKET = object() # handler takes care of status line, headers and body
-I_AM_HANDLING_THE_BODY = object()
-I_AM_HANDLING_THE_HEADERS = object()
-I_AM_HANDLING_THE_STATUS = object()
+
 
 REUSE_SOCKET_FOR_HTTP = object()
 _OBJ_END_ = object()
@@ -122,7 +119,8 @@ class BufferedSocket():
 		#scan the store until end, if not found extend and continue until store > max_size
 		to_scan_len = len(self.store)
 		i = 0 # how much we scanned already
-			
+		
+		_store = self.store # get a reference
 		while(True):
 			if(i > max_size):
 				self.is_eof = True
@@ -130,17 +128,17 @@ class BufferedSocket():
 			if(i >= delimiter_len):
 				j = 0
 				lookup_from = i - delimiter_len
-				while(j < delimiter_len and self.store[lookup_from + j] == delimiter[j]):
+				while(j < delimiter_len and _store[lookup_from + j] == delimiter[j]):
 					j += 1
 
 				if(j == delimiter_len):
 					#found
 					ret = None
 					if(discard_delimiter):
-						ret = self.store[:i - delimiter_len]
+						ret = _store[:i - delimiter_len]
 					else:
-						ret = self.store[:i]
-					self.store = self.store[i:] # unscanned/pending
+						ret = _store[:i]
+					self.store = _store[i:] # set store to unscanned/pending
 					return ret
 			if(i >= to_scan_len):
 				#scanned all buffer
@@ -149,8 +147,8 @@ class BufferedSocket():
 					self.is_eof = True
 					return None
 
-				self.store.extend(data) # fetch more data
-				to_scan_len = len(self.store)
+				_store.extend(data) # fetch more data
+				to_scan_len = len(_store)
 			i += 1
 
 	def __getattr__(self, key):
@@ -227,8 +225,10 @@ class Body(Object):
 #Object(id=int, name=str ), class Pet: id = int, name = str, friend = Pet
 class Request:
 	#class level
-	before = ()
-	after = ()
+	_before_hooks = []
+	_after_hooks = []
+
+	after = []
 	__argument_creator_hooks = {}
 
 	#instance level
@@ -242,10 +242,28 @@ class Request:
 	#url data, doesn't contain query string
 	path = None
 
+	@classmethod
+	def before(cls, func=None):
+		if(func and callable(func)):
+			#decorating
+			Request._before_hooks.append(func)
+			return func
+		return Request._before_hooks
+
+	@classmethod
+	def after(cls, func=None):
+		if(func and callable(func)):
+			#decorating
+			Request._after_hooks.append(func)
+			return func
+		return Request._after_hooks
+
+
 	def __init__(self, buffered_socket):
 		self._get = SanitizedDict() # empty params by default
 		self._headers = HeadersDict()
 		self.sock = buffered_socket
+		self.ctx = DummyObject()
 
 	#searches in post and get
 	def get(self, key, default=None, **kwargs):
@@ -355,11 +373,18 @@ class Request:
 	#{type: hook...} function to call to create that argument
 
 	@classmethod
-	def set_arg_hook(cls, _type, hook):
+	def set_arg_type_hook(cls, _type, hook=None):
+		if(hook == None):
+			#using as decorator  @Request.set_arg_type_hook(User)
+			def wrapper(func):
+				cls.__argument_creator_hooks[_type] = func
+				return func
+			return wrapper
+
 		cls.__argument_creator_hooks[_type] = hook
 
 	#create the value of the argument based on type, default
-	def make_arg(self, name, _type, default):
+	def make_arg(self, name, _type, default, validator):
 		if(not _type):
 			return self.get(name, default)
 		if(_type == Request):  # request_params: Request
@@ -371,7 +396,7 @@ class Request:
 		elif(_type == Body):# headers: Headers
 			return self._post
 
-		elif(isinstance(_type, Query)): # Query('a')
+		elif(isinstance(_type, Query)): # Query(id=str, abc=str)
 			if(not _type._validations):
 				return self._get
 			ret = {}
@@ -402,17 +427,18 @@ class Request:
 
 		elif(issubclass(_type, Query)): # :LoginRequestQuery
 			ret = _type()
-			for k, v in _type.__dict__.items():
-				setattr(ret, k, self._get.get(k))
-			return _type.validate(ret)
+			for k, attr_validation in _type._validations.items():
+				setattr(ret, k, self._get.get(k, escape_quotes=False))
+			return ret
 
-		elif(issubclass(_type, Body) and self._post):
+		elif(issubclass(_type, Body)):
 			ret = _type()
-			for k, v in _type.__dict__.items():
-				setattr(ret, k, self._post.get(k))
-			return _type.validate(ret)
+			for k, attr_validation in _type._validations.items():
+				setattr(ret, k, self._post.get(k, escape_quotes=False))
+			return ret
 
-		return default
+		ret = self.get(name)
+		return validator(ret) if validator else ret # get or post
 
 	def to_dict(self):
 		return {"get": self._get, "post": self._post}
@@ -430,7 +456,7 @@ class App:
 	stream_server = None
 
 	def __init__(self, **kwargs):
-		self.info = {k: v for k, v in kwargs.items() if k in {"title", "description", "version"}}
+		self.info = {k: kwargs.get(k, "-") for k in {"title", "description", "version"}}
 		self.route_handlers = []
 		self.request_handlers = []
 
@@ -449,33 +475,20 @@ class App:
 			methods = (methods,)
 
 		def wrapper(func):
-			_path_regex = regex
-			_path_params = {}
-			if(isinstance(_path_regex, str)):
-				#special case where path params can be {:varname} {:+varname}
-				#replacing regex with regex haha!
-				_path_params.update({x: False for x in re.findall(r'\{:(\w+)\}', _path_regex)}) # optional
-				_path_params.update({x: True for x in re.findall(r'\{:\+(\w+)\}', _path_regex)}) # required
-
-				_path_regex = re.sub(r'\{:(\w+)\}', '(?P<\g<1>>[^/]*)', _path_regex)
-				_path_regex = re.sub(r'\{:\+(\w+)\}', '(?P<\g<1>>[^/]+)', _path_regex)
-
-
 			#arguments order
 			#all untyped arguments are ignored should possiblly come from regex groups
 			#typed args should be constructed, some may be constructed by hooks
 			#named arguments not typed as passed on as with defaults
 
 			self.route_handlers.append({
-				"regex": _path_regex,
+				"regex": regex,
 				"func": func,
 				"methods": methods,
 				"title": title,
 				"description": description,
 				"max_body_size": max_body_size,
-				"after": (after,) if callable(after) else after,
-				"before": (before,) if callable(before) else before,
-				"path_params": _path_params
+				"after": [after] if callable(after) else list(after or []),
+				"before": [before] if callable(before) else list(before or [])
 			})
 			#return func as if nothing's decorated! (so you can call function as is)
 			return func
@@ -484,8 +497,10 @@ class App:
 
 
 	def start(self, port=80, handlers=[], **ssl_args):
+		#sort descending order of the path lengths
 		self.route_handlers.sort(key=functools.cmp_to_key(lambda x, y: len(y["regex"]) - len(x["regex"]))) # reverse sort by length
 		
+		#all additional handlers go the bottom of the current list
 		handlers_with_methods = []
 		for handler in handlers:
 			if(isinstance(handler, (list, tuple))):
@@ -498,16 +513,41 @@ class App:
 				handlers_with_methods.append(_handler)
 
 
-		#add them to all route handlers
+		#add a openapi.json route handler
+		self.openapi = {"components": {"schemas": dict(schema_func.defs)}, "paths": {}, "openapi": "3.0.1", "info": self.info}
+		if(IS_DEV):
+			self.route_handlers.append({
+				"regex": "/openapi\.json",
+				"methods": ("GET", ),
+				"func": lambda: (["Content-type: application/json"], json.dumps(self.openapi))
+			})
+
+		#add additional handlers specified at start
 		self.route_handlers.extend(handlers_with_methods)
 
 		#create all schemas
 		schema_func.init()
-		self.openapi = {"components": {"schemas": dict(schema_func.defs)}, "paths": {}}
-		regexes_map = {}
-		#build {regex: {GET: handler,...}...}
+
+		regexes_map = {} # cache/update/overwrite
+
+		#iterate smaller path to larger to fill the request_handlers map
+		#build request_handlers map => {regex: {GET: handler,...}...}
 		for handler in reversed(self.route_handlers):
 			regex = handler["regex"]
+
+			#check and identify path params if any from regex
+			handler["path_params"] = _path_params = {}
+			if(isinstance(regex, str)):
+				#special case where path params can be {:varname} {:+varname}
+				#replacing regex with regex haha!
+				_path_params.update({x: False for x in re.findall(r'\{([a-zA-Z_][a-zA-Z0-9_]*)\}', regex)}) # optional
+				_path_params.update({x: True for x in re.findall(r'\{\+([a-zA-Z_][a-zA-Z0-9_]*)\}', regex)}) # required
+				_path_params.update({x: True for x in re.findall(r'\{\*([a-zA-Z_][a-zA-Z0-9_]*)\}', regex)}) # required
+
+				regex = re.sub(r'\{([a-zA-Z_][a-zA-Z0-9_]*)\}', '(?P<\g<1>>[^/]*)', regex)
+				regex = re.sub(r'\{\+([a-zA-Z_][a-zA-Z0-9_]*)\}', '(?P<\g<1>>[^/]+)', regex)
+				regex = re.sub(r'\{\*([a-zA-Z_][a-zA-Z0-9_]*)\}', '(?P<\g<1>>.+)', regex)
+
 			existing_regex_method_handlers = regexes_map.get(regex)
 			if(not existing_regex_method_handlers):
 				regexes_map[regex] = existing_regex_method_handlers = {}
@@ -531,40 +571,40 @@ class App:
 
 			args = [] # typed or untyped
 			kwargs = []
+			_arg_already_exists = set()
 			for arg_name, _def in args_spec.items():
+				
+				if(arg_name in _arg_already_exists):
+					continue
+				_arg_already_exists.add(arg_name)
+
 				_type = _def.annotation if _def.annotation != inspect._empty else None
 				if(_def.default == inspect._empty):
 					if(not _type):
-						continue
-					args.append((arg_name, _type, None))
+						if(arg_name not in _path_params): # check if it's a path param
+							continue
+						else:
+							_type = str # default type for path params
+					#name, type, default, validator
+					args.append((arg_name, _type, None, schema_func(_type)[1]))
 				else:
-					#named arg
-					kwargs.append((arg_name, _type, _def.default))
+					#name, type, default, validator
+					kwargs.append((arg_name, _type, _def.default, schema_func(_type)[1]))
 
 			handler["args"] = args
 			handler["kwargs"] = kwargs
 			if(func_signature.return_annotation != inspect._empty):
 				handler["return"] = func_signature.return_annotation
 
+			#fix before and after functions at start, cannot be modified later
+			handler["before"] = tuple(handler.get("before", []) + Request._before_hooks)
+			handler["after"] = tuple(handler.get("after", []) + Request._after_hooks)
+
 			#openapi docs
 			self.generate_openapi_doc(handler)
 		
 		#sort ascending because we iterated in reverse earlier
 		self.request_handlers.reverse()
-		if(IS_DEV):
-			self.request_handlers.insert(
-				len(self.request_handlers) - 1,
-				(
-					re.compile(r"^\/openapi\.json$"),
-					{
-						"GET": {
-							"func": lambda: (["Content-type: application/json"], json.dumps(self.openapi)),
-							"args": [],
-							"kwargs": []
-						}
-					}
-				)
-			)
 
 		class CustomStreamServer(StreamServer):
 			def do_close(self, *args):
@@ -583,7 +623,7 @@ class App:
 
 	def generate_openapi_doc(self, handler):
 		regex_path = handler["regex"]
-		regex_path = regex_path.replace("\\.", ".")
+		regex_path = regex_path.replace("\\.", ".").replace("{+", "{").replace("{*", "{") # openapi doesn't support yet
 		self.openapi["paths"][regex_path] = _api = {}
 		func = handler["func"]
 		args = handler["args"]
@@ -603,12 +643,15 @@ class App:
 				if(_type and isinstance(_type, type)):
 					if(issubclass(_type, Query)):
 						for _key, _schema in _type._schema_["properties"].items():
-							_parameters.append({
-								"required": _key in _type._required,
+							_param = {
 								"in": "query",
 								"name": _key,
 								"schema": _schema
-							})
+							}
+							if(_key in _type._required):
+								_param["required"] = True
+
+							_parameters.append(_param)
 
 					if(issubclass(_type, Body)):
 						_body_classes.append(_type)
@@ -616,22 +659,28 @@ class App:
 				if(isinstance(_type, (Headers, Query, Cookie))):
 					_in = "header" if isinstance(_type, Headers) else ("query" if isinstance(_type, Query) else "cookie")
 					for _k, _s in _type._properties.items():
-						_parameters.append({
+						_param = {
 							"in": _in,
-							"required": _k in _type._required,
 							"name": _k,
 							"schema": _s
-						})
+						}
+						if(_key in _type._required):
+							_param["required"] = True
+							
+						_parameters.append(_param)
 
 
 			#add path params
 			for _name, _required in handler.get("path_params", {}).items():
-				_parameters.append({
+				_param = {
 					"in": "path",
-					"required": _required,
 					"name": _name,
 					"schema": {"type": "string"}
-				})
+				}
+				#this is tricky,
+				_param["required"] = True
+					
+				_parameters.append(_param)
 
 			if(_parameters):
 				_method_def["parameters"] = _parameters
@@ -658,7 +707,7 @@ class App:
 					"required": True
 				}
 
-			_method_def["responses"] = _reponse = {"200": "OK"}
+			_method_def["responses"] = _reponse = {"200": {"description": "OK"}}
 
 			if(return_type):
 				_reponse["content"] = {
@@ -773,13 +822,14 @@ class App:
 
 			else: # handle chuncked encoding
 				transfer_encoding = headers.get("transfer-encoding")
-				if(transfer_encoding == "chunked"):
+				if(transfer_encoding and "chunked" in transfer_encoding):
 					post_data = bytearray()
 					chunk_size = get_chunk_size_from_header(buffered_socket.readuntil('\r\n', 512, True))# hex
 					while(chunk_size > 0 and len(post_data) + chunk_size < _max_body_size):
 						data = buffered_socket.recvn(chunk_size)
 						post_data.extend(data)
 						buffered_socket.readuntil('\r\n', 8, False) # remove the trailing \r\n
+						#next chunk size
 						chunk_size = get_chunk_size_from_header(buffered_socket.readuntil('\r\n', 512, True))# hex
 					#as bytes
 
@@ -796,22 +846,23 @@ class App:
 			#process cookies end
 			request_params.parse_request_body(post_data, headers)
 
-			handler_kwargs = dict(request_path_match.groupdict())
+			handler_args = []
+			handler_kwargs = {}
 
-			#can't use both named and unnamed at once in the arguments
-			handler_args = list(request_path_match.groups()) if not handler_kwargs else []
+			#update any path matches
+			request_params._get.update(request_path_match.groupdict())
 
-			if(handler_kwargs):
-				request_params._get.update(handler_kwargs)
+			#set a reference to handler
+			request_params.handler = handler
 
-			for name, _type, _default in handler["args"]:
-				handler_args.append(request_params.make_arg(name, _type, _default))
+			for _args in handler["args"]:
+				handler_args.append(request_params.make_arg(*_args))
 
-			for name, _type, _default in handler["kwargs"]:
-				handler_kwargs[name] = request_params.make_arg(name, _type, _default)
+			for name, *_args in handler["kwargs"]:
+				handler_kwargs[name] = request_params.make_arg(name, *_args)
 
-			before_handling_hooks = handler.get("before") or Request.before
-			after_handling_hooks = handler.get("after") or Request.after
+			before_handling_hooks = handler.get("before")
+			after_handling_hooks = handler.get("after")
 
 			response_from_handler = None
 			for before_handling_hook in before_handling_hooks: # pre processing
@@ -831,18 +882,15 @@ class App:
 				
 				##app specific headers
 				#handle various return values from handler functions
-				status, response_headers, body = App.response_body_to_parts(response_from_handler)
 
-			if(body == I_AM_HANDLING_THE_SOCKET):
-				body = I_AM_HANDLING_THE_BODY
-				status = I_AM_HANDLING_THE_STATUS
-				response_headers = I_AM_HANDLING_THE_HEADERS
+			status, response_headers, body = App.response_body_to_parts(response_from_handler)
 
-			if(status != I_AM_HANDLING_THE_STATUS):
+
+			if(status or body != I_AM_HANDLING_THE_SOCKET):
 				status = str(status) if status else '200 OK'
 				buffered_socket.send(b'HTTP/1.1 ', status, b'\r\n')
 
-			if(response_headers != I_AM_HANDLING_THE_HEADERS):
+			if(response_headers or body != I_AM_HANDLING_THE_SOCKET):
 				if(isinstance(response_headers, list)):
 					#send only the specified headers
 					for header in response_headers:
@@ -872,11 +920,13 @@ class App:
 				if(resuse_socket_for_next_http_request):
 					buffered_socket.send(b'Connection: keep-alive\r\n')
 
-			if(body == I_AM_HANDLING_THE_BODY):
-				if(response_headers != I_AM_HANDLING_THE_HEADERS):
-					buffered_socket.send(b'\r\n') # close the headers
+				if(body == I_AM_HANDLING_THE_SOCKET):
+					#close the headers
+					buffered_socket.send(b'\r\n')
+	
+			if(body == I_AM_HANDLING_THE_SOCKET):
+				return I_AM_HANDLING_THE_SOCKET
 
-				return I_AM_HANDLING_THE_BODY
 			else:
 				#just a variable to track api type responses
 				response_data = None
@@ -888,29 +938,13 @@ class App:
 				if(isinstance(body, str)):
 					body = body.encode()
 
-			#close headers and send the body data
-			if(body):
-				#finalize all the headers
-				buffered_socket.send(b'Content-Length: ', str(len(body)), b'\r\n\r\n')
-				buffered_socket.send(body)
-			else:
-				buffered_socket.send(b'\r\n')
-
-			#just some debug for apis
-			if(IS_DEV and DEBUG_LEVEL > 1 and response_data):
-				print(
-					"##API DEBUG",
-					json.dumps({
-						"PATH": request_path,
-						"REQUEST_METHOD": request_type,
-						"GET": request_params._get,
-						"REQUEST_BODY": request_params._post,
-						"REQUEST_CONTENT_TYPE": headers.get("content-type"),
-						"RESPONSE_STATUS": status,
-						"RESPONSE_HEADERS": response_headers,
-						"REPONSE_BODY": response_data
-					}, indent=4)
-				)
+				#close headers and send the body data
+				if(body):
+					#finalize all the headers
+					buffered_socket.send(b'Content-Length: ', str(len(body)), b'\r\n\r\n')
+					buffered_socket.send(body)
+				else:
+					buffered_socket.send(b'Content-Length: 0', b'\r\n\r\n')
 
 			LOG_SERVER("http", response_status=status, request_type=request_type , path=request_path, wallclockms=int(1000 * time.time()) - cur_millis)
 
@@ -958,7 +992,7 @@ class App:
 			ret = self.process_http_request(buffered_socket)
 			if(ret == REUSE_SOCKET_FOR_HTTP):
 				continue # try again
-			elif(ret == I_AM_HANDLING_THE_BODY):
+			elif(ret == I_AM_HANDLING_THE_SOCKET):
 				close_socket = False
 			break
 

@@ -777,10 +777,9 @@ def batched_iter(iterable, n=1):
 class SanitizedSetterGetter(object):
 	def __getitem__(self, k, escape_quotes=True, escape_html=True):
 		val = super().__getitem__(k)
-		if(isinstance(val, str)):
-			if(escape_html):
-				#make it html safe
-				return html.escape(val, quote=escape_quotes)
+		if(escape_html and isinstance(val, str)):
+			#make it html safe
+			return html.escape(val, quote=escape_quotes)
 		return val
 
 	def __setitem__(self, key, val):
@@ -885,20 +884,18 @@ def set_socket_options(sock):
 	l_onoff = 1
 	l_linger = 10 # seconds,
 	sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
-				struct.pack('ii', l_onoff, l_linger))# close means a close understand ?
+				struct.pack('ii', l_onoff, l_linger))# don't wait too long to close the connection, after a timeout, abruptly close the connection
 	
-	
-	
-	timeval = struct.pack('ll', 100, 0)
+	timeval = struct.pack('ll', 10, 0) # it can wait 10 seconds, if there is congestion on the network card to send data
 	sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO, timeval)
 
-	TCP_USER_TIMEOUT = 18
+	TCP_USER_TIMEOUT = 18 # after 18 seconds if there is no ack then we assume broken and close it
 	sock.setsockopt(socket.SOL_TCP, TCP_USER_TIMEOUT, _tcp_user_timeout) # close means a close understand ?
 
 #wraps send method of websocket which keeps a buffer of messages for 20 seconds
 #if the connection closes, you can use them to resend
 class WebsocketConnection(WebSocket):
-	queue = None# to keep track of how many greenlets are waiting on semaphore to send 
+	queue = None# to keep track of how many greenlets are waiting on semaphore to send
 	msg_assumed_sent = None# queue for older sent messages in case of reset we try to retransmit
 	ws = None
 	lock = BoundedSemaphore()
@@ -938,7 +935,7 @@ class WebsocketConnection(WebSocket):
 				self.last_msg_sent_timestamp = current_timestamp
 				if(add_to_assumend_sent):
 					while(len(self.msg_assumed_sent) > 0 and self.msg_assumed_sent[0][0] < current_timestamp - _tcp_user_timeout):
-						#keep inly 100 seconds of previous data
+						#keep inly 20 seconds of previous data
 						self.msg_assumed_sent.popleft()
 					
 					self.msg_assumed_sent.append((current_timestamp , data_ref, data))

@@ -46,7 +46,7 @@ class Str:
 		self.one_of = set(one_of) if one_of else None
 		self._default = default
 		#make schema
-		self._schema_ = _schema = {"type": "integer"}
+		self._schema_ = _schema = {"type": "string"}
 		if(default != _OBJ_END_):
 			_schema["default"] = default
 		_schema = {"type": "string"}
@@ -61,7 +61,7 @@ class Str:
 		if(e == None):
 			if(self._default != _OBJ_END_):
 				return self._default
-			raise Exception("should be int")
+			raise Exception("should be string")
 		if(len(e) < self.minlen):
 			raise Exception("should be minlen %s"%(self.minlen))
 		if(len(e) > self.maxlen):
@@ -90,7 +90,6 @@ class Array:
 		)
 
 
-
 class Object:
 	def __init__(self, default=_OBJ_END_, _required_=None, **keys):
 		self._keys = keys
@@ -110,23 +109,31 @@ class Object:
 			_schema["default"] = default
 
 	#validates Object(a=str, b=int, h=Test)
-	def validate(self, e):
-		if(not isinstance(e, dict)):
-			return json.loads(e)
+	def validate(self, e=_OBJ_END_):
+		is_validating_dict = True
+		if(e == _OBJ_END_):
+			e = self.__dict__
+			is_validating_dict = False
+		elif(isinstance(e, str)):
+			e = json.loads(e)
 
 		k = None
 		attr_value = None
+		cls = self.__class__
 		try:
 			for k, attr_validation in self._validations.items():
-				attr_value = e.get(k, None)
-				_validated_attr = attr_validation(attr_value)
+				attr_value = e.get(k, _OBJ_END_)
+				if(attr_value != _OBJ_END_):
+					_validated_attr = attr_validation(attr_value)
+				else:
+					_validated_attr = getattr(cls, k, None) # try getting class attribute dfault
 
-				if(attr_value == None and k in self._required):
+				if(_validated_attr == None and k in self._required):
 					raise Exception("Field is required")
 
 				if(_validated_attr != attr_value):
 					e[k] = _validated_attr
-			return e
+			return e if is_validating_dict else self
 		except Exception as ex:
 			raise Exception({
 				"exception": (ex.args and ex.args[0]) or "Validation failed",
@@ -135,6 +142,12 @@ class Object:
 				"schema": self._properties[k]
 			})
 
+def to_int(e):
+	return e and int(e)
+def to_str(e):
+	return e and str(e)
+def to_float(e):
+	return e and float(e)
 
 def item_validation(e, simple_types=(), complex_validations=(), nullable=True):
 	if(e == None and not nullable):
@@ -210,43 +223,29 @@ def schema(x):
 		if(ret):
 			return {"schema": {"$ref": "#/definitions/" + x.__name__}}, x.validate
 
-		_validations = {}
-		_properties = {}
-		for k, v in x.__dict__.items():
-			_schema_and_validation = schema(v)
+		x._validations = _validations = {}
+		x._properties = _properties = {}
+		x._required = _required = set()
+		for k, _type in get_type_hints(x).items():
+			is_required = True
+			if(_type.__module__ == 'typing'
+				and getattr(_type, "__origin__", None) == typing.Union
+				and getattr(_type, "__args__", None)
+			):
+				_type = _type.__args__[0]
+				is_required = False
+			_schema_and_validation = schema(_type)
 			if(_schema_and_validation):
 				_properties[k], _validations[k] = _schema_and_validation
+				is_required and _required.add(k)
+				_default = x.__dict__.get(k, _OBJ_END_)
+				if(_default != _OBJ_END_ and not isinstance(_type, type)):
+					_type._default = _default
 
-		#all are required unless marked as Optional
-		_required = set(_properties.keys()) - set(k for k, v in get_type_hints(x).items() if v == Optional)
 
-		def _validate_instance(e):
-			if(not isinstance(e, x)):
-				return None
-			k = None
-			attr_value = None
-			try:
-				for k, attr_validation in _validations.items():
-					attr_value = getattr(e, k, None)
-					_validated_attr = attr_validation(attr_value)
 
-					if(_validated_attr == None and k in _required):
-						raise Exception("Field is required")
-
-					if(_validated_attr != attr_value):
-						setattr(e, k, _validated_attr)
-			except Exception as ex:
-				raise Exception({
-					"exception": (ex.args and ex.args[0]) or "Validation failed",
-					"key": k,
-					"value": attr_value,
-					"schema": _properties[k]
-				})
-
-			return e
-
-		#cache and return
-		ret = schema.defs[x.__name__] = {
+		#create schema
+		x._schema_ = ret = schema.defs[x.__name__] = {
 				"type": "object",
 			}
 		_title = getattr(x, "_title_", None)
@@ -262,12 +261,7 @@ def schema(x):
 		if(_required):
 			ret["required"] = list(_required)
 		
-		#set these class level attributes
-		x.validate = _validate_instance
-		x._required = _required
-		x._schema_ = ret
-
-		return ret, _validate_instance
+		return x._schema_, x.validate
 
 	#special for tuples and list
 	elif(isinstance(x, (list, tuple))): # x = [int, str]->oneof, (int, str)->anyof
@@ -299,16 +293,21 @@ def schema(x):
 		if(is_nullable):
 			ret["nullable"] = True
 
-		return ret, partial(item_validation, simple_types=tuple(simple_types), complex_validations=complex_validations, nullable=is_nullable)
+		return ret, partial(
+						item_validation,
+						simple_types=tuple(simple_types),
+						complex_validations=complex_validations,
+						nullable=is_nullable
+					)
 
 	elif(x == int):
-		return {"type": "integer"}, lambda e: e and int(e)
+		return {"type": "integer"}, to_int
 
 	elif(x == float):
-		return {"type": "number", "format": "float"}, lambda e: e and float(e)
+		return {"type": "number", "format": "float"}, to_float
 
 	elif(x == str or x == Str):
-		return {"type": "string"}, lambda e: e and str(e)
+		return {"type": "string"}, to_str
 
 	elif(isinstance(x, Str)):
 		return x._schema_, x.validate
@@ -329,7 +328,7 @@ def schema(x):
 		return x._schema_, x.validate
 
 	else:
-		return None
+		return None, None
 
 
 schema.defs = {}
@@ -343,23 +342,21 @@ def all_subclasses(cls):
 schema.init = lambda: [schema(x) for x in all_subclasses(Object)]
 
 
-
-
 if __name__ == "__main__":
 	class Test2(Object):
-		a = Array(int)
+		a: Array(int)
 
 		def __init__(self):
-			self.a = [100]
+			self.a = ["string"]
 
 	class Test(Object):
-		a = Array
-		b = Array((int, str))
-		c = Object
-		d = int
-		e = Object(p=int, q=str, r=Array([int, str]))
-		f = Test2
-		g = Str(minlen=10)
+		a: Array
+		b: Array((int, str))
+		c: Object
+		d: int
+		e: Object(p=int, q=str, r=Array([int, str]))
+		f: Test2
+		g: Str(minlen=10) = "hello"
 
 		def __init__(self, **kwargs):
 			self.a = [1, 2, 3, "damg"]
@@ -368,7 +365,7 @@ if __name__ == "__main__":
 			self.d = 1
 			self.e = {"p": 1, "q": [100], "r": ["hello"]}
 			self.f = Test2()
-			self.g = "abhinav reddy"
+			#self.g = "abhinav reddy"
 
 	import json
 	schema.init()

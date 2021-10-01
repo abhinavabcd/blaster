@@ -383,10 +383,10 @@ def join_session(session_id, request_params, user=None):
 		except Exception as ex:
 			LOG_WARN(LOG_TYPE_EXCEPTION, exception=str(ex))
 	
-	ws.handleClose = delete_connection
-	ws.handleConnected = on_connected
-	ws.handleMessage = on_message
-	ws.handleTimeout = on_timeout
+	ws.on_close = delete_connection
+	ws.on_connected = on_connected
+	ws.on_message = on_message
+	ws.on_timeout = on_timeout
 	ws.do_handshake(request_params.HEADERS())
 	ws.start_handling()
 	return
