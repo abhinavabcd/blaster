@@ -4,7 +4,7 @@ Created on 22-Aug-2017
 @author: abhinav
 '''
 import blaster
-from blaster.base import start_stream_server, route,\
+from blaster.base import start_server, route,\
     Request, static_file_handler
 import os
 
@@ -63,6 +63,6 @@ def do_test8(request_params: Request):
 
 
 if __name__ == "__main__":
-    start_stream_server(8081, handlers=[
+    start_server(8081, handlers=[
             ('^/(.*)', static_file_handler(os.path.dirname(os.path.abspath(__file__)) + "/web/"))  # can server files too
     ])

@@ -250,7 +250,7 @@ def validate_dict_to_dynamo_storage(val):
     ret = {}
     if(not val):
         return {}
-    for k,v in val.items():
+    for k, v in val.items():
         if(isinstance(v, dict)):
             ret[k] = validate_dict_to_dynamo_storage(v)
         elif(isinstance(v, (list,))):

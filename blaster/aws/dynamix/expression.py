@@ -72,7 +72,7 @@ class Expression(object):
                 exp = "{path} = list_append({path}, {label})".format(
                     path=list_path, label=label)
                         
-            elif(index>0):
+            elif(index > 0):
                 exp = "{path}[{index}] = {label}".format(
                     path=attr_name, label=label)
 
@@ -84,8 +84,8 @@ class Expression(object):
             ean[attr_name] = path
             exp = '{path} = {label}'.format(path=attr_name, label=label)
         exp_attr = {
-            'name': ean, #name substitutions
-            'value': eav #value substitutions
+            'name': ean, # name substitutions
+            'value': eav # value substitutions
         }
         #print(exp , exp_attr)
         return exp, exp_attr, 'SET'
@@ -97,9 +97,9 @@ class Expression(object):
         exp = ""
         for key, val in _dict.items():
             key_str = str(key)
-            exp = exp+" %s %s.#key_%s = :val_%s"%( "" if is_first else "," , self.name, key_str, key_str)
-            name_substitutions["#key_"+key_str] = key
-            value_substitutions[":val_"+key_str] = val
+            exp = exp + " %s %s.#key_%s = :val_%s"%("" if is_first else "," , self.name, key_str, key_str)
+            name_substitutions["#key_" + key_str] = key
+            value_substitutions[":val_" + key_str] = val
             is_first = False
         #print(exp, {"name": name_substitutions, "value": value_substitutions})
         return exp, {"name": name_substitutions, "value": value_substitutions}, 'SET'
@@ -111,8 +111,8 @@ class Expression(object):
         exp = ""
         for key in keys:
             key_str = str(key)
-            exp = exp+" %s %s.#key_%s "%( "" if is_first else "," , self.name, key_str)
-            name_substitutions["#key_"+key_str] = key
+            exp = exp + " %s %s.#key_%s "%("" if is_first else "," , self.name, key_str)
+            name_substitutions["#key_" + key_str] = key
             is_first = False
         #print(exp, {"name": name_substitutions, "value": value_substitutions})
         return exp, {"name": name_substitutions, "value": value_substitutions}, 'REMOVE'

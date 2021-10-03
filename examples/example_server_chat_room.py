@@ -7,7 +7,7 @@ import blaster
 from blaster.config import IS_DEV
 
 ## set the configs
-from blaster.base import start_stream_server, parse_qs_modified
+from blaster.base import start_server, parse_qs_modified
 import argparse
 import ujson as json
 import collections
@@ -17,7 +17,7 @@ from blaster.common_funcs_and_datastructures import LRUCache, create_signed_valu
 	WebsocketConnection
 from blaster.urllib_utils import get_data
 import random
-from blaster.ws_handler import WebSocketServerHandler
+from blaster.websocket.server import WebSocketServerHandler
 import time
 from blaster.constants import TYPE_ERROR, TYPE_OK, LOG_TYPE_EXCEPTION
 from blaster.base import route_handler, is_server_running, LOG_WARN
@@ -427,4 +427,4 @@ if __name__ == "__main__":
 	
 	gevent.spawn(update_stats_on_main)
 	
-	start_stream_server(port, handlers=[])
+	start_server(port, handlers=[])

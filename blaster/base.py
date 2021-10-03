@@ -10,11 +10,13 @@ Created on 22-Aug-2017
 # protobuf==3.2.0
 # boto3==1.4.4
 
+
+import gevent
+import signal
 import ujson as json
 import re
 import urllib.parse
 import time
-import gevent
 import functools
 import traceback
 import inspect
@@ -24,12 +26,15 @@ from gevent.threading import Lock
 from gevent.server import StreamServer
 from requests_toolbelt.multipart import decoder
 
-from .. import config as blaster_config
-from ..config import IS_DEV
-from ..common_funcs_and_datastructures import SanitizedDict, get_mime_type_from_filename, DummyObject
-from ..utils import events
-from ..logging import LOG_ERROR, LOG_SERVER
-from ..schema import Object, schema as schema_func
+from . import config as blaster_config
+from .config import IS_DEV
+from .common_funcs_and_datastructures import SanitizedDict, get_mime_type_from_filename, DummyObject,\
+	set_socket_options
+from .utils import events
+from .logging import LOG_ERROR, LOG_SERVER
+from .schema import Object, schema as schema_func
+from .websocket.server import WebSocketServerHandler
+
 
 _is_server_running = True
 default_stream_headers = {
@@ -512,7 +517,6 @@ class App:
 				_handler.update(handler)
 				handlers_with_methods.append(_handler)
 
-
 		#add a openapi.json route handler
 		self.openapi = {"components": {"schemas": dict(schema_func.defs)}, "paths": {}, "openapi": "3.0.1", "info": self.info}
 		if(IS_DEV):
@@ -849,8 +853,11 @@ class App:
 			handler_args = []
 			handler_kwargs = {}
 
-			#update any path matches
-			request_params._get.update(request_path_match.groupdict())
+			#update any path matches if they exist
+			path_params = request_path_match.groupdict()
+			for path_param, path_param_value in path_params.items():
+				if(path_param_value):
+					request_params._get[path_param] = path_param_value
 
 			#set a reference to handler
 			request_params.handler = handler
@@ -1022,7 +1029,7 @@ _main_app = App()
 route = _main_app.route
 
 #generic glonal route handler
-def start_stream_server(*args, **kwargs):
+def start_server(*args, **kwargs):
 	_main_app.start(*args, **kwargs)
 	_main_app.serve()
 
@@ -1093,3 +1100,17 @@ def static_file_handler(_base_folder_path_, default_file_path="index.html", file
 		return resp_headers, data
 	
 	return file_handler
+
+
+#add a default arg hook
+def _get_web_socket_handler(request_params):
+	set_socket_options(request_params.sock)
+	ws = WebSocketServerHandler(request_params.sock) # sends handshake automatically
+	ws.do_handshake(request_params.HEADERS())
+	return ws
+
+
+Request.set_arg_type_hook(WebSocketServerHandler, _get_web_socket_handler)
+
+#sigint event broadcast
+gevent.signal_handler(signal.SIGINT, lambda : events.broadcast_event("sigint"))
