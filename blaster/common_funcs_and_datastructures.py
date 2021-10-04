@@ -35,9 +35,8 @@ import six
 import traceback
 
 from .websocket._core import WebSocket
-from .config import IS_DEV
+# from .config import IS_DEV
 from .utils.xss_html import XssHtml
-from .utils.phone_number_utils import PhoneNumberObj
 from .utils import events
 from .logging import LOG_APP_INFO, LOG_WARN
 
@@ -534,26 +533,6 @@ def sanitize_email_id(email_id, plus_allowed=True):
 		email_id = SANITIZE_EMAIL_REGEX_NO_PLUS_ALLOWED.sub("", email_id)
 
 	return email_id
-
-
-PHONE_NUMBER_REGEX = re.compile("^\+?[0-9]+")
-def sanitize_phone_number(phone_number, country_phone_code=None, iso2_country_code=None):
-	if(not phone_number):
-		return None
-	phone_number = phone_number.replace(" ", "").strip().lower()
-	if(not PHONE_NUMBER_REGEX.match(phone_number)):
-		return None
-
-	try:
-		phone_number = PhoneNumberObj.parse_phone_number(
-			phone_number,
-			country_phone_code=country_phone_code,
-			iso2_country_code=iso2_country_code
-		).phone_number
-	except Exception as ex:
-		return None
-
-	return phone_number
 
 
 # first minus second

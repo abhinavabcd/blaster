@@ -1,5 +1,7 @@
 import re
 from . import data_utils
+from ..common_funcs_and_datastructures import ltrim
+
 PHONE_NUMBER_REGEX = re.compile("^\+?[0-9]+")
 
 
@@ -72,14 +74,35 @@ class PhoneNumberObj:
 		if len(phone_number) in country_code_num_digits_map[country_phone_code]:
 			return PhoneNumberObj(country_phone_code, phone_number, country_phone_code + phone_number)
 
-		phone_number_strip = phone_number.lstrip(country_phone_code)
+		phone_number_strip = ltrim(phone_number, country_phone_code)
 		if len(phone_number_strip) in country_code_num_digits_map[country_phone_code]:
 			return PhoneNumberObj(country_phone_code, phone_number_strip, country_phone_code + phone_number_strip)
 
 		if(phone_number.startswith(country_phone_code)):
-			return PhoneNumberObj.parse_phone_number(phone_number.lstrip(country_phone_code), country_phone_code=country_phone_code, iso2_country_code=iso2_country_code)
+			#strip and parse again
+			return PhoneNumberObj.parse_phone_number(phone_number_strip, country_phone_code=country_phone_code, iso2_country_code=iso2_country_code)
 
 		return None
+
+
+
+def sanitize_phone_number(phone_number, country_phone_code=None, iso2_country_code=None):
+	if(not phone_number):
+		return None
+	phone_number = phone_number.replace(" ", "").strip().lower()
+	if(not PHONE_NUMBER_REGEX.match(phone_number)):
+		return None
+
+	try:
+		phone_number = PhoneNumberObj.parse_phone_number(
+			phone_number,
+			country_phone_code=country_phone_code,
+			iso2_country_code=iso2_country_code
+		).phone_number
+	except Exception as ex:
+		return None
+
+	return phone_number
 
 ############testing
 def test():

@@ -1057,6 +1057,7 @@ class CollectionTracker(Model):
 
 	_id = Attribute(str) # db_name__collection_name
 	db_nodes = Attribute(list)
+	is_primary_shard = Attribute(int)
 	primary_shard_key = Attribute(str)
 	secondary_shard_keys = Attribute(list)
 	pk_attrs = Attribute(list)
@@ -1193,6 +1194,7 @@ def initialize_model(Model):
 	Model._pk_attrs = None
 	'''it's used for translating attr objects/name to string names'''
 	Model._attrs_to_name = attrs_to_name = {_id_attr: '_id', '_id': '_id'}
+	is_sharding_enabled = False
 	for k, v in Model.__dict__.items():
 		if(isinstance(v, Attribute)):
 			_model_attrs[k] = v
@@ -1217,6 +1219,8 @@ def initialize_model(Model):
 				elif(is_secondary_shard_key is True):
 					Model._secondary_shards_[k] = SecondaryShard()
 					delattr(v, "is_secondary_shard_key") # because we don't need it again after first time
+
+				is_sharding_enabled = is_sharding_enabled or (is_primary_shard_key or is_secondary_shard_key)
 
 	IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: Initializing Model", Model,
 		Model._indexes_, Model._shard_key_, Model._secondary_shards_
@@ -1300,7 +1304,11 @@ def initialize_model(Model):
 		Model._pk_attrs = OrderedDict(_id=True)
 
 	# set collection name to include shard_keys
-	Model._collection_name_with_shard_ = Model._collection_name_ + "_shard_" + Model._shard_key_
+
+	Model._collection_name_with_shard_ = Model._collection_name_
+	if(is_sharding_enabled):
+		Model._collection_name_with_shard_ += "_shard_" + Model._shard_key_
+
 
 	##find tracking nodes
 	Model._collection_tracker_key_ = "%s__%s"%(Model._db_name_, Model._collection_name_with_shard_)
@@ -1313,7 +1321,7 @@ def initialize_model(Model):
 			or not collection_tracker.db_nodes
 			or not collection_tracker.primary_shard_key
 			#to support _VERSION_ < 100
-			or (not Model._is_secondary_shard and not collection_tracker.pk_attrs) # secondary shard keys are there and not pk_attrs
+			or collection_tracker.is_primary_shard == None # secondary shard keys are there and not pk_attrs
 		):
 			print(
 				"#MONGOORM_IMPORTANT_INFO : "
@@ -1335,22 +1343,21 @@ def initialize_model(Model):
 			collection_tracker = CollectionTracker(
 				_id=Model._collection_tracker_key_,
 				db_nodes=db_nodes,
+				is_primary_shard=0 if Model._is_secondary_shard else 1,
 				primary_shard_key=Model._shard_key_,
 				secondary_shard_keys=list(Model._secondary_shards_.keys()),
 				pk_attrs=list(Model._pk_attrs.keys())
 			).commit(force=True)
 
-		Model._db_nodes_ = [DatabaseNode(**_db_node) for _db_node in collection_tracker.db_nodes]
+		Model._db_nodes_ = tuple(DatabaseNode(**_db_node) for _db_node in collection_tracker.db_nodes)
 		#TODO: find new secondary shards by comparing collection_tracker.secondary_shard_keys, Model._secondary_shards_.keys()
 		#and create a job to create and reindex all data to secondary index
-		if(collection_tracker.primary_shard_key != Model._shard_key_):
-			raise Exception("#MONGO_EXCEPTION: Primary shard key changed for ", Model)
+		if(not Model._is_secondary_shard
+			and Model._secondary_shards_
+			and collection_tracker.primary_shard_key != Model._shard_key_
+		):
+			raise Exception("#MONGO_EXCEPTION: Primary shard key changed for ", Model, "It has secondary shards, that point to primary shard key, if you absolutely have to reindex whole data again")
 
-		if(not Model._is_secondary_shard and tuple(collection_tracker.pk_attrs) != tuple(Model._pk_attrs.keys())):
-			raise Exception("#MONGO_EXCEPTION: primary keys cannot be changed for a primary shard, " +\
-					"they are used to retrieve back original documents from secondary shards, if you absolutely " + \
-					"have to, reindex all data again", Model
-				)
 
 		#create diff jobs
 		to_create_secondary_shard_key, to_delete_secondary_shard_key = list_diff2(
