@@ -79,10 +79,11 @@ class BufferedSocket():
 				data = data.encode()
 			n = 0
 			data_len = len(data)
+			data_mview = memoryview(data)
 			while(n < data_len):
-				sent = self.sock.send(data[n:])
+				sent = self.sock.send(data_mview[n:])
 				if(sent < 0):
-					return sent
+					return sent # return failed
 				n += sent
 			total_sent += n
 		return total_sent
@@ -559,6 +560,8 @@ class App:
 				#check for full path matches, if the given regex doesn't match or end
 				if(not regex.startswith("^")):
 					regex = "^" + regex
+				if(regex.endswith("/")):
+					regex += "?"
 				if(not regex.endswith("$")):
 					regex = regex + "$"
 
@@ -607,7 +610,7 @@ class App:
 			#openapi docs
 			self.generate_openapi_doc(handler)
 		
-		#sort ascending because we iterated in reverse earlier
+		#longer paths match first, hence reversed
 		self.request_handlers.reverse()
 
 		class CustomStreamServer(StreamServer):

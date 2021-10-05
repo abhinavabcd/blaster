@@ -22,6 +22,7 @@ from gevent.lock import BoundedSemaphore
 from collections import namedtuple
 from datetime import timezone
 from datetime import datetime
+from datetime import timedelta
 import logging
 import time
 import hmac
@@ -205,6 +206,99 @@ def timestamp2date(timestamp):
 		return timestamp
 	date = datetime.utcfromtimestamp(timestamp)
 	return date
+
+def zrfill(tup, n):
+	return tup + tuple(0 for x in range(n - len(tup)))
+
+def zlfill(tup, n):
+	return tuple(0 for x in range(n - len(tup))) + tup
+
+
+DATE_REGEX = re.compile("(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})")
+TIME_REGEX = re.compile("(?:(0?[1-9]|1[012])(?::([0-5]\d))?(?::([0-5]\d))?\x20?([AP]M))|([01]\d|2[0-3])(:[0-5]\d){1,2}")
+DAY_REGEX = re.compile("(mon|tues|wed(nes)?|thur(s)?|fri|sat(ur)?|sun)(day)?", re.IGNORECASE)
+
+DAYS_OF_WEEK = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+def get_time_overlaps(a, b, c: str, limit=10, partial=True):
+	if(isinstance(a, int)):
+		a = timestamp2date(a)
+
+	if(isinstance(b, int)):
+		b = timestamp2date(b)
+
+	time_ranges = []
+	for x in c:
+		date_matches = [m for m in DATE_REGEX.findall(x)]
+		time_matches = [tuple(filter(lambda x: x, map(lambda x: x.strip(":"), m))) for m in TIME_REGEX.findall(x)]
+		day_matches = list(
+			filter(
+				lambda x: DAYS_OF_WEEK.index(x) > 0,
+				[x[m.start():m.end()].lower() for m in DAY_REGEX.finditer(x) or []]
+			)
+		)
+
+		offset_check_x = timedelta(seconds=0)
+		offset_check_y = timedelta(seconds=0)
+		
+		if(time_matches):
+			hours, mins, secs, am_pm = zrfill(time_matches[0], 4)
+			if(am_pm and am_pm.lower() == "pm"):
+				hours = int(hours or 0) + 12
+			offset_check_x = timedelta(hours=int(hours or 0), minutes=int(mins or 0), seconds=int(secs or 0))
+
+			if(len(time_matches) > 1):
+				hours, mins, secs, am_pm = zrfill(time_matches[1], 4)
+
+				if(am_pm and am_pm.lower() == "pm"):
+					hours = (hours or 0) + 12
+				offset_check_y = timedelta(hours=int(hours or 0), minutes=int(mins or 0), seconds=int(secs or 0))
+			else:
+				offset_check_y = offset_check_y + timedelta(hours=1)
+
+
+		if(date_matches):
+			day, month, year, *_ = map(lambda x: int(x) if x else 0, date_matches[0])
+			if(year < 2000):
+				year = 2000 + year
+			time_range_start = datetime(year=year, month=month, day=day) + offset_check_x
+			time_range_end = datetime(year=year, month=month, day=day) + offset_check_y
+			if(len(date_matches) > 1):
+				day, month, year, *_ = map(lambda x: int(x) if x else 0, date_matches[1])
+				if(year < 2000):
+					year = 2000 + year
+				time_range_end = datetime(year=year, month=month, day=day) + offset_check_y
+			time_ranges.append((time_range_start, time_range_end))
+
+		elif(day_matches):
+			start_day = DAYS_OF_WEEK.index(day_matches[0].lower())
+			if(start_day == -1):
+				return None
+			t = a
+			while(t < b and len(time_ranges) < limit):
+				if(t.weekday() == start_day):
+					t_start_of_day = datetime(year=t.year, month=t.month, day=t.day)
+					time_ranges.append((t_start_of_day + offset_check_x, t_start_of_day + offset_check_y))
+				t += timedelta(days=1)
+
+		else:
+			t = a
+			while(t < b and len(time_ranges) < limit):
+				t_start_of_day = datetime(a.year, a.month, a.day)
+				time_ranges.append((t_start_of_day + offset_check_x, t_start_of_day + offset_check_y))
+				t += timedelta(days=1)
+
+	ret = []
+	for start, end in time_ranges:
+		if(not partial):
+			if(start >= a and end <= b):
+				ret.append((start, end))
+		else:
+			if(start >= a and start <= b):
+				ret.append((start, (end if end < b else b)))
+			elif(start <= a and a <= end):
+				ret.append((a, (end if end < b else b)))
+
+	return ret
 
 
 ###############EPOCH

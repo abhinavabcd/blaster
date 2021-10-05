@@ -484,7 +484,7 @@ class Model(object):
 				# belonged to a shard delete it
 				if(_secondary_collection and _before_id != None):
 					_secondary_collection.find_one_and_delete(_secondary_pk)
-					IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: deleting from secondary",
+					IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: deleting from secondary",
 						_secondary_pk, secondary_Model._collection_name_with_shard_
 					)
 
@@ -499,7 +499,7 @@ class Model(object):
 						_secondary_values_to_set[shard_key] # same as after_shard_key
 					)
 					#insert new one
-					IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: deleting and inserting new secondary",
+					IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: deleting and inserting new secondary",
 						_secondary_pk, _secondary_values_to_set
 					)
 					_secondary_collection.insert_one(_secondary_values_to_set)
@@ -526,7 +526,7 @@ class Model(object):
 						_secondary_updates["$set"] = _secondary_values_to_set
 					if(_secondary_values_to_unset):
 						_secondary_updates["$unset"] = _secondary_values_to_unset
-					IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: updating secondary", _secondary_pk, _secondary_updates)
+					IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: updating secondary", _secondary_pk, _secondary_updates)
 					#find that doc and update
 					secondary_shard_update_return_value = _secondary_collection.find_one_and_update(
 						_secondary_pk,
@@ -534,8 +534,8 @@ class Model(object):
 					)
 
 					if(not secondary_shard_update_return_value):
-						print("#MONGO:WARNING!! secondary couldn't be propagated, probably due to concurrent update",
-								cls, _secondary_pk, _secondary_updates
+						print("\n\n#MONGO:WARNING!! secondary couldn't be propagated, probably due to concurrent update",
+								cls, secondary_Model, _secondary_pk, _secondary_updates
 							)
 
 	#_add_query is more query other than pk
@@ -584,7 +584,7 @@ class Model(object):
 			)
 			#query and update the document
 			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print(
-				"#MONGO: update before and query",
+				"\n\n#MONGO: update before and query",
 				cls, _query, self._original_doc, _update_query
 			)
 			updated_doc = primary_collection_shard.find_one_and_update(
@@ -593,7 +593,7 @@ class Model(object):
 				return_document=ReturnDocument.AFTER,
 				**kwargs
 			)
-			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: after update::", cls, updated_doc)
+			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: after update::", cls, updated_doc)
 
 			if(updated_doc):
 				break # no retry again , all is good
@@ -821,7 +821,7 @@ class Model(object):
 		def query_collection(_Model, _collection, _query, offset=None):
 
 			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print(
-				"#MONGO: querying", _Model, _collection, _query, sort, offset, limit
+				"\n\n#MONGO: querying", _Model, _collection, _query, sort, offset, limit
 			)
 
 			ret = _collection.find(_query, **kwargs)
@@ -851,12 +851,12 @@ class Model(object):
 						else:
 							_query = {"$or": [{"_id": _doc["_id"]} for _doc in docs]}
 
-						IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: requerying", cls, _query)
+						IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: requerying", cls, _query)
 						_requeried_from_primary = {_doc._id: _doc for _doc in cls.query(_query)}
 						for _id in _ids_order:
 							item = _requeried_from_primary.get(_id)
 							if(not item):
-								IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: WARNING: missing from primary", _id)
+								IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: WARNING: missing from primary", _id)
 								continue
 							yield item
 				ret = batched_requery_iter(ret)
@@ -935,7 +935,7 @@ class Model(object):
 			if(shard_key_name == "_id" and self._id == None):
 				raise Exception("Need to sepcify _id when sharded by _id")
 
-			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: new object values", cls, self._set_query_updates)
+			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: new object values", cls, self._set_query_updates)
 			self.__is_new = False
 			_collection_shard = cls.get_collection(
 				str(getattr(self, shard_key_name))
@@ -972,7 +972,7 @@ class Model(object):
 				self.reinitialize_from_doc(
 					_collection_shard.find_one(self.pk())
 				)
-				IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: created a duplicate, refetching and updating",
+				IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: created a duplicate, refetching and updating",
 					self.pk()
 				)
 
@@ -1022,7 +1022,7 @@ class Model(object):
 		collection_shard = _Model.get_collection(getattr(self, _Model._shard_key_))
 		_delete_query = {"_id": self._id}
 		collection_shard.delete_one(_delete_query)
-		IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: deleting from primary",
+		IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: deleting from primary",
 				_Model, _delete_query
 			)
 		if(_Model.__cache__):
@@ -1204,7 +1204,7 @@ def initialize_model(Model):
 			attrs_to_name[k] = k
 
 			#check if it has any shard, then extract indexes, shard key tagged to attributes
-			if(not Model._is_secondary_shard): # very importat check
+			if(not Model._is_secondary_shard): # very important check
 				#check indexes_to_create
 				_indexes_to_create = getattr(v, "_indexes_to_create", None)
 				if(_indexes_to_create):
@@ -1222,7 +1222,7 @@ def initialize_model(Model):
 
 				is_sharding_enabled = is_sharding_enabled or (is_primary_shard_key or is_secondary_shard_key)
 
-	IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: Initializing Model", Model,
+	IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: Initializing Model", Model,
 		Model._indexes_, Model._shard_key_, Model._secondary_shards_
 	)
 
@@ -1306,14 +1306,15 @@ def initialize_model(Model):
 	# set collection name to include shard_keys
 
 	Model._collection_name_with_shard_ = Model._collection_name_
-	if(is_sharding_enabled):
+	#append shard id to table name if it's secondary shard or primary and sharding enabled
+	if(Model._is_secondary_shard or is_sharding_enabled):
 		Model._collection_name_with_shard_ += "_shard_" + Model._shard_key_
 
 
 	##find tracking nodes
 	Model._collection_tracker_key_ = "%s__%s"%(Model._db_name_, Model._collection_name_with_shard_)
 
-	IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO collection tracker key", Model._collection_tracker_key_)
+	IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO collection tracker key", Model._collection_tracker_key_)
 
 	if(Model not in [CollectionTracker, ControlJobs]):
 		collection_tracker = CollectionTracker.get(Model._collection_tracker_key_)
@@ -1324,7 +1325,7 @@ def initialize_model(Model):
 			or collection_tracker.is_primary_shard == None # secondary shard keys are there and not pk_attrs
 		):
 			print(
-				"#MONGOORM_IMPORTANT_INFO : "
+				"\n\n#MONGOORM_IMPORTANT_INFO : "
 				"Collection tracker entry not present for '%s'.."
 				"creating table in control node for this time in database '%s'. "
 				"You may want to talk to dba to move to a proper node"%(Model.__name__, Model._db_name_)
@@ -1356,7 +1357,7 @@ def initialize_model(Model):
 			and Model._secondary_shards_
 			and collection_tracker.primary_shard_key != Model._shard_key_
 		):
-			raise Exception("#MONGO_EXCEPTION: Primary shard key changed for ", Model, "It has secondary shards, that point to primary shard key, if you absolutely have to reindex whole data again")
+			raise Exception("\n\n#MONGO_EXCEPTION: Primary shard key changed for ", Model, "It has secondary shards, that point to primary shard key, if you absolutely have to reindex whole data again")
 
 
 		#create diff jobs
@@ -1372,7 +1373,7 @@ def initialize_model(Model):
 					_type=ControlJobs.CREATE_SECONDARY_SHARD,
 					uid=shard_key
 				).commit()
-				IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: create a control job to create secondary sharding", Model, shard_key)
+				IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: create a control job to create secondary sharding", Model, shard_key)
 			except DuplicateKeyError as ex:
 				pass
 
@@ -1381,7 +1382,7 @@ def initialize_model(Model):
 		mongo_index_args = {"unique": True}
 		mongo_index_args.update(**additional_mongo_index_args)
 
-		IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("#MONGO: creating_indexes", Model, pymongo_index, mongo_index_args)
+		IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: creating_indexes", Model, pymongo_index, mongo_index_args)
 		#in each node create indexes
 		for db_node in Model._db_nodes_:
 			db_node.get_collection(Model).create_index(pymongo_index, **mongo_index_args)
