@@ -1026,7 +1026,7 @@ def stop_all_apps():
 
 
 # create a global app for generic single server use
-_main_app = App()
+_main_app = App(title="Blaster", description="Built for speed and rapid prototyping..", version="0.0.368")
 
 #generic global route handler
 route = _main_app.route

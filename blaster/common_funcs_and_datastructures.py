@@ -16,7 +16,7 @@ import socket
 import struct
 import fcntl
 import html
-
+from gevent import sleep
 from functools import reduce as _reduce
 from gevent.lock import BoundedSemaphore
 from collections import namedtuple
@@ -39,7 +39,7 @@ from .websocket._core import WebSocket
 # from .config import IS_DEV
 from .utils.xss_html import XssHtml
 from .utils import events
-from .logging import LOG_APP_INFO, LOG_WARN
+from .logging import LOG_APP_INFO, LOG_WARN, LOG_DEBUG
 
 
 _this_ = sys.modules[__name__]
@@ -1226,6 +1226,35 @@ def ignore_exceptions(*exceptions):
 		new_func._original = getattr(func, "_original", func)
 		return new_func
 	return decorator
+
+#r etries all exceptions or specific given expections only
+#backoff = 1 => exponential sleep
+#max_time milliseconds for exception to sleep, not counts the func runtime
+def retry(num_retries=2, exceptions=None, max_time=5000):
+	num_retries = max(2, num_retries)
+	sleep_time_on_fail = max_time / num_retries
+	exceptions = set(exceptions) if exceptions else None
+
+	def decorator(func):
+		def new_func(*args, **kwargs):
+			retry_count = 0
+			while(retry_count < num_retries):
+				try:
+					return func(*args, **kwargs)
+				except Exception as ex:
+					if(exceptions and ex not in exceptions):
+						raise ex
+
+					LOG_WARN("retrying", func=func.__name__, exception=str(ex))
+					sleep(sleep_time_on_fail / 1000)
+				retry_count += 1
+			return None
+
+		new_func._original = getattr(func, "_original", func)
+		return new_func
+	return decorator
+
+
 
 def original_function(func):
 	_original = getattr(func, "_original", _OBJ_END_)

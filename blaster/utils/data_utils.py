@@ -45,14 +45,18 @@ def make_nearrest_currency(val, f):
 '''
 	return APP_CURRENCY_VALUE, CURRENCY_CODE, VALUE_IN_CURRENCY_CODE
 '''
-num_regex = re.compile('([0-9\.]+)')
+NUM_REGEX = re.compile(r'[+-.]?[0-9]+(?:\.[0-9]+)?')
 def parse_currency_string(currency_str, default_currency_code="EUR", country_code=None):
-	val = num_regex.findall(currency_str)
+	val = NUM_REGEX.findall(currency_str)
 	if(not val):
 		return 0, default_currency_code, 0
 
 	val = val[0]
 	currency_code = currency_str.replace(val, "").strip().upper()
+
+	if(val[0] == "."):
+		val = "0." + val[1:].replace(".", "", 1)
+
 	currency_data = currencies_list.get(currency_code)
 	if(not currency_data):
 		if(country_code):
@@ -74,12 +78,16 @@ def convert_currency(val, from_currency='APP_CURRENCY', to_currency='POINTS'):
 
 # simply parse number , units
 def parse_string_to_units(full_str, default_unit="EUR"):
-	val = num_regex.findall(full_str)
+	val = NUM_REGEX.findall(full_str)
 	if(not val):
 		return 0, default_unit
 
 	units_value = val[0]
 	units_code = full_str.replace(units_value, "").strip() or default_unit
+
+	if(units_value[0] == "."):
+		units_value = "0." + units_value[1:].replace(".", "", 1)
+
 
 	return float(units_value or "0"), units_code
 
