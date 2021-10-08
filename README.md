@@ -1,5 +1,100 @@
-# High performance gevent based python3 server with minimal string copy operations.
-Very simplistic API, Best suited for API servers, websocket handling. Fastest in the python town you could say ; ). 
+# High performance gevent based python3 server.
+Very simplistic API, Best suited for API servers, websocket, realtime games, chat. 
+Generates autoapi docs and packed with a bunch of useful utilities.
+
+schema generator and validation in 200 lines.
+
+#### Schema generator and validation (inplace) 
+
+```python
+
+class Test2(Object):
+	a: Array(int)
+	b: Int
+	c: Str(format="datetime")
+	d: Optional[Str(format="datetimez")]
+	e: Str(maxlen=9)
+	
+
+	def __init__(self):
+		self.a = ["string"]
+		self.b = 100
+		self.c = "2021-10-08 14:39:56.621851"
+		self.e = "somerandomstring"
+
+
+test2_schema, test2_validator = schema(Test2)
+
+
+print(json.dumps(test2_schema, indent=4))
+
+
+obj = Test2()
+print(obj.__dict__)
+
+test2_validator(obj)
+print(obj.__dict)
+
+```
+
+Let's build few cross platform applications
+
+Example 1: (PasteBin)
+- Create a paste, with some text, restrict to users, password, file upload
+
+
+```python
+
+import blaster # should be first line, does the gevent monkey patch
+from blaster.base import route
+from blaster.schema import Object
+
+class CreatePostRequest(Object):
+	title: Str(maxlen=100)
+	content: Str
+	user_ids: Optional[Array(str)]
+	password: Optional[Str(maxlen=100)]
+	upload: Optional[Str(format=binary)] #this will actually be a dict {"data": .., "headers": .., "attrs": ...}
+
+
+
+class PasteResponse(Object):
+	title: Str(maxlen=100)
+	content: Str
+	created_by: Str
+	password: Optional[Str]
+	
+
+
+@route("/create", methods=POST)
+def create(req: CreatePostRequest) -> CreatedPasteResponse:   #give the argument a type and it's available to you, check all available types
+	if(req.upload):
+		pass
+
+
+
+
+```
+
+
+
+
+Example 2: ()
+
+
+
+
+
+
+
+```json
+{
+	"answers": {"suspicion": {"value": "fake_booking"}},
+	"errors": {"field_id": "sorry this is invalid answer"},
+	"goto": 1,
+	"finish": true
+}
+```
 
 
 See examples in the examples folder

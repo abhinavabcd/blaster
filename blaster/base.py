@@ -1104,6 +1104,63 @@ def static_file_handler(_base_folder_path_, default_file_path="index.html", file
 	
 	return file_handler
 
+####################Auto api response utilities
+class AutoApiResponse:
+	data = None
+	templates = None
+	frame_template = None
+	meta_tags = None
+	return_type_param = None
+
+	def __init__(self, data, template=None,
+			frame_template=None, templates=None, meta_tags=None,
+			return_type_param="return_type"
+		):
+		self.data = data
+		self.frame_template = frame_template
+		self.meta_tags = meta_tags
+		self.templates = {"content": template}
+		self.return_type_param = return_type_param
+		if(templates):
+			self.templates.update(templates)
+
+def auto_api_response(request_params, response):
+	(status, headers, body) = App.response_body_to_parts(response)
+	if(isinstance(body, AutoApiResponse)):
+		#just keep a reference as we overwrite body variable
+		blaster_response_obj = body
+		#set body as default to repose_obj.data
+		body = blaster_response_obj.data
+		return_type = request_params.get(blaster_response_obj.return_type_param)
+		#standard return_types -> json, content, None(=>content inside frame)
+		if(return_type != "json"):
+			#if template file is given and body should be a dict for the template
+			templates = blaster_response_obj.templates
+			#if no template given or returns just the blaster_response_obj.data
+			template_exists \
+				= (return_type and templates.get(return_type))\
+				or blaster_response_obj.templates.get("content")
+
+			if(template_exists and isinstance(body, dict)):
+				tmpl_rendered = template_exists.render(
+					request_params=request_params,
+					**body
+				)
+
+				frame_template = blaster_response_obj.frame_template
+				#if there is a return type, just retutn the template
+				#render the full frame
+				if(return_type or not frame_template):
+					body = tmpl_rendered # partial
+
+				else: # return type is nothing -> return full frame
+					body = frame_template.render(
+						body_content=tmpl_rendered,
+						meta_tags=blaster_response_obj.meta_tags
+					)
+	return status, headers, body
+
+
 
 #add a default arg hook
 def _get_web_socket_handler(request_params):

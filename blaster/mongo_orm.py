@@ -303,7 +303,12 @@ class Model(object):
 						if(isinstance(v, list)):
 							v = self.get_custom_list(k, v)
 			else:
-				cur_value = getattr(self, k, _OBJ_END_)
+				cur_value = None
+				if(not self.__is_new):
+					cur_value = self._original_doc.get(k, _OBJ_END_)
+				else:
+					cur_value = getattr(self, k, _OBJ_END_) # existing value
+
 				if(cur_value != v):
 					self._set_query_updates[k] = v
 		self.__dict__[k] = v
@@ -382,6 +387,7 @@ class Model(object):
 		cls = self.__class__
 		#remove existing pk_tuple in cache
 		cls.remove_from_cache(self)
+		self.__is_new = False # this is not a new object
 		self._initializing = True
 
 		self.__check_and_set_initial_defaults(doc)
@@ -431,11 +437,11 @@ class Model(object):
 
 		elif(shard_key == None):
 			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print(
-				"None type shard keys will be ignored and wont be available for query! Let me know feedback!"
+				"#MONGO: None type shard keys will be ignored and wont be available for query! Let me know feedback!"
 			)
 			return []
 
-		raise Exception("Shard keys must be integers or strings or {'$in': [VALUES]}: got %s"%(str(shard_key),))
+		raise Exception("#MONGO: Shard keys must be integers or strings or {'$in': [VALUES]}: got %s"%(str(shard_key),))
 
 	@classmethod
 	def get_collections_from_query(cls, _query):
@@ -578,7 +584,7 @@ class Model(object):
 				_consistency_checks.update(more_conditions)
 
 			#get the shard where current object is
-			primary_shard_key = getattr(self, cls._shard_key_)
+			primary_shard_key = self._original_doc[cls._shard_key_]
 			primary_collection_shard = cls.get_collection(
 				primary_shard_key
 			)
@@ -602,8 +608,7 @@ class Model(object):
 			#is this concurrent update by someone else?
 			#is this because of more conditions given by user?
 			#1. fetch from db again
-			_collection_shard = cls.get_collection(getattr(self, cls._shard_key_))
-			_doc_in_db = _collection_shard.find_one(self.pk())
+			_doc_in_db = primary_collection_shard.find_one(self.pk())
 			if(not _doc_in_db): # moved out of shard or pk changed
 				return False
 			#2. update our local copy
@@ -614,7 +619,13 @@ class Model(object):
 				remote_db_val = get_by_key_list(self._original_doc, *_k.split("."))
 				if(_v != remote_db_val):
 					can_retry = True # local copy consistency check has failed, retry again
-					print("MONGO", "concurrent_update", datetime.now(), json.dumps({"model": cls.__name__, "_query": _query}))
+					print("MONGO", "concurrent_update", datetime.now(), json.dumps({
+							"model": cls.__name__,
+							"_query": _query,
+							"remote_val": remote_db_val,
+							"_key": _k
+						})
+					)
 
 			if(not can_retry):
 				return False
@@ -936,7 +947,6 @@ class Model(object):
 				raise Exception("Need to sepcify _id when sharded by _id")
 
 			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: new object values", cls, self._set_query_updates)
-			self.__is_new = False
 			_collection_shard = cls.get_collection(
 				str(getattr(self, shard_key_name))
 			)
@@ -998,7 +1008,7 @@ class Model(object):
 
 			is_committed = self.update(_update_query)
 			if(not is_committed):
-				raise Exception("Couldn't commit, either a concurrent update modified this or query has issues", self.pk())
+				raise Exception("MONGO: Couldn't commit, either a concurrent update modified this or query has issues", self.pk(), _update_query)
 
 		#clear and reset pk to new
 		self.pk(renew=True)
@@ -1011,7 +1021,7 @@ class Model(object):
 	def delete(self):
 		_Model = self.__class__
 		if(_Model._is_secondary_shard):
-			raise Exception("Cannot delete secondary shard item")
+			raise Exception("MONGO: Cannot delete secondary shard item")
 		#Note: when we know the _id and the shard we basically delete them by _id
 
 		_Model._trigger_event(EVENT_BEFORE_DELETE, self)
@@ -1019,7 +1029,7 @@ class Model(object):
 		_Model.propagate_update_to_secondary_shards(self._original_doc, {})
 
 		#find which pimary shard it belongs to and delete it there
-		collection_shard = _Model.get_collection(getattr(self, _Model._shard_key_))
+		collection_shard = _Model.get_collection(self._original_doc[_Model._shard_key_])
 		_delete_query = {"_id": self._id}
 		collection_shard.delete_one(_delete_query)
 		IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: deleting from primary",

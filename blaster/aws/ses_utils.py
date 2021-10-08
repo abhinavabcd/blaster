@@ -4,11 +4,11 @@ Created on 05-Jun-2019
 @author: abhinav
 '''
 from ..connection_pool import use_connection_pool
-from ..aws.push_tasks import push_task
 from ..logging import LOG_WARN
+from ..common_funcs_and_datastructures import retry, background_task
 
-
-@push_task
+@background_task
+@retry(3)
 @use_connection_pool(ses_client="ses")
 def send_email(sender, to_list, subject, body_text=None, body_html=None, ses_client=None):
     """

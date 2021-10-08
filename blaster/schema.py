@@ -1,11 +1,24 @@
 import typing
+import re
+from base64 import b64decode
+from datetime import datetime
 import ujson as json
 from typing import get_type_hints
 from functools import partial
 #bare minimum validations and schema generators
 _OBJ_END_ = object()
-Optional = typing.Optional
 
+
+
+class _Optional:
+	def __init__(self, *types):
+		self._types = types
+
+	def __getitem__(self, *keys):
+		return _Optional(*keys)
+
+
+Optional = _Optional()
 
 class Int:
 	def __init__(self, one_of=None, _min=_OBJ_END_, _max=_OBJ_END_, default=_OBJ_END_):
@@ -37,14 +50,24 @@ class Int:
 			raise Exception("should be one of %s"%(str(self.one_of)))
 		return e
 
-
-
 class Str:
-	def __init__(self, one_of=None, minlen=0, maxlen=4294967295, default=_OBJ_END_):
+
+	format_validators = {
+		"date-time": lambda e: datetime.strptime(e.strip(), "%Y-%m-%dT%H:%M:%S.%fZ"),
+		"date": lambda e: datetime.strptime(e.strip(), "%Y-%m-%d"),
+		"binary": lambda e: e,
+		"byte": lambda e: b64decode(e)
+	}
+
+	def __init__(self, one_of=None, minlen=0, maxlen=4294967295, regex=None, default=_OBJ_END_, **kwargs):
 		self.minlen = minlen
 		self.maxlen = maxlen
 		self.one_of = set(one_of) if one_of else None
 		self._default = default
+		self.regex = regex and re.compile(regex)
+		_fmt = kwargs.pop("format", None)
+		self.fmt = _fmt and Str.format_validators[_fmt]
+
 		#make schema
 		self._schema_ = _schema = {"type": "string"}
 		if(default != _OBJ_END_):
@@ -56,6 +79,10 @@ class Str:
 			_schema["maximum"] = self.maxlen
 		if(self.one_of):
 			_schema["enum"] = list(self.one_of)
+		if(regex):
+			_schema["pattern"] = regex
+		if(_fmt):
+			_schema["format"] = _fmt
 
 	def validate(self, e):
 		if(e == None):
@@ -65,14 +92,18 @@ class Str:
 		if(len(e) < self.minlen):
 			raise Exception("should be minlen %s"%(self.minlen))
 		if(len(e) > self.maxlen):
-			raise Exception("more than maxlen %s"%(self.maxlen))
+			e = e[:self.maxlen]
 		if(self.one_of and e not in self.one_of):
 			raise Exception("should be one of %s"%(str(self.one_of)))
+		if(self.regex and not self.regex.fullmatch(e)):
+			raise Exception("did not match the pattern %s"%(str(self.one_of)))
+		if(self.fmt):
+			return self.fmt(e)
 		return e
 
 class Array:
 	def __init__(self, _types, default=_OBJ_END_):
-		self._types = _types if isinstance(_types, (list, tuple)) else (_types,)
+		self._types = _types if isinstance(_types, (list, tuple)) else [_types]
 		self._default = default
 
 		#ceontents validation
@@ -234,6 +265,9 @@ def schema(x):
 			):
 				_type = _type.__args__[0]
 				is_required = False
+			if(isinstance(_type, _Optional)):
+				_type = _type._types[0]
+				is_required = False
 			_schema_and_validation = schema(_type)
 			if(_schema_and_validation):
 				_properties[k], _validations[k] = _schema_and_validation
@@ -300,7 +334,7 @@ def schema(x):
 						nullable=is_nullable
 					)
 
-	elif(x == int):
+	elif(x == int or x == Int):
 		return {"type": "integer"}, to_int
 
 	elif(x == float):
@@ -340,37 +374,3 @@ def all_subclasses(cls):
 
 
 schema.init = lambda: [schema(x) for x in all_subclasses(Object)]
-
-
-if __name__ == "__main__":
-	class Test2(Object):
-		a: Array(int)
-
-		def __init__(self):
-			self.a = ["string"]
-
-	class Test(Object):
-		a: Array
-		b: Array((int, str))
-		c: Object
-		d: int
-		e: Object(p=int, q=str, r=Array([int, str]))
-		f: Test2
-		g: Str(minlen=10) = "hello"
-
-		def __init__(self, **kwargs):
-			self.a = [1, 2, 3, "damg"]
-			self.b = [1, 2]
-			self.c = {"a" : "hello"}
-			self.d = 1
-			self.e = {"p": 1, "q": [100], "r": ["hello"]}
-			self.f = Test2()
-			#self.g = "abhinav reddy"
-
-	import json
-	schema.init()
-
-	print(json.dumps(schema.defs, indent=4))
-	i = Test()
-	Test.validate(i)
-	print(i.a, i.b, i.c, i.d, i.e, i.f.a, i.g)
