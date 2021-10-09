@@ -418,9 +418,31 @@ class Model(object):
 
 	#give a shard key from query we return multiple connect
 	@classmethod
-	def get_collections_from_shard_key(cls, shard_key):
+	def get_collections_to_query(cls, _query, sort):
+		shard_key = _query.get(cls._shard_key_, _OBJ_END_)
+		if(shard_key == None
+			or shard_key == _OBJ_END_
+		):
+			return None
+
+		#if it's a secondary shard check if we can perform the query on this Model
+		if(cls._is_secondary_shard):
+			#check if we can construct a secondary shard query
+			for query_attr_name, query_attr_val in _query.items():
+				attr_exists_in_shard = cls._attrs.get(query_attr_name, _OBJ_END_)
+				if(attr_exists_in_shard == _OBJ_END_):
+					return None
+
+			if(sort):
+				#check if we can perform sort on the secondary index
+				for sort_key, sort_direction in sort:
+					if(sort_key not in cls._attrs):
+						#cannot perform sort
+						return None
+
 		if(isinstance(shard_key, (str, int))):
 			return [cls.get_collection(shard_key)]
+
 		elif(isinstance(shard_key, dict)):
 			_in_values = shard_key.get("$in", _OBJ_END_)
 			if(_in_values != _OBJ_END_):
@@ -434,25 +456,6 @@ class Model(object):
 			_eq_value = shard_key.get("$eq", _OBJ_END_)
 			if(_eq_value != _OBJ_END_):
 				return [cls.get_collection(_eq_value)]
-
-		elif(shard_key == None):
-			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print(
-				"#MONGO: None type shard keys will be ignored and wont be available for query! Let me know feedback!"
-			)
-			return []
-
-		raise Exception("#MONGO: Shard keys must be integers or strings or {'$in': [VALUES]}: got %s"%(str(shard_key),))
-
-	@classmethod
-	def get_collections_from_query(cls, _query):
-		shard_key = _query.get(cls._shard_key_)
-
-		if(shard_key):
-			return cls.get_collections_from_shard_key(shard_key)
-
-		#could'nt finds shards, return all shards
-		return cls.get_collection_on_all_db_nodes()
-
 
 	@classmethod
 	def propagate_update_to_secondary_shards(cls, before_doc, after_doc, force=False):
@@ -565,7 +568,6 @@ class Model(object):
 			#no additional conditions, retries ensure the state of
 			#current object with us matches remote before updateing
 
-
 			_consistency_checks = {} # consistency between local copy and that on the db, to check concurrent updates
 			#all the fields that we are supposed to update
 			for _k, _v in _update_query.items():
@@ -652,6 +654,7 @@ class Model(object):
 		offset=None,
 		limit=None,
 		read_preference=ReadPreference.PRIMARY,
+		force_primary=False,
 		**kwargs
 	):
 		queries = None
@@ -683,39 +686,14 @@ class Model(object):
 		# collection: [_query,...]
 		collections_to_query = {}
 		for _query in queries:
-			not_possible_in_the_secondary_shard = True
-			shard_key = _query.get(cls._shard_key_, _OBJ_END_)
-			if(shard_key == _OBJ_END_):
-				# querying on secondary shards as main shard key doesn't exist
-				# so try each secondary shard and test if we can query on it
-				# otherwise we go with primary shard
+			is_querying_on_secondary_shard = False
+			if(not force_primary):
+				#try if we can query it on secondary shards
 				for secondary_shard_key_name, _shard in cls._secondary_shards_.items():
-					secondary_shard_key = _query.get(secondary_shard_key_name, _OBJ_END_)
-					if(secondary_shard_key == _OBJ_END_):
+					secondary_collection_shards = _shard._Model_.get_collections_to_query(_query, sort)
+					if(not secondary_collection_shards):
 						continue
-					#check if we can construct a secondary shard query
-					#extract keys from the query to create new secondary shard query
-					not_possible_in_the_secondary_shard = False
-					if(sort):
-						#check if we can perform sort on the secondary index
-						for sort_key, sort_direction in sort:
-							if(sort_key not in _shard.attributes):
-								#cannot perform sort
-								not_possible_in_the_secondary_shard = True
-
-					secondary_shard_query = {}
-					for query_attr_name, query_attr_val in _query.items():
-						attr_exists_in_shard = _shard.attributes.get(query_attr_name, _OBJ_END_)
-						if(attr_exists_in_shard == _OBJ_END_):
-							not_possible_in_the_secondary_shard = True
-							break
-						secondary_shard_query[query_attr_name] = query_attr_val
-
-					if(not_possible_in_the_secondary_shard):
-						#try next secondary shard
-						continue
-
-					secondary_collection_shards = _shard._Model_.get_collections_from_shard_key(secondary_shard_key)
+					is_querying_on_secondary_shard = True
 					for collection_shard in secondary_collection_shards:
 						_key = id(collection_shard)
 						shard_and_queries = collections_to_query.get(_key)
@@ -723,12 +701,13 @@ class Model(object):
 							collections_to_query[_key] \
 								= shard_and_queries \
 								= (collection_shard, [], _shard._Model_)
-						shard_and_queries[1].append(secondary_shard_query)
-					break
+						shard_and_queries[1].append(_query)
 
-			if(shard_key != _OBJ_END_ and not_possible_in_the_secondary_shard):
+					break # important
+
+			if(not is_querying_on_secondary_shard):
 				#query on the primary shard
-				collection_shards = cls.get_collections_from_shard_key(shard_key)
+				collection_shards = cls.get_collections_to_query(_query, sort)
 				for collection_shard in collection_shards:
 					_key = id(collection_shard)
 					shard_and_queries = collections_to_query.get(_key)
@@ -863,7 +842,7 @@ class Model(object):
 							_query = {"$or": [{"_id": _doc["_id"]} for _doc in docs]}
 
 						IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: requerying", cls, _query)
-						_requeried_from_primary = {_doc._id: _doc for _doc in cls.query(_query)}
+						_requeried_from_primary = {_doc._id: _doc for _doc in cls.query(_query, force_primary=True)}
 						for _id in _ids_order:
 							item = _requeried_from_primary.get(_id)
 							if(not item):
