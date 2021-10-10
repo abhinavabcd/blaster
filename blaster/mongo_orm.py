@@ -78,7 +78,7 @@ class Model(object):
 		return str(self._id)
 
 	@classmethod
-	def get(cls, _pk=None, use_the_cache=True, **kwargs):
+	def get(cls, _pk=None, use_cache=True, **kwargs):
 		if(_pk != None):
 			is_single_item = False
 			_pks = None
@@ -114,7 +114,7 @@ class Model(object):
 
 				#check already in cache
 				_item_in_cache = None
-				if(use_the_cache and cls.__cache__):
+				if(use_cache and cls.__cache__):
 					_item_in_cache = cls.__cache__.get(_pk_tuple)
 
 				if(not _item_in_cache):
@@ -239,19 +239,32 @@ class Model(object):
 			def remove(this, item): # can raise value exception
 				super(ListObj, this).remove(item)
 				# reset full array very inefficient : (
-				self._set_query_updates[path] = this
+				_pull = self._other_query_updates.get("$pull")
+				if(_pull == None):
+					self._other_query_updates["$pull"] = _pull = {}
+				already_pulled_values = _pull.get(path, _OBJ_END_)
+				if(already_pulled_values == _OBJ_END_):
+					_pull[path] = item
+				else:
+					if(isinstance(already_pulled_values, dict) and "$in" in already_pulled_values):
+						_pull[path]["$in"].append(item)
+					else:
+						_pull[path]["$in"] = [already_pulled_values, item]
 
 			def pop(this, i=None):
 				if(i == None):
 					i = 1
 					ret = super(ListObj, this).pop()
-				else:
-					ret = super(ListObj, this).pop(0)
+				elif(i == 0):
+					ret = super(ListObj, this).pop(0) # remove first item
 					i = -1
+				else:
+					raise Exception("can only remove first or last elements, supported arg is 0 or None")
+
 				if(not _initializing):
 					_pop = self._other_query_updates.get("$pop")
 					if(_pop == None):
-						_pop = self._other_query_updates["$pop"] = {}
+						self._other_query_updates["$pop"] = _pop = {}
 					_pop[path] = i
 				#convert them to original object types
 				if(isinstance(ret, list)):
@@ -707,7 +720,7 @@ class Model(object):
 
 			if(not is_querying_on_secondary_shard):
 				#query on the primary shard
-				collection_shards = cls.get_collections_to_query(_query, sort)
+				collection_shards = cls.get_collections_to_query(_query, sort) or []
 				for collection_shard in collection_shards:
 					_key = id(collection_shard)
 					shard_and_queries = collections_to_query.get(_key)
