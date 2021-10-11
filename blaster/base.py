@@ -551,7 +551,8 @@ class App:
 
 				regex = re.sub(r'\{([a-zA-Z_][a-zA-Z0-9_]*)\}', '(?P<\g<1>>[^/]*)', regex)
 				regex = re.sub(r'\{\+([a-zA-Z_][a-zA-Z0-9_]*)\}', '(?P<\g<1>>[^/]+)', regex)
-				regex = re.sub(r'\{\*([a-zA-Z_][a-zA-Z0-9_]*)\}', '(?P<\g<1>>.+)', regex)
+				regex = re.sub(r'\{\*([a-zA-Z_][a-zA-Z0-9_]*)\}', '(?P<\g<1>>.*)', regex)
+				regex = re.sub(r'\{\*\+([a-zA-Z_][a-zA-Z0-9_]*)\}', '(?P<\g<1>>.+)', regex)
 
 			existing_regex_method_handlers = regexes_map.get(regex)
 			if(not existing_regex_method_handlers):
