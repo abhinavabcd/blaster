@@ -800,6 +800,7 @@ class App:
 						break
 
 			if(not handler):
+				resuse_socket_for_next_http_request = False
 				raise Exception("Method not found")
 
 			#parse the headers

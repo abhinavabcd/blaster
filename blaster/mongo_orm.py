@@ -637,7 +637,7 @@ class Model(object):
 					print("MONGO", "concurrent_update", datetime.now(), json.dumps({
 							"model": cls.__name__,
 							"_query": _query,
-							"remote_val": remote_db_val,
+							"value_must_be": remote_db_val,
 							"_key": _k
 						})
 					)
