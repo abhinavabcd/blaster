@@ -1297,7 +1297,11 @@ _partitioned_background_task_queues = tuple(Queue() for i in range(4))
 def _process_partitioned_task_queue_items(_queue):
 	while start_background_thread.can_run or not _queue.empty():
 		func, args, kwargs = _queue.get()
-		func(*args, **kwargs)
+		try:
+			func(*args, **kwargs)
+		except Exception as ex:
+			LOG_WARN("background_thread_run_error", func_name=func.__name__, msg=str(ex))
+
 
 #singleton
 def __start_task_processors():

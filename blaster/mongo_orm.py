@@ -607,7 +607,7 @@ class Model(object):
 			#query and update the document
 			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print(
 				"\n\n#MONGO: update before and query",
-				cls, _query, self._original_doc, _update_query
+				cls, "\n\n", _query, "\n\n", self._original_doc, "\n\n", _update_query
 			)
 			updated_doc = primary_collection_shard.find_one_and_update(
 				_query,
@@ -920,12 +920,12 @@ class Model(object):
 			handlers.append(func)
 
 	@classmethod
-	def _trigger_event(cls, event, obj):
+	def _trigger_event(cls, event, *obj):
 		handlers = cls._event_listeners_.get(event)
 		if(not handlers):
 			return
 		for handler in handlers:
-			handler(obj)
+			handler(*obj)
 
 	def before_update(self):
 		pass

@@ -49,7 +49,7 @@ import blaster # should be first line, does the gevent monkey patch
 from blaster.base import route
 from blaster.schema import Object
 
-class CreatePostRequest(Object):
+class CreatePasteRequest(Object):
 	title: Str(maxlen=100)
 	content: Str
 	user_ids: Optional[Array(str)]
@@ -67,7 +67,7 @@ class PasteResponse(Object):
 
 
 @route("/create", methods=POST)
-def create(req: CreatePostRequest) -> CreatedPasteResponse:   #give the argument a type and it's available to you, check all available types
+def create(req: CreatePasteRequest) -> PasteResponse:   #give the argument a type and it's available to you, check all available types
 	if(req.upload):
 		pass
 
@@ -76,25 +76,6 @@ def create(req: CreatePostRequest) -> CreatedPasteResponse:   #give the argument
 
 ```
 
-
-
-
-Example 2: ()
-
-
-
-
-
-
-
-```json
-{
-	"answers": {"suspicion": {"value": "fake_booking"}},
-	"errors": {"field_id": "sorry this is invalid answer"},
-	"goto": 1,
-	"finish": true
-}
-```
 
 
 See examples in the examples folder
