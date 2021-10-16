@@ -22,6 +22,7 @@ EVENT_BEFORE_UPDATE = 1
 EVENT_AFTER_UPDATE = 2
 EVENT_BEFORE_CREATE = 3
 EVENT_AFTER_CREATE = 4
+EVENT_MONGO_AFTER_UPDATE = 5
 
 #just a random constant object to check for non existent keys without catching KeyNotExist exception
 _OBJ_END_ = object()
@@ -637,7 +638,8 @@ class Model(object):
 					print("MONGO", "concurrent_update", datetime.now(), json.dumps({
 							"model": cls.__name__,
 							"_query": _query,
-							"value_must_be": remote_db_val,
+							"remote_value": remote_db_val,
+							"local_value": _v,
 							"_key": _k
 						})
 					)
@@ -650,6 +652,8 @@ class Model(object):
 			self._original_doc, # latest from db
 			updated_doc
 		)
+
+		cls._trigger_event(EVENT_MONGO_AFTER_UPDATE, self._original_doc, updated_doc)
 
 		#reset all values
 		self.reinitialize_from_doc(updated_doc)
