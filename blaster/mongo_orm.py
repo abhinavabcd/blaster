@@ -14,7 +14,7 @@ from .common_funcs_and_datastructures import jump_hash, ExpiringCache,\
 from .config import DEBUG_LEVEL as BLASTER_DEBUG_LEVEL, IS_DEV
 from gevent.threading import Thread
 
-_VERSION_ = 100
+_VERSION_ = 101
 MONGO_DEBUG_LEVEL = BLASTER_DEBUG_LEVEL
 EVENT_BEFORE_DELETE = -2
 EVENT_AFTER_DELETE = -1
@@ -472,7 +472,7 @@ class Model(object):
 				return [cls.get_collection(_eq_value)]
 
 	@classmethod
-	def propagate_update_to_secondary_shards(cls, before_doc, after_doc, force=False):
+	def propagate_update_to_secondary_shards(cls, before_doc, after_doc, force=False, specific_shards=None):
 		#CONS of this multi table sharding:
 		#- Primary index updated but secondary constraint can fail
 		#- in that case, the data exists in primary shard, but it's not valid data
@@ -480,7 +480,10 @@ class Model(object):
 		# idea1: move this to transactions if we have secondary shards ?
 		# idea2: revert the original update
 		#update all secondary shards
-		for shard_key, shard in cls._secondary_shards_.items():
+		for shard_key in (specific_shards or cls._secondary_shards_.keys()):
+			#actual secondary shard
+			shard = cls._secondary_shards_[shard_key]
+
 			secondary_Model = shard._Model_
 
 			#shard keys
@@ -513,7 +516,7 @@ class Model(object):
 
 
 				if(_after_shard_key != None and after_doc["_id"]):
-					for attr, _attr_obj in shard.attributes.items():
+					for attr, _attr_obj in shard.attrs.items():
 						_secondary_values_to_set[attr] = after_doc.get(attr)
 					#just force set _id again
 					_secondary_values_to_set["_id"] = after_doc["_id"]
@@ -531,7 +534,7 @@ class Model(object):
 				_secondary_values_to_unset = {}
 				#if someone else has modified
 				#old values check in pk will not overwrite it
-				for attr in shard.attributes:
+				for attr in shard.attrs:
 					old_value = before_doc.get(attr, _OBJ_END_)
 					new_value = after_doc.get(attr, _OBJ_END_)
 					if(old_value != new_value):
@@ -1046,13 +1049,13 @@ class Model(object):
 
 
 class SecondaryShard:
-	attributes = None
+	attrs = None
 	indexes = None
 	collection_name = None
 	_Model_ = None
 
 	def __init__(self):
-		self.attributes = {}
+		self.attrs = {}
 		self.indexes = []
 
 
@@ -1067,7 +1070,7 @@ class CollectionTracker(Model):
 	primary_shard_key = Attribute(str)
 	secondary_shard_keys = Attribute(list)
 	pk_attrs = Attribute(list)
-
+	attrs = Attribute(list)
 
 #tags shard keys to the attributes and use it when intializing the model
 def SHARD_BY(primary=None, secondary=None):
@@ -1096,15 +1099,23 @@ Control Jobs
 '''
 class ControlJobs(Model):
 	_db_name_ = "control"
-	_collection_name_ = "jobs"
+	_collection_name_ = "jobs_v2"
 
+
+	##JOB TYPES
+	RESHARD = 0
+	CREATE_SECONDARY_SHARD = 1
+	ADD_NEW_ATTRIBUTES_TO_SECONDARY_SHARD = 2
+	
+
+	##attributes
 	parent__id = Attribute(str)
 	num_child_jobs = Attribute(int, default=0) # just for reconcillation
 	_type = Attribute(int) # reshard=>0, create_secondary_index=>1, create_primary_index=>2
 	db = Attribute(str)
 	collection = Attribute(str)
-	status = Attribute(int, default=0) # 0=>not started, 1=>progress, 2=>completed
 	uid = Attribute(str) # unique identifier not to duplicate jobs
+	status = Attribute(int, default=0) # 0=>not started, 1=>progress, 2=>completed
 
 	worker_id = Attribute(str) # worker id
 	worker_should_update_within_ms = Attribute(int, default=60000) # contract that worker should update every few millis
@@ -1115,17 +1126,10 @@ class ControlJobs(Model):
 	updated_at = Attribute(int, default=cur_ms)
 
 	INDEX(
-		(db, collection, _type, uid),
+		(db, collection, _type, uid, status),
 		(db, collection, _type, status, {"unique": False}),
 		(parent__id, {"unique": False})
 	)
-
-	SHARD_BY(primary=db)
-
-
-
-	##Constants
-	CREATE_SECONDARY_SHARD = 1
 
 	def before_update(self):
 		self.updated_at = cur_ms()
@@ -1270,7 +1274,7 @@ def initialize_model(Model):
 
 			if(_secondary_shard):
 				for _attr_name, _ordering in pymongo_index:
-					_secondary_shard.attributes[_attr_name] = getattr(
+					_secondary_shard.attrs[_attr_name] = getattr(
 						Model,
 						_attr_name
 					)
@@ -1327,8 +1331,6 @@ def initialize_model(Model):
 		if(not collection_tracker
 			or not collection_tracker.db_nodes
 			or not collection_tracker.primary_shard_key
-			#to support _VERSION_ < 100
-			or collection_tracker.is_primary_shard == None # secondary shard keys are there and not pk_attrs
 		):
 			print(
 				"\n\n#MONGOORM_IMPORTANT_INFO : "
@@ -1350,11 +1352,17 @@ def initialize_model(Model):
 			collection_tracker = CollectionTracker(
 				_id=Model._collection_tracker_key_,
 				db_nodes=db_nodes,
-				is_primary_shard=0 if Model._is_secondary_shard else 1,
+				is_primary_shard=1 if not Model._is_secondary_shard else 0,
 				primary_shard_key=Model._shard_key_,
 				secondary_shard_keys=list(Model._secondary_shards_.keys()),
-				pk_attrs=list(Model._pk_attrs.keys())
+				pk_attrs=list(Model._pk_attrs.keys()),
+				attrs=list(Model._attrs.keys())
 			).commit(force=True)
+
+		#version < 101 support
+		if(not collection_tracker.attrs):
+			collection_tracker.attrs = list(Model._attrs.keys())
+			collection_tracker.commit()
 
 		Model._db_nodes_ = tuple(DatabaseNode(**_db_node) for _db_node in collection_tracker.db_nodes)
 		#TODO: find new secondary shards by comparing collection_tracker.secondary_shard_keys, Model._secondary_shards_.keys()
@@ -1363,25 +1371,52 @@ def initialize_model(Model):
 			and Model._secondary_shards_
 			and collection_tracker.primary_shard_key != Model._shard_key_
 		):
-			raise Exception("\n\n#MONGO_EXCEPTION: Primary shard key changed for ", Model, "It has secondary shards, that point to primary shard key, if you absolutely have to reindex whole data again")
+			raise Exception("\n\n#MONGO_EXCEPTION: Primary shard key changed for ", Model, "It has secondary shards, that point to primary shard key. You will have to drop shard secondary shards and force reindex everything again")
 
 
-		#create diff jobs
-		to_create_secondary_shard_key, to_delete_secondary_shard_key = list_diff2(
-			Model._secondary_shards_.keys(),
-			collection_tracker.secondary_shard_keys
-		)
-		for shard_key in to_create_secondary_shard_key:
-			try:
-				ControlJobs(
-					db=Model._db_name_,
-					collection=Model._collection_name_with_shard_,
-					_type=ControlJobs.CREATE_SECONDARY_SHARD,
-					uid=shard_key
-				).commit()
-				IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: create a control job to create secondary sharding", Model, shard_key)
-			except DuplicateKeyError as ex:
-				pass
+		if(not Model._is_secondary_shard):
+			#create diff jobs, check if new shard is indicated
+			to_create_secondary_shard_key, to_delete_secondary_shard_key = list_diff2(
+				list(Model._secondary_shards_.keys()),
+				collection_tracker.secondary_shard_keys
+			)
+			for shard_key_name in to_create_secondary_shard_key:
+				try:
+					ControlJobs(
+						_id=str(cur_ms()),
+						db=Model._db_name_,
+						collection=Model._collection_name_with_shard_,
+						_type=ControlJobs.CREATE_SECONDARY_SHARD,
+						uid=shard_key_name
+					).commit()
+					IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: create a control job to create secondary shard", Model, shard_key_name)
+				except DuplicateKeyError:
+					print("Secondary shard not created yet, queries on this shard won't give any results, please propagate all data to this shard", Model, shard_key_name)
+
+		if(Model._is_secondary_shard):
+			to_add_attrs, to_remove_attrs = list_diff2(
+				list(Model._attrs.keys()),
+				collection_tracker.attrs
+			)
+			if(to_add_attrs or to_remove_attrs):
+				try:
+					ControlJobs(
+						_id=str(cur_ms()),
+						db=Model._db_name_,
+						collection=Model._collection_name_with_shard_,
+						_type=ControlJobs.ADD_NEW_ATTRIBUTES_TO_SECONDARY_SHARD,
+						uid="",
+						data={"to_add_attrs": to_add_attrs, "to_remove_attrs": to_remove_attrs}
+					).commit()
+					IS_DEV and MONGO_DEBUG_LEVEL > 1 \
+						and print("\n\n#MONGO: created a control job to change attributes", Model, to_add_attrs, to_remove_attrs)
+					raise Exception("Attributes have been changed on the Secondary shard, you need to backfill all the data, before this orm initializes")
+				except DuplicateKeyError:
+					raise Exception("There is already a pending job to update attributes, it needs to be finished")
+
+
+		#check if new attribute added to secondary shard
+
 
 	#TODO: create or delete index using control jobs
 	for pymongo_index, additional_mongo_index_args in _pymongo_indexes_to_create:
@@ -1408,13 +1443,13 @@ def initialize_model(Model):
 
 		# add primary shard attributes of the main class to
 		# secondary shards too, to identify the original document shard
-		_secondary_shard.attributes[Model._shard_key_] = getattr(Model, Model._shard_key_)
+		_secondary_shard.attrs[Model._shard_key_] = getattr(Model, Model._shard_key_)
 
 		secondary_id_attr = getattr(Model, '_id', None)
 		if(secondary_id_attr):
-			_secondary_shard.attributes['_id'] = secondary_id_attr
+			_secondary_shard.attrs['_id'] = secondary_id_attr
 
-		class_attrs.update(_secondary_shard.attributes)
+		class_attrs.update(_secondary_shard.attrs)
 		#also include the primary key of the primary shard
 		#into secondary shards
 
