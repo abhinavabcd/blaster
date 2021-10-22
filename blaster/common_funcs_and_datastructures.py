@@ -452,12 +452,12 @@ def get_mysql_rows_as_dict(res):
 ########################
 
 def remove_duplicates(lst):
-	exists = {}
+	exists = set()
 	ret = []
 	for i in lst:
 		if(i in exists):
 			continue
-		exists[i] = True
+		exists.add(i)
 		ret.append(i)
 	return ret
 

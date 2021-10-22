@@ -13,6 +13,7 @@ from .common_funcs_and_datastructures import jump_hash, ExpiringCache,\
 	cur_ms, list_diff2, batched_iter, get_by_key_list
 from .config import DEBUG_LEVEL as BLASTER_DEBUG_LEVEL, IS_DEV
 from gevent.threading import Thread
+from .logging import LOG_WARN, LOG_SERVER, LOG_ERROR
 
 _VERSION_ = 101
 MONGO_DEBUG_LEVEL = BLASTER_DEBUG_LEVEL
@@ -28,6 +29,13 @@ EVENT_MONGO_AFTER_UPDATE = 5
 _OBJ_END_ = object()
 #given a list of [(filter, iter), ....] , flattens them
 
+##utility to print collection name + node for logging
+def COLLECTION_NAME(collection):
+	_nodes = collection.database.client.nodes or (("unknown", "unknown"),)
+	for _node in _nodes:
+		return "%s.%s.%d"%(collection.full_name, _node[0], _node[1])
+	return collection.full_name
+	
 class Attribute(object):
 	_type = None
 
@@ -510,8 +518,8 @@ class Model(object):
 				# belonged to a shard delete it
 				if(_secondary_collection and _before_id != None):
 					_secondary_collection.find_one_and_delete(_secondary_pk)
-					IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: deleting from secondary",
-						_secondary_pk, secondary_Model._collection_name_with_shard_
+					IS_DEV and MONGO_DEBUG_LEVEL > 1 and LOG_SERVER("MONGO", description="deleting from secondary",
+						seconday_pk=_secondary_pk, model=secondary_Model.__name__, collection=COLLECTION_NAME(_secondary_collection)
 					)
 
 
@@ -525,12 +533,18 @@ class Model(object):
 						_secondary_values_to_set[shard_key] # same as after_shard_key
 					)
 					#insert new one
-					IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: deleting and inserting new secondary",
-						_secondary_pk, _secondary_values_to_set
+					IS_DEV and MONGO_DEBUG_LEVEL > 1 and LOG_SERVER("MONGO", description="deleting and inserting new secondary",
+						secondary_pk=str(_secondary_pk), values_to_set=str(_secondary_values_to_set),
+						model=secondary_Model.__name__, collection=COLLECTION_NAME(_secondary_collection)
 					)
 					_secondary_collection.insert_one(_secondary_values_to_set)
 				
 			else:
+
+				#check for any attrs to backfill, for these values we don't do
+				#consistency check, but just progate setting the value"
+				attrs_to_backfill = getattr(shard, "_attrs_to_backfill_", None)
+
 				_secondary_values_to_unset = {}
 				#if someone else has modified
 				#old values check in pk will not overwrite it
@@ -544,7 +558,13 @@ class Model(object):
 							_secondary_values_to_set[attr] = new_value
 						#also add this for query for a little bit of more consistency check in query
 						if(old_value != _OBJ_END_ and old_value != new_value): # means it exists and changed, add this to consistency checks
-							_secondary_pk[attr] = old_value
+							if(attrs_to_backfill and attr in attrs_to_backfill):
+								# can be non existing, null or old_value,
+								#there is an issue where we might miss consistency when original doc has non-null, but seconday shard has null value,
+								#Any way this is way better
+								_secondary_pk[attr] = {"$in": [None, old_value]}
+							else:
+								_secondary_pk[attr] = old_value
 
 				if(_secondary_values_to_set or _secondary_values_to_unset):
 					_secondary_updates = {}
@@ -552,7 +572,10 @@ class Model(object):
 						_secondary_updates["$set"] = _secondary_values_to_set
 					if(_secondary_values_to_unset):
 						_secondary_updates["$unset"] = _secondary_values_to_unset
-					IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: updating secondary", _secondary_pk, _secondary_updates)
+					IS_DEV and MONGO_DEBUG_LEVEL > 1 and LOG_SERVER("MONGO", description="updating secondary",
+						model=cls.__name__, collection=COLLECTION_NAME(_secondary_collection),
+						secondary_pk=str(_secondary_pk), secondary_updates=str(_secondary_updates)
+					)
 					#find that doc and update
 					secondary_shard_update_return_value = _secondary_collection.find_one_and_update(
 						_secondary_pk,
@@ -560,8 +583,9 @@ class Model(object):
 					)
 
 					if(not secondary_shard_update_return_value):
-						print("\n\n#MONGO:WARNING!! secondary couldn't be propagated, probably due to concurrent update",
-								cls, secondary_Model, _secondary_pk, _secondary_updates
+						LOG_WARN("MONGO", description="secondary couldn't be propagated, probably due to concurrent update",
+								model=cls.__name__, collection=COLLECTION_NAME(_secondary_collection), secondary_model=str(secondary_Model), secondary_pk=str(_secondary_pk),
+								secondary_updates=str(_secondary_updates)
 							)
 
 	#_add_query is more query other than pk
@@ -608,9 +632,8 @@ class Model(object):
 				primary_shard_key
 			)
 			#query and update the document
-			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print(
-				"\n\n#MONGO: update before and query",
-				cls, "\n\n", _query, "\n\n", self._original_doc, "\n\n", _update_query
+			IS_DEV and MONGO_DEBUG_LEVEL > 1 and LOG_SERVER("MONGO", description="update before and query",
+				model=cls.__name__, collection=COLLECTION_NAME(primary_collection_shard), query="_query", original_doc=str(self._original_doc), update_query=str(_update_query)
 			)
 			updated_doc = primary_collection_shard.find_one_and_update(
 				_query,
@@ -618,7 +641,10 @@ class Model(object):
 				return_document=ReturnDocument.AFTER,
 				**kwargs
 			)
-			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: after update::", cls, updated_doc)
+			IS_DEV and MONGO_DEBUG_LEVEL > 1 and LOG_SERVER("MONGO", description="after update",
+				model=cls.__name__, collection=COLLECTION_NAME(primary_collection_shard),
+				updated_doc=str(updated_doc)
+			)
 
 			if(updated_doc):
 				break # no retry again , all is good
@@ -638,13 +664,13 @@ class Model(object):
 				remote_db_val = get_by_key_list(self._original_doc, *_k.split("."))
 				if(_v != remote_db_val):
 					can_retry = True # local copy consistency check has failed, retry again
-					print("MONGO", "concurrent_update", datetime.now(), json.dumps({
-							"model": cls.__name__,
-							"_query": _query,
-							"remote_value": remote_db_val,
-							"local_value": _v,
-							"_key": _k
-						})
+					LOG_WARN("MONGO", description="concurrent update",
+						model=cls.__name__,
+						collection=COLLECTION_NAME(primary_collection_shard),
+						_query=_query,
+						remote_value=remote_db_val,
+						local_value=_v,
+						_key=_k
 					)
 
 			if(not can_retry):
@@ -830,8 +856,9 @@ class Model(object):
 
 		def query_collection(_Model, _collection, _query, offset=None):
 
-			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print(
-				"\n\n#MONGO: querying", _Model, _collection, _query, sort, offset, limit
+			IS_DEV and MONGO_DEBUG_LEVEL > 1 and LOG_SERVER("MONGO",
+				description="querying", model=_Model.__name__, collection=COLLECTION_NAME(_collection),
+				query=str(_query), sort=str(sort), offset=str(offset), limit=str(limit)
 			)
 
 			ret = _collection.find(_query, **kwargs)
@@ -861,12 +888,12 @@ class Model(object):
 						else:
 							_query = {"$or": [{"_id": _doc["_id"]} for _doc in docs]}
 
-						IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: requerying", cls, _query)
+						IS_DEV and MONGO_DEBUG_LEVEL > 1 and LOG_SERVER("MONGO", description="requerying", model=cls.__name__, query=str(_query))
 						_requeried_from_primary = {_doc._id: _doc for _doc in cls.query(_query, force_primary=True)}
 						for _id in _ids_order:
 							item = _requeried_from_primary.get(_id)
 							if(not item):
-								IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: WARNING: missing from primary", _id)
+								IS_DEV and MONGO_DEBUG_LEVEL > 1 and LOG_SERVER("MONGO", description="missing from primary", model=cls.__name__, _id=str(_id))
 								continue
 							yield item
 				ret = batched_requery_iter(ret)
@@ -886,7 +913,10 @@ class Model(object):
 
 			if(offset and len(collections_to_query) > 1):
 				offset = None
-				print("Warning: Cannot use offset when query spans multiple collections shards, improve your query")
+				LOG_WARN(
+					"MONGO", description="Cannot use offset when query spans multiple collections shards, improve your query",
+					model=_Model.__name__
+				)
 
 			thread = Thread(
 				target=query_collection,
@@ -945,9 +975,11 @@ class Model(object):
 			if(shard_key_name == "_id" and self._id == None):
 				raise Exception("Need to sepcify _id when sharded by _id")
 
-			IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: new object values", cls, self._set_query_updates)
 			_collection_shard = cls.get_collection(
 				str(getattr(self, shard_key_name))
+			)
+			IS_DEV and MONGO_DEBUG_LEVEL > 1 and LOG_SERVER("MONGO", description="new object values",
+				model=cls.__name__, collection=COLLECTION_NAME(_collection_shard), set_query=str(self._set_query_updates)
 			)
 			try:
 				#find which shard we should insert to and insert into that
@@ -981,8 +1013,10 @@ class Model(object):
 				self.reinitialize_from_doc(
 					_collection_shard.find_one(self.pk())
 				)
-				IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: created a duplicate, refetching and updating",
-					self.pk()
+				IS_DEV and MONGO_DEBUG_LEVEL > 1 and LOG_SERVER("MONGO", description="created a duplicate, refetching and updating",
+					model=cls.__name__,
+					collection=COLLECTION_NAME(_collection_shard),
+					pk=str(self.pk())
 				)
 
 				# try removing all primary keys
@@ -1031,9 +1065,9 @@ class Model(object):
 		collection_shard = _Model.get_collection(self._original_doc[_Model._shard_key_])
 		_delete_query = {"_id": self._id}
 		collection_shard.delete_one(_delete_query)
-		IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: deleting from primary",
-				_Model, _delete_query
-			)
+		IS_DEV and MONGO_DEBUG_LEVEL > 1 and LOG_SERVER("MONGO", description="deleting from primary",
+			model=_Model.__name__, collection=COLLECTION_NAME(collection_shard), delete_query=str(_delete_query)
+		)
 		if(_Model.__cache__):
 			_Model.__cache__.delete(self.pk_tuple())
 
@@ -1410,10 +1444,16 @@ def initialize_model(Model):
 					).commit()
 					IS_DEV and MONGO_DEBUG_LEVEL > 1 \
 						and print("\n\n#MONGO: created a control job to change attributes", Model, to_add_attrs, to_remove_attrs)
-					raise Exception("Attributes have been changed on the Secondary shard, you need to backfill all the data, before this orm initializes")
+					raise Exception("Attributes have been changed on the Secondary shard, you need to backfill the data by setting _is_migrating_ = True")
 				except DuplicateKeyError:
-					raise Exception("There is already a pending job to update attributes, it needs to be finished")
-
+					LOG_ERROR(
+						"MONGO",
+						desc="There is already a pending job to update attributes, it needs to be finished ",
+						model=Model.__name__
+					)
+					Model._attrs_to_backfill_ = {}
+					for _attr_name in to_add_attrs:
+						Model._attrs_to_backfill_[_attr_name] = Model._attrs[_attr_name]
 
 		#check if new attribute added to secondary shard
 
