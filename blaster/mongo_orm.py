@@ -481,6 +481,8 @@ class Model(object):
 			if(_eq_value != _OBJ_END_):
 				return [cls.get_collection(_eq_value)]
 
+		return None
+
 	@classmethod
 	def propagate_update_to_secondary_shards(cls, before_doc, after_doc, force=False, specific_shards=None):
 		#CONS of this multi table sharding:
@@ -734,14 +736,23 @@ class Model(object):
 		# collection: [_query,...]
 		collections_to_query = {}
 		for _query in queries:
-			is_querying_on_secondary_shard = False
-			if(not force_primary):
-				#try if we can query it on secondary shards
+			#try checking if we can query rimary
+			collection_shards = cls.get_collections_to_query(_query, sort) or []
+			if(collection_shards):
+				for collection_shard in collection_shards:
+					_key = id(collection_shard)
+					shard_and_queries = collections_to_query.get(_key)
+					if(shard_and_queries == None):
+						collections_to_query[_key]\
+							= shard_and_queries \
+							= (collection_shard, [], cls)
+					shard_and_queries[1].append(_query)
+					
+			elif(not force_primary): # try if we can query it on secondary shards
 				for secondary_shard_key_name, _shard in cls._secondary_shards_.items():
 					secondary_collection_shards = _shard._Model_.get_collections_to_query(_query, sort)
 					if(not secondary_collection_shards):
 						continue
-					is_querying_on_secondary_shard = True
 					for collection_shard in secondary_collection_shards:
 						_key = id(collection_shard)
 						shard_and_queries = collections_to_query.get(_key)
@@ -752,18 +763,6 @@ class Model(object):
 						shard_and_queries[1].append(_query)
 
 					break # important
-
-			if(not is_querying_on_secondary_shard):
-				#query on the primary shard
-				collection_shards = cls.get_collections_to_query(_query, sort) or []
-				for collection_shard in collection_shards:
-					_key = id(collection_shard)
-					shard_and_queries = collections_to_query.get(_key)
-					if(shard_and_queries == None):
-						collections_to_query[_key]\
-							= shard_and_queries \
-							= (collection_shard, [], cls)
-					shard_and_queries[1].append(_query)
 
 		#if we did not find any possible shard to query
 		# we query all primary shards and assemble queries using chain
@@ -1278,9 +1277,15 @@ def initialize_model(_Model):
 
 	_pymongo_indexes_to_create = []
 	_Model._pk_is_unique_index = False
+
+	_indexes_list = []
 	for _index in _Model._indexes_:
-		mongo_index_args = {}
-		pymongo_index = []
+		_index_properties = {}
+		_index_keys = []
+		if(isinstance(_index, dict)):
+			_index_properties.update(_index.pop("properties") or {})
+			_index = _index.get("keys")
+
 		if(not isinstance(_index, tuple)):
 			_index = (_index,)
 		for _a in _index:
@@ -1293,36 +1298,20 @@ def initialize_model(_Model):
 			if(isinstance(_a, str)):
 				_attr_name = _a
 			if(isinstance(_a, dict)):
-				mongo_index_args = _a
+				_index_properties = _a
 				continue
 
-			pymongo_index.append((_attr_name, _ordering))
+			_index_keys.append((_attr_name, _ordering))
+		_indexes_list.append((tuple(_index_keys), _index_properties))
 
+	#sort shortest first and grouped by keys first
+	_indexes_list.sort(key=lambda x: tuple(k[0] for k in x[0]))
+	for _index_keys, _index_properties in _indexes_list:
 		#convert to tuple again
-		pymongo_index = tuple(pymongo_index)
-		is_unique_index = mongo_index_args.get("unique", True) is not False
+		is_unique_index = _index_properties.get("unique", True) is not False
+		_index_shard_key = _index_keys[0][0] # shard key is the first mentioned key in index
 
-		_index_shard_key = pymongo_index[0][0] # shard key is the first mentioned key in index
-
-		if(_Model._shard_key_ != _index_shard_key):
-			#secondary shard tables
-			_secondary_shard = _Model._secondary_shards_.get(_index_shard_key)
-
-			if(_secondary_shard):
-				for _attr_name, _ordering in pymongo_index:
-					_secondary_shard.attrs[_attr_name] = getattr(
-						_Model,
-						_attr_name
-					)
-				#create _index_ for secondary shards
-				_secondary_shard_index = list(pymongo_index)
-				_secondary_shard_index.append(mongo_index_args)
-				_secondary_shard.indexes.append(
-					tuple(_secondary_shard_index)
-				)
-
-		ignore_index_creation = False
-		#check if index it belongs to primary shard
+		#adjust the pk of the table accordingly, mostly useful for primary shard
 		if(	_Model._shard_key_ == _index_shard_key):
 			#index belong to primary shard
 			if(not _Model._pk_attrs
@@ -1330,20 +1319,27 @@ def initialize_model(_Model):
 			):
 				_Model._pk_is_unique_index = is_unique_index
 				_Model._pk_attrs = _pk_attrs = OrderedDict()
-				for i in pymongo_index: # first unique index
+				for i in _index_keys: # first unique index
 					_pk_attrs[i[0]] = 1
-		elif(_index_shard_key in _Model._secondary_shards_):
-			#there is a shard for this index to go into
-			#Ex: Table A is sharded by x then we created indexes that has x on A_shard_x table only
-			ignore_index_creation = True
 
-		#check for indexes to ignore
-		if(pymongo_index[0][0] == "_id"):
-			ignore_index_creation = True
+		if(_Model._shard_key_ != _index_shard_key):
+			#secondary shard tables
+			_secondary_shard = _Model._secondary_shards_.get(_index_shard_key)
 
-		#create the actual index
-		if(not ignore_index_creation):
-			_pymongo_indexes_to_create.append((pymongo_index, mongo_index_args))
+			if(_secondary_shard):
+				for _attr_name, _ordering in _index_keys:
+					_secondary_shard.attrs[_attr_name] = getattr(
+						_Model,
+						_attr_name
+					)
+				#create _index_ for secondary shards
+				_secondary_shard.indexes.append({"keys": _index_keys, "properties": _index_properties})
+
+		if(_index_shard_key not in _Model._secondary_shards_
+			and _index_shard_key != "_id"
+		):
+			#this indes should go to to the primary index
+			_pymongo_indexes_to_create.append((_index_keys, _index_properties))
 
 
 	if(not _Model._pk_attrs): # create default _pk_attrs
