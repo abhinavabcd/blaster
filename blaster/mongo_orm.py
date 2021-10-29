@@ -449,10 +449,12 @@ class Model(object):
 
 		#if it's a secondary shard check if we can perform the query on this Model
 		if(cls._is_secondary_shard):
+			#_attrs_to_backfill = getattr(cls, "_attrs_to_backfill_", None)
 			#check if we can construct a secondary shard query
 			for query_attr_name, query_attr_val in _query.items():
-				attr_exists_in_shard = cls._attrs.get(query_attr_name, _OBJ_END_)
-				if(attr_exists_in_shard == _OBJ_END_):
+				if(query_attr_name not in cls._attrs): # if attr is not present in the secondary shard
+					# 	or (_attrs_to_backfill and query_attr_name in _attrs_to_backfill) # if still backfilling
+					# ):
 					return None
 
 			if(sort):
@@ -600,7 +602,7 @@ class Model(object):
 		cls._trigger_event(EVENT_BEFORE_UPDATE, self)
 
 		retries = 3
-		_consistency_checks = None # this is the dict of modified fields
+		_local_vs_remote_consistency_checks = None # this is the dict of local value to compare to remote db before updating
 		while(retries > 0):
 			retries -= 1
 
@@ -609,7 +611,7 @@ class Model(object):
 			#no additional conditions, retries ensure the state of
 			#current object with us matches remote before updateing
 
-			_consistency_checks = {} # consistency between local copy and that on the db, to check concurrent updates
+			_local_vs_remote_consistency_checks = {} # consistency between local copy and that on the db, to check concurrent updates
 			#all the fields that we are supposed to update
 			for _k, _v in _update_query.items():
 				if(_k[0] == "$"): # it should start with $
@@ -618,13 +620,13 @@ class Model(object):
 						#to that exists in db
 						existing_attr_val = self._original_doc.get(p, _OBJ_END_)
 						if(existing_attr_val != _OBJ_END_):
-							_consistency_checks.update({p: existing_attr_val})
+							_local_vs_remote_consistency_checks.update({p: existing_attr_val})
 
 			#override with any given conditions
-			_query.update(_consistency_checks)
-			#update with more given conditions
+			_query.update(_local_vs_remote_consistency_checks)
+			#update with more given conditions, but don't update _local_vs_remote_consistency_checks(it's only for local<->remote comparision)
 			if(more_conditions):
-				_consistency_checks.update(more_conditions)
+				_query.update(more_conditions)
 
 			#get the shard where current object is
 			primary_shard_key = self._original_doc[cls._shard_key_]
@@ -659,15 +661,15 @@ class Model(object):
 			#2. update our local copy
 			self.reinitialize_from_doc(_doc_in_db)
 			can_retry = False
-			#3. check if basic consistency checks failed
-			for _k, _v in _consistency_checks.items():
+			#3. check if basic consistency between local and remote
+			for _k, _v in _local_vs_remote_consistency_checks.items():
 				remote_db_val = get_by_key_list(self._original_doc, *_k.split("."))
 				if(_v != remote_db_val):
 					can_retry = True # local copy consistency check has failed, retry again
 					LOG_WARN("MONGO", description="concurrent update",
 						model=cls.__name__,
 						collection=COLLECTION_NAME(primary_collection_shard),
-						_query=_query,
+						_query=str(_query),
 						remote_value=remote_db_val,
 						local_value=_v,
 						_key=_k
