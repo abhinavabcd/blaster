@@ -427,16 +427,16 @@ class Model(object):
 	# basically finds the node where the shard_key resides
 	# and returns a actual pymongo collection, shard_key must be a string
 	@classmethod
-	def get_collection(Model, shard_key):
+	def get_collection(_Model, shard_key):
 		shard_key = str(shard_key) if shard_key != None else ""
-		node_with_data_index = jump_hash(shard_key.encode(), len(Model._db_nodes_))
-		db_node = Model._db_nodes_[node_with_data_index]
-		return db_node.get_collection(Model)
+		node_with_data_index = jump_hash(shard_key.encode(), len(_Model._db_nodes_))
+		db_node = _Model._db_nodes_[node_with_data_index]
+		return db_node.get_collection(_Model)
 
 	# returns all nodes and connections to Model inside them
 	@classmethod
-	def get_collection_on_all_db_nodes(Model):
-		return map(lambda db_node: db_node.get_collection(Model), Model._db_nodes_)
+	def get_collection_on_all_db_nodes(_Model):
+		return map(lambda db_node: db_node.get_collection(_Model), _Model._db_nodes_)
 
 	#give a shard key from query we return multiple connect
 	@classmethod
@@ -1211,37 +1211,37 @@ class DatabaseNode:
 		}
 
 	#returns collection on the given DatabaseNode
-	def get_collection(self, Model):
-		ret = self._cached_pymongo_collections.get(Model)
+	def get_collection(self, _Model):
+		ret = self._cached_pymongo_collections.get(_Model)
 		if(not ret):
-			self._cached_pymongo_collections[Model] \
+			self._cached_pymongo_collections[_Model] \
 				= ret \
-				= self.mongo_connection[Model._db_name_][Model._collection_name_with_shard_]
+				= self.mongo_connection[_Model._db_name_][_Model._collection_name_with_shard_]
 		return ret
 
 
-def initialize_model(Model):
+def initialize_model(_Model):
 
-	if(isinstance(Model, list)):
-		for _m in Model:
+	if(isinstance(_Model, list)):
+		for _m in _Model:
 			initialize_model(_m)
 		return
 
 	#defaults, do not change the code below
-	Model._shard_key_ = getattr(Model, "_shard_key_", "_id")
-	Model._secondary_shards_ = {}
-	Model._indexes_ = getattr(Model, "_indexes_", [("_id",)])
+	_Model._shard_key_ = getattr(_Model, "_shard_key_", "_id")
+	_Model._secondary_shards_ = {}
+	_Model._indexes_ = getattr(_Model, "_indexes_", [("_id",)])
 	#create a default cache
-	Model.__cache__ = getattr(Model, "_cache_", ExpiringCache(10000))
+	_Model.__cache__ = getattr(_Model, "_cache_", ExpiringCache(10000))
 
 	# temp usage _id_attr
 	_id_attr = Attribute(str) # default is of type objectId
-	Model._attrs = _model_attrs = {"_id": _id_attr}
-	Model._pk_attrs = None
+	_Model._attrs = _model_attrs = {"_id": _id_attr}
+	_Model._pk_attrs = None
 	'''it's used for translating attr objects/name to string names'''
-	Model._attrs_to_name = attrs_to_name = {_id_attr: '_id', '_id': '_id'}
+	_Model._attrs_to_name = attrs_to_name = {_id_attr: '_id', '_id': '_id'}
 	is_sharding_enabled = False
-	for k, v in Model.__dict__.items():
+	for k, v in _Model.__dict__.items():
 		if(isinstance(v, Attribute)):
 			_model_attrs[k] = v
 			attrs_to_name[v] = k
@@ -1250,35 +1250,35 @@ def initialize_model(Model):
 			attrs_to_name[k] = k
 
 			#check if it has any shard, then extract indexes, shard key tagged to attributes
-			if(not Model._is_secondary_shard): # very important check
+			if(not _Model._is_secondary_shard): # very important check
 				#check indexes_to_create
 				_indexes_to_create = getattr(v, "_indexes_to_create", None)
 				if(_indexes_to_create):
 					delattr(v, "_indexes_to_create") # because we don't need it again after first time
-					Model._indexes_.extend(_indexes_to_create)
+					_Model._indexes_.extend(_indexes_to_create)
 
 				is_primary_shard_key = getattr(v, "is_primary_shard_key", False)
 				is_secondary_shard_key = getattr(v, "is_secondary_shard_key", False)
 				if(is_primary_shard_key is True):
-					Model._shard_key_ = k
+					_Model._shard_key_ = k
 					delattr(v, "is_primary_shard_key") # because we don't need it again after first time and won't rewrite secondary shard keys
 				elif(is_secondary_shard_key is True):
-					Model._secondary_shards_[k] = SecondaryShard()
+					_Model._secondary_shards_[k] = SecondaryShard()
 					delattr(v, "is_secondary_shard_key") # because we don't need it again after first time
 
 				is_sharding_enabled = is_sharding_enabled or (is_primary_shard_key or is_secondary_shard_key)
 
-	IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: Initializing Model", Model,
-		Model._indexes_, Model._shard_key_, Model._secondary_shards_
+	IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: Initializing Model", _Model,
+		_Model._indexes_, _Model._shard_key_, _Model._secondary_shards_
 	)
 
-	Model._event_listeners_ = getattr(Model, "_event_listeners_", {})
+	_Model._event_listeners_ = getattr(_Model, "_event_listeners_", {})
 	#some default event
-	Model.on(EVENT_BEFORE_UPDATE, lambda obj: obj.before_update())
+	_Model.on(EVENT_BEFORE_UPDATE, lambda obj: obj.before_update())
 
 	_pymongo_indexes_to_create = []
-	Model._pk_is_unique_index = False
-	for _index in Model._indexes_:
+	_Model._pk_is_unique_index = False
+	for _index in _Model._indexes_:
 		mongo_index_args = {}
 		pymongo_index = []
 		if(not isinstance(_index, tuple)):
@@ -1304,14 +1304,14 @@ def initialize_model(Model):
 
 		_index_shard_key = pymongo_index[0][0] # shard key is the first mentioned key in index
 
-		if(Model._shard_key_ != _index_shard_key):
+		if(_Model._shard_key_ != _index_shard_key):
 			#secondary shard tables
-			_secondary_shard = Model._secondary_shards_.get(_index_shard_key)
+			_secondary_shard = _Model._secondary_shards_.get(_index_shard_key)
 
 			if(_secondary_shard):
 				for _attr_name, _ordering in pymongo_index:
 					_secondary_shard.attrs[_attr_name] = getattr(
-						Model,
+						_Model,
 						_attr_name
 					)
 				#create _index_ for secondary shards
@@ -1323,17 +1323,17 @@ def initialize_model(Model):
 
 		ignore_index_creation = False
 		#check if index it belongs to primary shard
-		if(	Model._shard_key_ == _index_shard_key):
+		if(	_Model._shard_key_ == _index_shard_key):
 			#index belong to primary shard
-			if(not Model._pk_attrs
-				or (is_unique_index and not Model._pk_is_unique_index)
+			if(not _Model._pk_attrs
+				or (is_unique_index and not _Model._pk_is_unique_index)
 			):
-				Model._pk_is_unique_index = is_unique_index
-				Model._pk_attrs = _pk_attrs = OrderedDict()
+				_Model._pk_is_unique_index = is_unique_index
+				_Model._pk_attrs = _pk_attrs = OrderedDict()
 				for i in pymongo_index: # first unique index
 					_pk_attrs[i[0]] = 1
-		elif(_index_shard_key in Model._secondary_shards_):
-			#this index goes into the secondary table`
+		elif(_index_shard_key in _Model._secondary_shards_):
+			#there is a shard for this index to go into
 			#Ex: Table A is sharded by x then we created indexes that has x on A_shard_x table only
 			ignore_index_creation = True
 
@@ -1346,24 +1346,24 @@ def initialize_model(Model):
 			_pymongo_indexes_to_create.append((pymongo_index, mongo_index_args))
 
 
-	if(not Model._pk_attrs): # create default _pk_attrs
-		Model._pk_attrs = OrderedDict(_id=True)
+	if(not _Model._pk_attrs): # create default _pk_attrs
+		_Model._pk_attrs = OrderedDict(_id=True)
 
 	# set collection name to include shard_keys
 
-	Model._collection_name_with_shard_ = Model._collection_name_
+	_Model._collection_name_with_shard_ = _Model._collection_name_
 	#append shard id to table name if it's secondary shard or primary and sharding enabled
-	if(Model._is_secondary_shard or is_sharding_enabled):
-		Model._collection_name_with_shard_ += "_shard_" + Model._shard_key_
+	if(_Model._is_secondary_shard or is_sharding_enabled):
+		_Model._collection_name_with_shard_ += "_shard_" + _Model._shard_key_
 
 
 	##find tracking nodes
-	Model._collection_tracker_key_ = "%s__%s"%(Model._db_name_, Model._collection_name_with_shard_)
+	_Model._collection_tracker_key_ = "%s__%s"%(_Model._db_name_, _Model._collection_name_with_shard_)
 
-	IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO collection tracker key", Model._collection_tracker_key_)
+	IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO collection tracker key", _Model._collection_tracker_key_)
 
-	if(Model not in [CollectionTracker, ControlJobs]):
-		collection_tracker = CollectionTracker.get(Model._collection_tracker_key_)
+	if(_Model not in [CollectionTracker, ControlJobs]):
+		collection_tracker = CollectionTracker.get(_Model._collection_tracker_key_)
 		if(not collection_tracker
 			or not collection_tracker.db_nodes
 			or not collection_tracker.primary_shard_key
@@ -1372,90 +1372,90 @@ def initialize_model(Model):
 				"\n\n#MONGOORM_IMPORTANT_INFO : "
 				"Collection tracker entry not present for '%s'.."
 				"creating table in control node for this time in database '%s'. "
-				"You may want to talk to dba to move to a proper node"%(Model.__name__, Model._db_name_)
+				"You may want to talk to dba to move to a proper node"%(_Model.__name__, _Model._db_name_)
 			)
 
-			#check if the Model already has _db_nodes_
-			db_nodes = getattr(Model, "_db_nodes_", None) or [
+			#check if the _Model already has _db_nodes_
+			db_nodes = getattr(_Model, "_db_nodes_", None) or [
 						{
 							"hosts": init_db_nodes.hosts,
 							"replica_set": init_db_nodes.replica_set,
 							"username": init_db_nodes.username,
-							"db_name": Model._db_name_
+							"db_name": _Model._db_name_
 						} for init_db_nodes in CollectionTracker._db_nodes_
 					]
 
 			collection_tracker = CollectionTracker(
-				_id=Model._collection_tracker_key_,
+				_id=_Model._collection_tracker_key_,
 				db_nodes=db_nodes,
-				is_primary_shard=1 if not Model._is_secondary_shard else 0,
-				primary_shard_key=Model._shard_key_,
-				secondary_shard_keys=list(Model._secondary_shards_.keys()),
-				pk_attrs=list(Model._pk_attrs.keys()),
-				attrs=list(Model._attrs.keys())
+				is_primary_shard=1 if not _Model._is_secondary_shard else 0,
+				primary_shard_key=_Model._shard_key_,
+				secondary_shard_keys=list(_Model._secondary_shards_.keys()),
+				pk_attrs=list(_Model._pk_attrs.keys()),
+				attrs=list(_Model._attrs.keys())
 			).commit(force=True)
 
 		#version < 101 support
 		if(not collection_tracker.attrs):
-			collection_tracker.attrs = list(Model._attrs.keys())
+			collection_tracker.attrs = list(_Model._attrs.keys())
 			collection_tracker.commit()
 
-		Model._db_nodes_ = tuple(DatabaseNode(**_db_node) for _db_node in collection_tracker.db_nodes)
-		#TODO: find new secondary shards by comparing collection_tracker.secondary_shard_keys, Model._secondary_shards_.keys()
+		_Model._db_nodes_ = tuple(DatabaseNode(**_db_node) for _db_node in collection_tracker.db_nodes)
+		#TODO: find new secondary shards by comparing collection_tracker.secondary_shard_keys, _Model._secondary_shards_.keys()
 		#and create a job to create and reindex all data to secondary index
-		if(not Model._is_secondary_shard
-			and Model._secondary_shards_
-			and collection_tracker.primary_shard_key != Model._shard_key_
+		if(not _Model._is_secondary_shard
+			and _Model._secondary_shards_
+			and collection_tracker.primary_shard_key != _Model._shard_key_
 		):
-			raise Exception("\n\n#MONGO_EXCEPTION: Primary shard key changed for ", Model, "It has secondary shards, that point to primary shard key. You will have to drop shard secondary shards and force reindex everything again")
+			raise Exception("\n\n#MONGO_EXCEPTION: Primary shard key changed for ", _Model, "It has secondary shards, that point to primary shard key. You will have to drop shard secondary shards and force reindex everything again")
 
 
-		if(not Model._is_secondary_shard):
+		if(not _Model._is_secondary_shard):
 			#create diff jobs, check if new shard is indicated
 			to_create_secondary_shard_key, to_delete_secondary_shard_key = list_diff2(
-				list(Model._secondary_shards_.keys()),
+				list(_Model._secondary_shards_.keys()),
 				collection_tracker.secondary_shard_keys
 			)
 			for shard_key_name in to_create_secondary_shard_key:
 				try:
 					ControlJobs(
 						_id=str(cur_ms()),
-						db=Model._db_name_,
-						collection=Model._collection_name_with_shard_,
+						db=_Model._db_name_,
+						collection=_Model._collection_name_with_shard_,
 						_type=ControlJobs.CREATE_SECONDARY_SHARD,
 						uid=shard_key_name
 					).commit()
-					IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: create a control job to create secondary shard", Model, shard_key_name)
+					IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: create a control job to create secondary shard", _Model, shard_key_name)
 				except DuplicateKeyError:
-					print("Secondary shard not created yet, queries on this shard won't give any results, please propagate all data to this shard", Model, shard_key_name)
+					print("Secondary shard not created yet, queries on this shard won't give any results, please propagate all data to this shard", _Model, shard_key_name)
 
-		if(Model._is_secondary_shard):
+		if(_Model._is_secondary_shard):
 			to_add_attrs, to_remove_attrs = list_diff2(
-				list(Model._attrs.keys()),
+				list(_Model._attrs.keys()),
 				collection_tracker.attrs
 			)
 			if(to_add_attrs or to_remove_attrs):
 				try:
 					ControlJobs(
 						_id=str(cur_ms()),
-						db=Model._db_name_,
-						collection=Model._collection_name_with_shard_,
+						db=_Model._db_name_,
+						collection=_Model._collection_name_with_shard_,
 						_type=ControlJobs.ADD_NEW_ATTRIBUTES_TO_SECONDARY_SHARD,
 						uid="",
 						data={"to_add_attrs": to_add_attrs, "to_remove_attrs": to_remove_attrs}
 					).commit()
 					IS_DEV and MONGO_DEBUG_LEVEL > 1 \
-						and print("\n\n#MONGO: created a control job to change attributes", Model, to_add_attrs, to_remove_attrs)
+						and print("\n\n#MONGO: created a control job to change attributes", _Model, to_add_attrs, to_remove_attrs)
 					raise Exception("Attributes have been changed on the Secondary shard, you need to backfill the data by setting _is_migrating_ = True")
 				except DuplicateKeyError:
 					LOG_ERROR(
 						"MONGO",
 						desc="There is already a pending job to update attributes, it needs to be finished ",
-						model=Model.__name__
+						model=_Model.__name__
 					)
-					Model._attrs_to_backfill_ = {}
+					_Model._attrs_to_backfill_ = {}
 					for _attr_name in to_add_attrs:
-						Model._attrs_to_backfill_[_attr_name] = Model._attrs[_attr_name]
+						_Model._attrs_to_backfill_[_attr_name] = _Model._attrs[_attr_name]
 
 		#check if new attribute added to secondary shard
 
@@ -1465,29 +1465,30 @@ def initialize_model(Model):
 		mongo_index_args = {"unique": True}
 		mongo_index_args.update(**additional_mongo_index_args)
 
-		IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: creating_indexes", Model, pymongo_index, mongo_index_args)
+		IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: creating_indexes", _Model, pymongo_index, mongo_index_args)
 		#in each node create indexes
-		for db_node in Model._db_nodes_:
-			db_node.get_collection(Model).create_index(pymongo_index, **mongo_index_args)
+		for db_node in _Model._db_nodes_:
+			db_node.get_collection(_Model).create_index(pymongo_index, **mongo_index_args)
 	
 	#create secondary shards
-	for _secondary_shard_key, _secondary_shard in Model._secondary_shards_.items():
-		if(not Model._pk_is_unique_index):
-			raise Exception("Cannot have secondary shard keys for non unique indexes! %s"%(Model,))
+	for _secondary_shard_key, _secondary_shard in _Model._secondary_shards_.items():
+		if(not _Model._pk_is_unique_index):
+			raise Exception("Cannot have secondary shard keys for non unique indexes! %s"%(_Model,))
 
 		class_attrs = {
+			"_db_name_": _Model._db_name_, # same as from primary
 			"_indexes_": _secondary_shard.indexes,
 			"_shard_key_": _secondary_shard_key,
-			"_collection_name_": Model._collection_name_,
+			"_collection_name_": _Model._collection_name_, # same as from primary
 			"_is_secondary_shard": True,
 			"_db_nodes_": None
 		}
 
 		# add primary shard attributes of the main class to
 		# secondary shards too, to identify the original document shard
-		_secondary_shard.attrs[Model._shard_key_] = getattr(Model, Model._shard_key_)
+		_secondary_shard.attrs[_Model._shard_key_] = getattr(_Model, _Model._shard_key_)
 
-		secondary_id_attr = getattr(Model, '_id', None)
+		secondary_id_attr = getattr(_Model, '_id', None)
 		if(secondary_id_attr):
 			_secondary_shard.attrs['_id'] = secondary_id_attr
 
@@ -1496,7 +1497,7 @@ def initialize_model(Model):
 		#into secondary shards
 
 		_secondary_shard._Model_ = type(
-			"%s_%s"%(Model.__name__, _secondary_shard_key.upper()),
+			"%s_%s"%(_Model.__name__, _secondary_shard_key.upper()),
 			(Model,),
 			class_attrs
 		)
