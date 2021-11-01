@@ -1,8 +1,8 @@
 import heapq
 import types
 import json
+import traceback
 import pymongo
-from datetime import datetime
 #from bson.objectid import ObjectId
 from itertools import chain
 from collections import OrderedDict
@@ -53,13 +53,14 @@ class Model(object):
 	
 	#instance level
 	__is_new = True
+	#this means the object is being initialized by this orm, and not available to user yet
+	_initializing = False
+	#pending query updates are stored in this
 	_set_query_updates = None
 	_other_query_updates = None
 	_original_doc = None
 	#we execute all functions inside this list, and use the return value to update
 	_insert_result = None
-	#this means the object is being initialized by this orm, and not available to user yet
-	_initializing = False
 	_pk = None
 	_json = None
 
@@ -959,12 +960,20 @@ class Model(object):
 		if(not handlers):
 			return
 		for handler in handlers:
-			handler(*obj)
+			try:
+				handler(*obj)
+			except Exception as ex:
+				LOG_ERROR(
+					"MONGO",
+					desc="error processing trigger %s"%(str(event)),
+					exception_str=str(ex),
+					stacktrace_string=traceback.format_exc()
+				)
 
 	def before_update(self):
 		pass
 
-	def commit(self, force=False, ignore_exceptions=None):
+	def commit(self, force=False, ignore_exceptions=None, more_conditions=None):
 		cls = self.__class__
 		committed = False
 
@@ -1040,8 +1049,8 @@ class Model(object):
 			if(not _update_query and not force):
 				return self # nothing to update
 
-			is_committed = self.update(_update_query)
-			if(not is_committed):
+			is_committed = self.update(_update_query, more_conditions=more_conditions)
+			if(not is_committed): # if it's used for creating a new object, but we couldn't update it
 				raise Exception("MONGO: Couldn't commit, either a concurrent update modified this or query has issues", self.pk(), _update_query)
 
 		#clear and reset pk to new

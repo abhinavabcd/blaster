@@ -10,7 +10,7 @@ Created on 22-Aug-2017
 # protobuf==3.2.0
 # boto3==1.4.4
 
-
+import os
 import gevent
 import signal
 import ujson as json
@@ -985,7 +985,7 @@ class App:
 				stacktrace_string=stacktrace_string,
 				request_type=request_type,
 				request_path=request_path,
-				request_params=request_params.to_dict()
+				request_params_str=str(request_params.to_dict())
 			)
 			if(IS_DEV):
 				traceback.print_exc()
@@ -1068,7 +1068,9 @@ def static_file_handler(_base_folder_path_, default_file_path="index.html", file
 		if(not path):
 			path = default_file_path
 		#from given base_path
-		path = _base_folder_path_ + str(path)
+		path = os.path.abspath(_base_folder_path_ + str(path))
+		if(not path.startswith(_base_folder_path_)):
+			return "404 Not Found", [], "Invalid path submitted"
 		file_data = cached_file_data.get(path, None)
 		resp_headers = None
 
@@ -1076,7 +1078,7 @@ def static_file_handler(_base_folder_path_, default_file_path="index.html", file
 			gevent_lock.acquire()
 			file_hash_key = path + urlencode(request_params._get)[:400]
 			file_data = cached_file_data.get(file_hash_key, None)
-			if(not file_data or time.time() * 1000 - file_data[2] > 1000): # 1 millis
+			if(not file_data or time.time() * 1000 - file_data[2] > 1000): # 1 sec
 				#put a lock here
 				try:
 					data = open(path, "rb").read()
