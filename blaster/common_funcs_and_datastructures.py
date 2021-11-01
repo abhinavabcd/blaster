@@ -36,10 +36,10 @@ import six
 import traceback
 
 from .websocket._core import WebSocket
-# from .config import IS_DEV
+from .config import IS_DEV
 from .utils.xss_html import XssHtml
 from .utils import events
-from .logging import LOG_APP_INFO, LOG_WARN, LOG_DEBUG
+from .logging import LOG_APP_INFO, LOG_WARN, LOG_DEBUG, LOG_ERROR
 
 
 _this_ = sys.modules[__name__]
@@ -786,9 +786,14 @@ class Worker(Thread):
 			func, args, kargs = self.tasks.get()
 			try:
 				func(*args, **kargs)
-			except Exception:
+			except Exception as ex:
 				# An exception happened in this thread
-				traceback.print_exc()
+				stacktrace_string = traceback.format_exc()
+				LOG_ERROR("blaster_worker_thread",
+					exception_str=str(ex),
+					stacktrace_string=stacktrace_string
+				)
+				IS_DEV and traceback.print_exc()
 			finally:
 				# Mark this task as done, whether an exception happened or not
 				self.tasks.task_done()
@@ -1300,7 +1305,12 @@ def _process_partitioned_task_queue_items(_queue):
 		try:
 			func(*args, **kwargs)
 		except Exception as ex:
-			LOG_WARN("background_thread_run_error", func_name=func.__name__, msg=str(ex))
+			stacktrace_string = traceback.format_exc()
+			LOG_WARN("background_thread_run_error", func_name=func.__name__,
+				exception_str=str(ex),
+				stacktrace_string=stacktrace_string
+			)
+			IS_DEV and traceback.print_exc()
 
 
 #singleton
