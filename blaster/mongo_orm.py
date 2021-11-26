@@ -610,12 +610,13 @@ class Model(object):
 			retries -= 1
 
 			updated_doc = None
-			_query = dict(self.pk())
+			_query = {"_id": self._id}
 			#no additional conditions, retries ensure the state of
-			#current object with us matches remote before updateing
+			#current object in memory matches remote before updating
 
 			_local_vs_remote_consistency_checks = {} # consistency between local copy and that on the db, to check concurrent updates
-			#all the fields that we are supposed to update
+			#check all the fields that we are about to update
+			#to match with remote
 			for _k, _v in _update_query.items():
 				if(_k[0] == "$"): # it should start with $
 					for p, q in _v.items():
@@ -633,12 +634,11 @@ class Model(object):
 
 			#get the shard where current object is
 			primary_shard_key = self._original_doc[cls._shard_key_]
-			primary_collection_shard = cls.get_collection(
-				primary_shard_key
-			)
+			primary_collection_shard = cls.get_collection(primary_shard_key)
 			#query and update the document
 			IS_DEV and MONGO_DEBUG_LEVEL > 1 and LOG_SERVER("MONGO", description="update before and query",
-				model=cls.__name__, collection=COLLECTION_NAME(primary_collection_shard), query="_query", original_doc=str(self._original_doc), update_query=str(_update_query)
+				model=cls.__name__, collection=COLLECTION_NAME(primary_collection_shard),
+				query="_query", original_doc=str(self._original_doc), update_query=str(_update_query)
 			)
 			updated_doc = primary_collection_shard.find_one_and_update(
 				_query,
@@ -646,19 +646,30 @@ class Model(object):
 				return_document=ReturnDocument.AFTER,
 				**kwargs
 			)
+
 			IS_DEV and MONGO_DEBUG_LEVEL > 1 and LOG_SERVER("MONGO", description="after update",
 				model=cls.__name__, collection=COLLECTION_NAME(primary_collection_shard),
 				updated_doc=str(updated_doc)
 			)
 
 			if(updated_doc):
+				#check if need to migrate to another shard
+				_new_primary_shard_key = updated_doc.get(cls._shard_key_)
+				if(_new_primary_shard_key != primary_shard_key):
+					#primary shard key has changed
+					new_primary_collection_shard = cls.get_collection(_new_primary_shard_key)
+					if(new_primary_collection_shard != primary_collection_shard):
+						#migrate to new shard
+						new_primary_collection_shard.insert_one(updated_doc) # will crash if duplicate _id key
+						primary_collection_shard.delete_one({"_id": self._id})
+
 				break # no retry again , all is good
 
 			#update was unsuccessful
 			#is this concurrent update by someone else?
 			#is this because of more conditions given by user?
 			#1. fetch from db again
-			_doc_in_db = primary_collection_shard.find_one(self.pk())
+			_doc_in_db = primary_collection_shard.find_one({"_id": self._id})
 			if(not _doc_in_db): # moved out of shard or pk changed
 				return False
 			#2. update our local copy
@@ -669,7 +680,8 @@ class Model(object):
 				remote_db_val = get_by_key_list(self._original_doc, *_k.split("."))
 				if(_v != remote_db_val):
 					can_retry = True # local copy consistency check has failed, retry again
-					LOG_WARN("MONGO", description="concurrent update",
+					LOG_WARN("MONGO",
+						description="concurrent update",
 						model=cls.__name__,
 						collection=COLLECTION_NAME(primary_collection_shard),
 						_query=str(_query),
@@ -1155,7 +1167,7 @@ class ControlJobs(Model):
 	##attributes
 	parent__id = Attribute(str)
 	num_child_jobs = Attribute(int, default=0) # just for reconcillation
-	_type = Attribute(int) # reshard=>0, create_secondary_index=>1, create_primary_index=>2
+	_type = Attribute(int)
 	db = Attribute(str)
 	collection = Attribute(str)
 	uid = Attribute(str) # unique identifier not to duplicate jobs
@@ -1177,6 +1189,12 @@ class ControlJobs(Model):
 
 	def before_update(self):
 		self.updated_at = cur_ms()
+
+	def run(self):
+		if(self._type == ControlJobs.ADD_NEW_ATTRIBUTES_TO_SECONDARY_SHARD):
+			pass
+		if(self._type == ControlJobs.CREATE_SECONDARY_SHARD):
+			pass
 
 
 _cached_mongo_clients = {}
@@ -1432,7 +1450,7 @@ def initialize_model(_Model):
 					).commit()
 					IS_DEV and MONGO_DEBUG_LEVEL > 1 and print("\n\n#MONGO: create a control job to create secondary shard", _Model, shard_key_name)
 				except DuplicateKeyError:
-					print("Secondary shard not created yet, queries on this shard won't give any results, please propagate all data to this shard", _Model, shard_key_name)
+					print("Secondary shard not created yet, queries on this shard won't give results for existing entries, please propagate all data to this shard", _Model, shard_key_name)
 
 		if(_Model._is_secondary_shard):
 			to_add_attrs, to_remove_attrs = list_diff2(
