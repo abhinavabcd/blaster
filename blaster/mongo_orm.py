@@ -1,9 +1,10 @@
 import heapq
 import types
-import json
 import traceback
 import pymongo
-#from bson.objectid import ObjectId
+from pymongo.read_concern import ReadConcern
+from pymongo.write_concern import WriteConcern
+from bson.objectid import ObjectId
 from itertools import chain
 from collections import OrderedDict
 from pymongo import MongoClient
@@ -313,6 +314,8 @@ class Model(object):
 					v = _attr_type_obj._type(v)
 				elif(_attr_type_obj._type == str): # force cast to string
 					v = str(v)
+				elif(_attr_type_obj._type == ObjectId and k == "_id"):
+					pass # could be anything don't try to cast
 				elif(not self._initializing):
 					raise Exception("Type mismatch in %s, %s: should be %s but got %s"%(type(self), k, _attr_type_obj._type, str(type(v))))
 
@@ -424,15 +427,18 @@ class Model(object):
 		if(cls.__cache__):
 			cls.__cache__.set(self.pk_tuple(), self)
 
+	'''given a shard key, says which database it resides in'''
+	@classmethod
+	def get_db_node(_Model, shard_key):
+		shard_key = str(shard_key) if shard_key != None else ""
+		node_with_data_index = jump_hash(shard_key.encode(), len(_Model._db_nodes_))
+		return _Model._db_nodes_[node_with_data_index]
 
 	# basically finds the node where the shard_key resides
 	# and returns a actual pymongo collection, shard_key must be a string
 	@classmethod
 	def get_collection(_Model, shard_key):
-		shard_key = str(shard_key) if shard_key != None else ""
-		node_with_data_index = jump_hash(shard_key.encode(), len(_Model._db_nodes_))
-		db_node = _Model._db_nodes_[node_with_data_index]
-		return db_node.get_collection(_Model)
+		return _Model.get_db_node(shard_key).get_collection(_Model)
 
 	# returns all nodes and connections to Model inside them
 	@classmethod
@@ -489,9 +495,6 @@ class Model(object):
 		#CONS of this multi table sharding:
 		#- Primary index updated but secondary constraint can fail
 		#- in that case, the data exists in primary shard, but it's not valid data
-		#TODO:
-		# idea1: move this to transactions if we have secondary shards ?
-		# idea2: revert the original update
 		#update all secondary shards
 		for shard_key in (specific_shards or cls._secondary_shards_.keys()):
 			#actual secondary shard
@@ -588,7 +591,7 @@ class Model(object):
 					)
 
 					if(not secondary_shard_update_return_value):
-						LOG_WARN("MONGO", description="secondary couldn't be propagated, probably due to concurrent update",
+						LOG_WARN("MONGO", description="secondary couldn't be propagated, probably due to another concurrent update",
 								model=cls.__name__, collection=COLLECTION_NAME(_secondary_collection), secondary_model=str(secondary_Model), secondary_pk=str(_secondary_pk),
 								secondary_updates=str(_secondary_updates)
 							)
@@ -596,12 +599,28 @@ class Model(object):
 	#_add_query is more query other than pk
 	# for example, you can say update only when someother field > 0
 
-	def update(self, _update_query, more_conditions=None, **kwargs):
+	def update(self, _update_query, more_conditions=None, session=None, **kwargs):
 		cls = self.__class__
 
 		if(not _update_query):
 			return
 		
+		if(self._secondary_shards_ and not session):
+			#we need a session to do this as a transaction
+			#as there are secondary shards to propagate
+
+			_mongo_client = cls.get_db_node(self._original_doc[cls._shard_key_]).mongo_connection
+			with _mongo_client.start_session() as session:
+				return session.with_transaction(
+					lambda session: self.update(
+						_update_query, more_conditions=more_conditions,
+						session=session, **kwargs
+					),
+					read_concern=ReadConcern('local'),
+					write_concern=WriteConcern("majority", wtimeout=5000),
+					read_preference=ReadPreference.PRIMARY
+				)
+
 		cls._trigger_event(EVENT_BEFORE_UPDATE, self)
 
 		retries = 3
@@ -640,6 +659,8 @@ class Model(object):
 				model=cls.__name__, collection=COLLECTION_NAME(primary_collection_shard),
 				query="_query", original_doc=str(self._original_doc), update_query=str(_update_query)
 			)
+
+			#1: try updating
 			updated_doc = primary_collection_shard.find_one_and_update(
 				_query,
 				_update_query,
@@ -663,7 +684,22 @@ class Model(object):
 						new_primary_collection_shard.insert_one(updated_doc) # will crash if duplicate _id key
 						primary_collection_shard.delete_one({"_id": self._id})
 
-				break # no retry again , all is good
+				#2 : propage the updates to secondary shards
+				cls.propagate_update_to_secondary_shards(
+					self._original_doc, # latest from db
+					updated_doc
+				)
+
+				cls._trigger_event(EVENT_MONGO_AFTER_UPDATE, self._original_doc, updated_doc)
+
+				#reset all values
+				self.reinitialize_from_doc(updated_doc)
+				#waint on threads
+				
+				#triggered after update event
+				cls._trigger_event(EVENT_AFTER_UPDATE, self)
+				return True
+
 
 			#update was unsuccessful
 			#is this concurrent update by someone else?
@@ -680,34 +716,14 @@ class Model(object):
 				remote_db_val = get_by_key_list(self._original_doc, *_k.split("."))
 				if(_v != remote_db_val):
 					can_retry = True # local copy consistency check has failed, retry again
-					LOG_WARN("MONGO",
-						description="concurrent update",
-						model=cls.__name__,
+					LOG_WARN("MONGO", description="concurrent update", model=cls.__name__,
 						collection=COLLECTION_NAME(primary_collection_shard),
-						_query=str(_query),
-						remote_value=remote_db_val,
-						local_value=_v,
-						_key=_k
+						_query=str(_query), remote_value=remote_db_val, local_value=_v, _key=_k
 					)
 
 			if(not can_retry):
 				return False
 
-		#propage the updates to secondary shards
-		cls.propagate_update_to_secondary_shards(
-			self._original_doc, # latest from db
-			updated_doc
-		)
-
-		cls._trigger_event(EVENT_MONGO_AFTER_UPDATE, self._original_doc, updated_doc)
-
-		#reset all values
-		self.reinitialize_from_doc(updated_doc)
-		#waint on threads
-		
-		#triggered after update event
-		cls._trigger_event(EVENT_AFTER_UPDATE, self)
-		return True
 
 	@classmethod
 	def query(cls,
@@ -1201,7 +1217,7 @@ _cached_mongo_clients = {}
 #DatabaseNode is basically a server
 class DatabaseNode:
 
-	_cached_pymongo_collections = {}
+	_cached_pymongo_collections = None
 	#mongo connection
 	mongo_connection = None
 	hosts = None
@@ -1222,11 +1238,13 @@ class DatabaseNode:
 		self.db_name = db_name
 		# use list of hosts, replicaset and username as cache key
 		# so as not to create multiple clients
-		_mongo_clients_cache_key = (",".join(hosts), replica_set or "" , username or "")
+		_mongo_clients_cache_key = (",".join(sorted(hosts)), replica_set or "" , username or "")
 		self.mongo_connection = _cached_mongo_clients.get(_mongo_clients_cache_key)
 		if(not self.mongo_connection):
-			self.mongo_connection = _cached_mongo_clients[_mongo_clients_cache_key] = MongoClient(host=hosts, replicaSet=replica_set, username=username, password=password)
+			self.mongo_connection = _cached_mongo_clients[_mongo_clients_cache_key] \
+				= MongoClient(host=hosts, replicaSet=replica_set, username=username, password=password)
 
+		self._cached_pymongo_collections = {}
 
 	def to_dict(self):
 		return {
@@ -1237,6 +1255,7 @@ class DatabaseNode:
 		}
 
 	#returns collection on the given DatabaseNode
+	#slight optimization to cache and return
 	def get_collection(self, _Model):
 		ret = self._cached_pymongo_collections.get(_Model)
 		if(not ret):
@@ -1261,7 +1280,7 @@ def initialize_model(_Model):
 	_Model.__cache__ = getattr(_Model, "_cache_", ExpiringCache(10000))
 
 	# temp usage _id_attr
-	_id_attr = Attribute(str) # default is of type objectId
+	_id_attr = Attribute(ObjectId) # default is of type objectId
 	_Model._attrs = _model_attrs = {"_id": _id_attr}
 	_Model._pk_attrs = None
 	'''it's used for translating attr objects/name to string names'''
