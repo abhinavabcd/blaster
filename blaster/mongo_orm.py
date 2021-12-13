@@ -1257,8 +1257,8 @@ class DatabaseNode:
 	#returns collection on the given DatabaseNode
 	#slight optimization to cache and return
 	def get_collection(self, _Model):
-		ret = self._cached_pymongo_collections.get(_Model)
-		if(not ret):
+		ret = self._cached_pymongo_collections.get(_Model, None)
+		if(ret == None):
 			self._cached_pymongo_collections[_Model] \
 				= ret \
 				= self.mongo_connection[_Model._db_name_][_Model._collection_name_with_shard_]

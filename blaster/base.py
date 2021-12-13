@@ -767,8 +767,14 @@ class App:
 			request_path \
 				= request_params.path \
 				= _request_line[: _http_protocol_index]
-			#http_version = _request_line[_http_protocol_index + 1:]
+			#special issue, seeing request path will full domain name
+			if(request_path.startswith("http")):
+				if(request_path.startswith("https://") or request_path.startswith("http://")):
+					_index = request_path.index("/", 8)
+					if(_index != -1):
+						request_path = request_path[_index:]
 
+			#http_version = _request_line[_http_protocol_index + 1:]
 			query_start_index = request_path.find("?")
 			if(query_start_index != -1):
 				query_string = request_path[query_start_index + 1:]
@@ -984,7 +990,7 @@ class App:
 				exception_str=str(ex),
 				stacktrace_string=stacktrace_string,
 				request_type=request_type,
-				request_path=request_path,
+				request_line=request_line,
 				request_params_str=str(request_params.to_dict())
 			)
 			if(IS_DEV):

@@ -215,11 +215,11 @@ def zlfill(tup, n):
 
 
 DATE_REGEX = re.compile("(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})")
-TIME_REGEX = re.compile("(?:(0?[1-9]|1[012])(?::([0-5]\d))?(?::([0-5]\d))?\x20?([AP]M))|([01]\d|2[0-3])(:[0-5]\d){1,2}")
+TIME_REGEX = re.compile("(?:(0?[1-9]|1[012])(?::([0-5]\d))?(?::([0-5]\d))?\s*([AP]\.?M\.?))|([01]\d|2[0-3])(:[0-5]\d){1,2}", re.IGNORECASE)
 DAY_REGEX = re.compile("(mon|tues|wed(nes)?|thur(s)?|fri|sat(ur)?|sun)(day)?", re.IGNORECASE)
 
 DAYS_OF_WEEK = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-def get_time_overlaps(a, b, c: str, limit=10, partial=True):
+def get_time_overlaps(a, b, x: str, limit=10, partial=True):
 	if(isinstance(a, int)):
 		a = timestamp2date(a)
 
@@ -227,65 +227,96 @@ def get_time_overlaps(a, b, c: str, limit=10, partial=True):
 		b = timestamp2date(b)
 
 	time_ranges = []
-	for x in c:
-		date_matches = [m for m in DATE_REGEX.findall(x)]
-		time_matches = [tuple(filter(lambda x: x, map(lambda x: x.strip(":"), m))) for m in TIME_REGEX.findall(x)]
-		day_matches = list(
-			filter(
-				lambda x: DAYS_OF_WEEK.index(x) > 0,
-				[x[m.start():m.end()].lower() for m in DAY_REGEX.finditer(x) or []]
-			)
+	date_matches = [m for m in DATE_REGEX.findall(x)]
+	time_matches = [
+		list(filter(
+			lambda x:x, map(lambda x: x.strip(": ").lower(), m)
+		)) for m in TIME_REGEX.findall(x)
+	]
+	day_matches = list(
+		filter(
+			lambda x: DAYS_OF_WEEK.index(x) >= 0,
+			[x[m.start():m.end()].lower() for m in DAY_REGEX.finditer(x) or []]
 		)
+	)
+	for time_match in time_matches:
+		if(time_match[-1] and time_match[-1][0] in ("a", "p")):
+			while(len(time_match) < 4):
+				time_match.insert(-1, 0)
+		else:
+			while(len(time_match) < 4):
+				time_match.append(0)
 
-		offset_check_x = timedelta(seconds=0)
-		offset_check_y = timedelta(seconds=0)
-		
-		if(time_matches):
-			hours, mins, secs, am_pm = zrfill(time_matches[0], 4)
-			if(am_pm and am_pm.lower() == "pm"):
-				hours = int(hours or 0) + 12
-			offset_check_x = timedelta(hours=int(hours or 0), minutes=int(mins or 0), seconds=int(secs or 0))
+		for i in range(3):
+			time_match[i] = int(time_match[i])
 
-			if(len(time_matches) > 1):
-				hours, mins, secs, am_pm = zrfill(time_matches[1], 4)
+	offset_check_x = timedelta(seconds=0)
+	offset_check_y = timedelta(seconds=0)
+	if(time_matches):
+		_start_time_is_pm = False
+		hours, mins, secs, am_pm = time_matches[0]
+		if(am_pm):
+			if(am_pm.lower()[0] == "p"):
+				hours = (hours % 12) + 12
+				_start_time_is_pm = True
+			if(am_pm.lower()[0] == "a"):
+				if(hours == 12):
+					hours = 0
 
-				if(am_pm and am_pm.lower() == "pm"):
-					hours = (hours or 0) + 12
-				offset_check_y = timedelta(hours=int(hours or 0), minutes=int(mins or 0), seconds=int(secs or 0))
-			else:
-				offset_check_y = offset_check_y + timedelta(hours=1)
+		offset_check_x = timedelta(hours=hours, minutes=mins, seconds=secs)
+
+		if(len(time_matches) > 1):
+			hours, mins, secs, am_pm = time_matches[1]
+
+			if(am_pm):
+				if(am_pm.lower()[0] == "p"):
+					hours = (hours % 12) + 12
+				if(am_pm.lower()[0] == "a"):
+					if(hours == 12):
+						hours = 0
+					if(_start_time_is_pm):
+						# 9:30 PM - 12:00 AM -> next day
+						hours += 24
+
+			offset_check_y = timedelta(hours=hours, minutes=mins, seconds=secs)
+		else:
+			offset_check_y = offset_check_y + timedelta(hours=1)
 
 
-		if(date_matches):
-			day, month, year, *_ = map(lambda x: int(x) if x else 0, date_matches[0])
+	if(date_matches):
+		day, month, year, *_ = map(lambda x: int(x) if x else 0, date_matches[0])
+		if(year < 2000):
+			year = 2000 + year
+		time_range_start = datetime(year=year, month=month, day=day) + offset_check_x
+		time_range_end = datetime(year=year, month=month, day=day) + offset_check_y
+		if(len(date_matches) > 1):
+			day, month, year, *_ = map(lambda x: int(x) if x else 0, date_matches[1])
 			if(year < 2000):
 				year = 2000 + year
-			time_range_start = datetime(year=year, month=month, day=day) + offset_check_x
 			time_range_end = datetime(year=year, month=month, day=day) + offset_check_y
-			if(len(date_matches) > 1):
-				day, month, year, *_ = map(lambda x: int(x) if x else 0, date_matches[1])
-				if(year < 2000):
-					year = 2000 + year
-				time_range_end = datetime(year=year, month=month, day=day) + offset_check_y
-			time_ranges.append((time_range_start, time_range_end))
+		time_ranges.append((time_range_start, time_range_end))
 
-		elif(day_matches):
-			start_day = DAYS_OF_WEEK.index(day_matches[0].lower())
-			if(start_day == -1):
-				return None
-			t = a
-			while(t < b and len(time_ranges) < limit):
-				if(t.weekday() == start_day):
-					t_start_of_day = datetime(year=t.year, month=t.month, day=t.day)
-					time_ranges.append((t_start_of_day + offset_check_x, t_start_of_day + offset_check_y))
-				t += timedelta(days=1)
+	elif(day_matches):
+		start_day = DAYS_OF_WEEK.index(day_matches[0].lower())
+		if(start_day == -1):
+			return None
+		t = a
+		while(t < b and len(time_ranges) < limit):
+			if(t.weekday() == start_day):
+				t_start_of_day = datetime(year=t.year, month=t.month, day=t.day)
+				time_ranges.append((
+					t_start_of_day + offset_check_x,
+					t_start_of_day + offset_check_y
+				))
+			t += timedelta(days=1) # increment by 1 day and keep on checking
 
-		else:
-			t = a
-			while(t < b and len(time_ranges) < limit):
-				t_start_of_day = datetime(a.year, a.month, a.day)
-				time_ranges.append((t_start_of_day + offset_check_x, t_start_of_day + offset_check_y))
-				t += timedelta(days=1)
+	else:
+		t = a
+		while(t < b and len(time_ranges) < limit):
+			t_start_of_day = datetime(a.year, a.month, a.day)
+			time_ranges.append((t_start_of_day + offset_check_x, t_start_of_day + offset_check_y))
+			t += timedelta(days=1)
+
 
 	ret = []
 	for start, end in time_ranges:
