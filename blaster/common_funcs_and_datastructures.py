@@ -853,10 +853,9 @@ class Worker(Thread):
 	is_running = True
 
 	""" Thread executing tasks from a given tasks queue """
-	def __init__(self, tasks):
-		Thread.__init__(self)
-		self.tasks = tasks
-		self.daemon = True
+	def __init__(self, tasks=None, name="worker thread"):
+		self.tasks = tasks or Queue()
+		super().__init__(name=name)
 
 	def run(self):
 		while self.is_running:

@@ -51,7 +51,7 @@ def get_from_pool(pool_id):
     conn = None
     conn_pool = conn_pools.get(pool_id, None)
     if (conn_pool == None):
-        #if no conn_pool for given pool_id create and store in conn_pools
+        # if no conn_pool for given pool_id create and store in conn_pools
         conn_pool = Queue()
         conn_pools[pool_id] = conn_pool
 

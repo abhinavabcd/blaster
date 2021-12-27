@@ -117,7 +117,8 @@ def start_log_streaming(es_config=None, udp_config=None, log_handlers=None):
 	# start the thread
 	_this_.log_streaming_thread = Thread(
 		target=stream_logs_loop,
-		args=()
+		args=(),
+		name="log_streamer"
 	)
 	_this_.log_streaming_thread.start()
 	stream_logs_loop.can_run = True
