@@ -13,7 +13,7 @@ from .config import LOG_LEVEL
 
 _this_ = sys.modules[__name__]
 
-#more levels
+# more levels
 SERVER_INFO = 31
 APP_INFO = 32
 
@@ -29,7 +29,7 @@ log_level_to_names = {
 
 deployment_config = json.loads(open(".deploy").read()) if os.path.isfile(".deploy") else {}
 
-#some constants
+# some constants
 _app_name = deployment_config.get("app", "BlasterApp")
 _app_version = deployment_config.get("version", "unknown")
 
@@ -38,17 +38,18 @@ log_streaming_thread = None
 log_queue = Queue()
 
 
-##Specific configs
+# Specific configs
 es_config = None
 udp_config = None
 custom_log_handlers = None
 
-#starts a loop to stream logs to sinks
+
+# starts a loop to stream logs to sinks
 def stream_logs_loop():
 
 	timestamp = -24 * 60 * 60
 
-	#elasticsearch specific
+	# elasticsearch specific
 	es_conn = None
 	es_index_name = None
 	es_base_index_name = None
@@ -60,21 +61,20 @@ def stream_logs_loop():
 
 		es_base_index_name = es_config.get("index", "blaster_app_logs") + "_"
 
-
-	#create index if not exist
+	# create index if not exist
 	while stream_logs_loop.can_run or not log_queue.empty():
 		log_item = log_queue.get()
 
-		#check and stream to elasticsearch
+		# check and stream to elasticsearch
 		if(es_conn):
 			try:
-				#if time elapsed since last new index creation
+				# if time elapsed since last new index creation
 				if(time.time() > timestamp + 24 * 60 * 60):
 					_d = datetime.now()
 					start_of_today = datetime(year=_d.year, month=_d.month, day=_d.day)
 					timestamp = start_of_today.timestamp()
 					es_index_name = es_base_index_name + start_of_today.strftime("%d-%m-%Y")
-					#try creating index if not already
+					# try creating index if not already
 					es_conn.indices.create(
 						index=es_index_name,
 						body={
@@ -104,16 +104,17 @@ def stream_logs_loop():
 
 stream_logs_loop.can_run = False
 
+
 def start_log_streaming(es_config=None, udp_config=None, log_handlers=None):
 	if(_this_.log_streaming_thread):
-		#already started
+		# already started
 		raise Exception("Already started log streaming")
 
 	_this_.es_config = es_config
 	_this_.udp_config = udp_config
 	_this_.custom_log_handlers = log_handlers
 
-	#start the thread
+	# start the thread
 	_this_.log_streaming_thread = Thread(
 		target=stream_logs_loop,
 		args=()
@@ -122,16 +123,15 @@ def start_log_streaming(es_config=None, udp_config=None, log_handlers=None):
 	stream_logs_loop.can_run = True
 
 
-
 @events.register_as_listener(["sigint", "blaster_atexit", "blaster_after_shutdown"])
 def flush_and_exit_log_streaming():
 
 	if(not stream_logs_loop.can_run):
-		return # double calling function
+		return  # double calling function
 
 	stream_logs_loop.can_run = False
 
-	#don't remove it , it will push an empty function to queues to flush them off
+	# don't remove it , it will push an empty function to queues to flush them off
 	LOG(LOG_LEVEL, "log_flushing", msg="flushing logs and exiting")
 
 	log_streaming_thread and log_streaming_thread.join()
@@ -152,7 +152,7 @@ log_level_colors = {
 }
 
 
-#LOGGING functions start
+# LOGGING functions start
 def LOG(level, log_type, **kwargs):
 	global udp_log_listeners_i
 
@@ -160,9 +160,14 @@ def LOG(level, log_type, **kwargs):
 		return
 
 	log_level_name = log_level_to_names.get(level, "SERVER")
-	#print to stdout
+	# print to stdout
 
-	print("%s%s [%s]"%(log_level_colors.get(level, PrintColors.OKGREEN), datetime.now(), log_level_name),
+	print(
+		"{:s}{:s} [{:s}]".format(
+			log_level_colors.get(level, PrintColors.OKGREEN),
+			datetime.now(),
+			log_level_name
+		),
 		log_type, json.dumps(kwargs),
 		PrintColors.ENDC
 	)
@@ -177,20 +182,26 @@ def LOG(level, log_type, **kwargs):
 			"payload": kwargs
 		})
 
+
 def LOG_SERVER(log_type, **kwargs):
 	LOG(SERVER_INFO, log_type, **kwargs)
+
 
 def LOG_APP_INFO(log_type, **kwargs):
 	LOG(APP_INFO, log_type, **kwargs)
 
+
 def LOG_DEBUG(log_type, **kwargs):
 	LOG(DEBUG, log_type, **kwargs)
+
 
 def LOG_INFO(log_type, **kwargs):
 	LOG(INFO, log_type, **kwargs)
 
+
 def LOG_WARN(log_type, **kwargs):
 	LOG(WARN, log_type, **kwargs)
+
 
 def LOG_ERROR(log_type, **kwargs):
 	LOG(ERROR, log_type, **kwargs)

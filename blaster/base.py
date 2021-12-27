@@ -326,11 +326,11 @@ class Request:
 				_cookie_val = str(cookie_value.pop("value", "1"))
 				if(cookie_value):
 					_cookie_val += ";"
-					#other key=val atrributes of cookie
+					# other key=val atrributes of cookie
 					for k, v in cookie_value.items():
 						_cookie_val += (" " + k)
-						if(v is not True): # if mentioned as True just the key is suffice like httpsOnly, secureOnly
-							_cookie_val += "=%s;"%(str(v))
+						if(v is not True):  # if mentioned as True just the key is suffice like httpsOnly, secureOnly
+							_cookie_val += "={!s};".format(v)
 				cookie_value = _cookie_val
 			if(isinstance(cookie_value, str)):
 				self._cookies_to_set[key] = cookie_value
