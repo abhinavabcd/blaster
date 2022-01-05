@@ -2,11 +2,11 @@ from gevent.queue import Queue, Empty
 import boto3
 from . import config
 from .config import IS_DEV
-#import umysql
+# import umysql
 
 conn_pools = {}
 boto_sessions = {
-    0: None # 0 is the default boto session id
+    0: None  # 0 is the default boto session id
 }
 
 def get_dynamodb_conn():

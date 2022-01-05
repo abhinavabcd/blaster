@@ -11,6 +11,7 @@ Created on 22-Aug-2017
 # boto3==1.4.4
 
 import os
+import sys
 import gevent
 import signal
 import ujson as json
@@ -21,7 +22,9 @@ import functools
 import traceback
 import inspect
 from urllib.parse import urlencode
-
+import socket
+import pickle
+from gevent.socket import socket as GeventSocket
 from gevent.threading import Lock
 from gevent.server import StreamServer
 from requests_toolbelt.multipart import decoder
@@ -29,7 +32,7 @@ from requests_toolbelt.multipart import decoder
 from . import config as blaster_config
 from .config import IS_DEV
 from .common_funcs_and_datastructures import SanitizedDict, get_mime_type_from_filename, DummyObject,\
-	set_socket_options
+	set_socket_fast_close_options, start_background_thread, BufferedSocket
 from .utils import events
 from .logging import LOG_ERROR, LOG_SERVER
 from .schema import Object, schema as schema_func
@@ -57,113 +60,6 @@ _OBJ_END_ = object()
 # some random constants
 HTTP_MAX_REQUEST_BODY_SIZE = 1 * 1024 * 1024  # 1 mb
 HTTP_MAX_HEADERS_DATA_SIZE = 16 * 1024  # 16kb
-
-
-class BufferedSocket():
-
-	is_eof = False
-	sock = None
-	store = None
-
-	def __init__(self, sock):
-		self.sock = sock
-		self.store = bytearray()
-
-	def close(self):
-		self.sock.close()
-		self.is_eof = True
-
-	def send(self, *_data):
-		total_sent = 0
-		for data in _data:
-			if(isinstance(data, str)):
-				data = data.encode()
-			n = 0
-			data_len = len(data)
-			data_mview = memoryview(data)
-			while(n < data_len):
-				sent = self.sock.send(data_mview[n:])
-				if(sent < 0):
-					return sent  # return failed
-				n += sent
-			total_sent += n
-		return total_sent
-
-	def recv(self, n):
-		if(self.is_eof):
-			return None
-		if(self.store):
-			ret = self.store
-			self.store = bytearray()
-			return ret
-		return self.sock.recv(n)
-
-	def recvn(self, n):
-		if(self.is_eof):
-			return None
-		while(len(self.store) < n):
-			data = self.sock.recv(4096)
-			if(not data):
-				self.is_eof = True
-				break
-			self.store.extend(data)
-
-		# return n bytes for now
-		ret = self.store[:n]
-		# set remaining to new store
-		self.store = self.store[n:]
-		return ret
-
-	# fails if it couldn't find the delimiter until max_size
-	def readuntil(self, delimiter, max_size, discard_delimiter):
-		if(self.is_eof):
-			return None
-		# check in store
-		if(isinstance(delimiter, str)):
-			delimiter = delimiter.encode()
-
-		delimiter_len = len(delimiter)
-		# scan the store until end, if not found extend
-		# and continue until store > max_size
-		to_scan_len = len(self.store)
-		i = 0  # how much we scanned already
-
-		_store = self.store  # get a reference
-		while(True):
-			if(i > max_size):
-				self.is_eof = True
-				return None
-			if(i >= delimiter_len):
-				j = 0
-				lookup_from = i - delimiter_len
-				while(j < delimiter_len and _store[lookup_from + j] == delimiter[j]):
-					j += 1
-
-				if(j == delimiter_len):
-					# found
-					ret = None
-					if(discard_delimiter):
-						ret = _store[:i - delimiter_len]
-					else:
-						ret = _store[:i]
-					self.store = _store[i:]  # set store to unscanned/pending
-					return ret
-			if(i >= to_scan_len):
-				# scanned all buffer
-				data = self.sock.recv(4096)
-				if(not data):
-					self.is_eof = True
-					return None
-
-				_store.extend(data)  # fetch more data
-				to_scan_len = len(_store)
-			i += 1
-
-	def __getattr__(self, key):
-		ret = getattr(self.sock, key, _OBJ_END_)
-		if(ret == _OBJ_END_):
-			raise AttributeError()
-		return ret
 
 
 def get_chunk_size_from_header(chunk_header):
@@ -639,6 +535,15 @@ class App:
 			def do_close(self, *args):
 				return
 
+			@classmethod
+			def get_listener(cls, address, backlog=None, family=None):
+				sock = GeventSocket(family=family)
+				sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+				sock.bind(address)
+				sock.listen(backlog or cls.backlog or 256)
+				sock.setblocking(0)
+				return sock
+
 			# lets handle closing ourself
 			def wrap_socket_and_handle(self, client_socket, address):
 				# used in case of ssl sockets
@@ -1053,7 +958,7 @@ class App:
 			if(IS_DEV):
 				traceback.print_exc()
 			# BREAK THIS CONNECTION
-	
+
 		if(resuse_socket_for_next_http_request):
 			return REUSE_SOCKET_FOR_HTTP
 
@@ -1075,19 +980,23 @@ class App:
 			buffered_socket.close()
 
 
-@events.register_as_listener("sigint")
+@events.register_as_listener(signal.SIGINT)
 def stop_all_apps():
 	LOG_SERVER("server_info", data="exiting all servers")
 	global _is_server_running
 
 	_is_server_running = False
 
-	events.broadcast_event("blaster_before_shutdown")
-
 	for app in list(_all_apps):
 		app.stop()  # should handle all connections gracefully
 
-	events.broadcast_event("blaster_after_shutdown")
+	# send exit signals
+	# stage 0 -> stop creating new things
+	# stage 1 -> initiate closing all connections, waiting things
+	# ..
+	# stage 5 -> all things cleanedup and done
+	for i in range(6):
+		events.broadcast_event("blaster_exit" + str(i))
 
 
 # create a global app for generic single server use
@@ -1108,7 +1017,12 @@ def redirect_http_to_https():
 		host = request_params.HEADERS('host')
 		if(not host):
 			return "404", {}, "Not understood"
-		return "302 Redirect", ["Location: https://%s%s?%s"%(host, request_params.path, request_params.query_string)], "Need Https"
+		return "302 Redirect", [
+			"Location: https://{:s}{:s}?{:s}".format(
+				host, request_params.path,
+				request_params.query_string
+			)
+		], "Need Https"
 
 	http_app = App("port=80")
 	http_app.start(port=80, handlers=[("(.*)", redirect)])
@@ -1143,7 +1057,7 @@ def static_file_handler(
 		resp_headers = None
 
 		if(
-			not file_data 
+			not file_data
 			or time.time() * 1000 - file_data[2] > 1000 if IS_DEV else 2 * 60 * 1000
 		):
 			gevent_lock.acquire()
@@ -1159,10 +1073,10 @@ def static_file_handler(
 							'Content-Type': mime_type_headers.mime_type,
 							'Cache-Control': 'max-age=31536000'
 						}
-				
+
 					file_data = (data, resp_headers, time.time() * 1000)
 					cached_file_data[file_hash_key] = file_data
-				except Exception as ex:
+				except Exception:
 					if(file_not_found_page_cb):
 						file_data = (
 							file_not_found_page_cb(
@@ -1241,15 +1155,138 @@ def auto_api_response(request_params, response):
 	return status, headers, body
 
 
-# add a default arg hook
+# Get args hook
 def _get_web_socket_handler(request_params):
-	set_socket_options(request_params.sock)
-	ws = WebSocketServerHandler(request_params.sock) # sends handshake automatically
+	set_socket_fast_close_options(request_params.sock)
+	# sends handshake automatically
+	ws = WebSocketServerHandler(request_params.sock)
 	ws.do_handshake(request_params.HEADERS())
 	return ws
 
 
 Request.set_arg_type_hook(WebSocketServerHandler, _get_web_socket_handler)
 
+
+# MULTIPROCESS SERVER
+
+# forks current process x num_process
+def set_num_procs(num_procs=min(3, os.cpu_count())):
+
+	if(set_num_procs._has_cloned):
+		raise Exception("Cannot set_num_procs again")
+	set_num_procs._has_cloned = True
+
+	BROADCASTER_PID = os.getpid()
+	multiproc_broadcaster_sock_address = "/tmp/blaster-" + str(BROADCASTER_PID) + ".s"
+
+	# broadcaster process => listening socket
+	# cloned process => connection to broadcaster process
+	sock = None
+	tracked_connections = []
+
+	# starts reading for events
+	def read_data_from_other_process(sock):
+		CUR_PID = os.getpid()
+		print("multiproc broadcaster:reader starting:", CUR_PID)
+		while(
+			start_background_thread.can_run
+			and (data_size_bytes := sock.recvn(4))
+		):
+			data_size = int.from_bytes(data_size_bytes, byteorder=sys.byteorder)
+			data_bytes = sock.recvn(data_size)
+			data = pickle.loads(data_bytes)
+			events.broadcast_event(data["event"], *data["args"], **data["kwargs"])
+			# rebroadcast to others
+			if(BROADCASTER_PID == CUR_PID):
+				# we are the central broadcaster process
+				# broadcast to all clients
+				for _sock in tracked_connections:
+					_sock.sendall(data_bytes)
+
+		sock.close()
+		(sock in tracked_connections) and tracked_connections.remove(sock)
+
+	# accept only on central broadcaster process
+	def accept_connections_from_child(sock):
+		print("multiproc broadcaster:listening to connections:", BROADCASTER_PID)
+		while(
+			start_background_thread.can_run
+			and (_client := sock.accept())
+			and start_background_thread.can_run  # haha first time using same condition
+		):
+			client_sock, client_addr = _client
+			client_sock = BufferedSocket(client_sock)
+			# keep track
+			print("multiproc broadcaster:new connection accepted:", BROADCASTER_PID)
+			tracked_connections.append(client_sock)
+			start_background_thread(read_data_from_other_process, (client_sock,))
+
+	# create multiproc broadcaster
+	def broadcast_event_multiproc(_id, *args, **kwargs):
+		# send it to master process, which broadcasts to every
+		# process including the current one
+		data_to_send = pickle.dumps(
+			{"event": _id, "args": args, "kwargs": kwargs}
+		)
+		data_len = len(data_to_send)
+		if(BROADCASTER_PID == os.getpid()):
+			# we are the central broadcaster process
+			# broadcast to all clients
+			for _sock in tracked_connections:
+				_sock.send(
+					data_len.to_bytes(4, byteorder=sys.byteorder),
+					data_to_send
+				)
+		else:
+			sock.send(
+				data_len.to_bytes(4, byteorder=sys.byteorder),
+				data_to_send
+			)
+	events.broadcast_event_multiproc = broadcast_event_multiproc
+
+	@events.register_as_listener("blaster_exit1")
+	def stop_broadcaster():
+		# send empty messages to break connections
+		if(os.getpid() == BROADCASTER_PID):
+			# this will close all pending read connections
+			broadcast_event_multiproc(None, None)
+			# create a loopback connection to exit all connections
+			sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+			sock.connect(multiproc_broadcaster_sock_address)
+			sock.close()
+
+	# start cloning
+	while(num_procs > 1):
+		num_procs -= 1
+		pid = os.fork()
+		if(pid == 0):
+			break
+		print("Forked/Cloned...", pid)
+
+	if(os.getpid() == BROADCASTER_PID):
+		# create a multi process broadcaster
+		sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+		sock.bind(multiproc_broadcaster_sock_address)
+		sock.listen(2)
+		start_background_thread(accept_connections_from_child, (sock,))
+	else:
+		for i in range(3):
+			try:
+				# cloned process, connect to the BROADCASTER SOCKET
+				sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+				sock.connect(multiproc_broadcaster_sock_address)
+				start_background_thread(
+					read_data_from_other_process, (BufferedSocket(sock),)
+				)
+				break
+			except Exception as ex:
+				print("waiting to connect to broadcaster :", ex)
+				time.sleep(0.1 * (i + 1))
+
+
+set_num_procs._has_cloned = False
 # sigint event broadcast
-gevent.signal_handler(signal.SIGINT, lambda : events.broadcast_event("sigint"))
+gevent.signal_handler(
+	signal.SIGINT,
+	lambda: events.broadcast_event(signal.SIGINT)
+)

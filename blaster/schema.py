@@ -5,9 +5,8 @@ from datetime import datetime
 import ujson as json
 from typing import get_type_hints
 from functools import partial
-#bare minimum validations and schema generators
+# bare minimum validations and schema generators
 _OBJ_END_ = object()
-
 
 
 class _Optional:
@@ -20,13 +19,14 @@ class _Optional:
 
 Optional = _Optional()
 
+
 class Int:
 	def __init__(self, one_of=None, _min=_OBJ_END_, _max=_OBJ_END_, default=_OBJ_END_):
 		self._min = _min
 		self._max = _max
 		self.one_of = set(one_of) if one_of else None
 		self._default = default
-		#make schema
+		# make schema
 		self._schema_ = _schema = {"type": "integer"}
 		if(default != _OBJ_END_):
 			_schema["default"] = default
@@ -43,12 +43,13 @@ class Int:
 				return self._default
 			raise Exception("should be int")
 		if(self._min != _OBJ_END_ and e < self._min):
-			raise Exception("should be minlen %d"%(self._min))
+			raise Exception("should be minlen {:d}".format(self._min))
 		if(self._max != _OBJ_END_ and e > self._max):
-			raise Exception("more than maxlen %d"%(self._max))
+			raise Exception("more than maxlen {:d}".format(self._max))
 		if(self.one_of and e not in self.one_of):
-			raise Exception("should be one of %s"%(str(self.one_of)))
+			raise Exception("should be one of {:d}".format(str(self.one_of)))
 		return e
+
 
 class Str:
 
@@ -59,7 +60,10 @@ class Str:
 		"byte": lambda e: b64decode(e)
 	}
 
-	def __init__(self, one_of=None, minlen=0, maxlen=4294967295, regex=None, default=_OBJ_END_, **kwargs):
+	def __init__(
+		self, one_of=None, minlen=0, maxlen=4294967295,
+		regex=None, default=_OBJ_END_, **kwargs
+	):
 		self.minlen = minlen
 		self.maxlen = maxlen
 		self.one_of = set(one_of) if one_of else None
@@ -68,7 +72,7 @@ class Str:
 		_fmt = kwargs.pop("format", None)
 		self.fmt = _fmt and Str.format_validators[_fmt]
 
-		#make schema
+		# make schema
 		self._schema_ = _schema = {"type": "string"}
 		if(default != _OBJ_END_):
 			_schema["default"] = default
@@ -90,29 +94,30 @@ class Str:
 				return self._default
 			raise Exception("should be string")
 		if(len(e) < self.minlen):
-			raise Exception("should be minlen %s"%(self.minlen))
+			raise Exception("should be minlen {:d}".format(self.minlen))
 		if(len(e) > self.maxlen):
 			e = e[:self.maxlen]
 		if(self.one_of and e not in self.one_of):
-			raise Exception("should be one of %s"%(str(self.one_of)))
+			raise Exception("should be one of {!s}".format(self.one_of))
 		if(self.regex and not self.regex.fullmatch(e)):
-			raise Exception("did not match the pattern %s"%(str(self.one_of)))
+			raise Exception("did not match the pattern {!s}".format(self.one_of))
 		if(self.fmt):
 			return self.fmt(e)
 		return e
+
 
 class Array:
 	def __init__(self, _types, default=_OBJ_END_):
 		self._types = _types if isinstance(_types, (list, tuple)) else [_types]
 		self._default = default
 
-		#ceontents validation
+		# contents validation
 		_s, _v = schema(self._types)
 
 		self._schema_ = _schema = {"type": "array", "items": _s}
 		if(default != _OBJ_END_):
 			_schema["default"] = default
-		#this is spefic validataion
+		# this is spefic validataion
 		self.validate = partial(
 			array_validation,
 			mix=isinstance(self._types, tuple),
@@ -127,7 +132,7 @@ class Object:
 		self._default = default
 		self._required = set(_required_) if _required_ else set()
 
-		#instance specific schema
+		# instance specific schema
 		self._properties = {}
 		self._validations = {}
 		for k, _type in keys.items():
@@ -139,7 +144,7 @@ class Object:
 		if(default != _OBJ_END_):
 			_schema["default"] = default
 
-	#validates Object(a=str, b=int, h=Test)
+	# validates Object(a=str, b=int, h=Test)
 	def validate(self, e=_OBJ_END_):
 		is_validating_dict = True
 		if(e == _OBJ_END_):
@@ -157,7 +162,7 @@ class Object:
 				if(attr_value != _OBJ_END_):
 					_validated_attr = attr_validation(attr_value)
 				else:
-					_validated_attr = getattr(cls, k, None) # try getting class attribute dfault
+					_validated_attr = getattr(cls, k, None)  # try getting class attribute dfault
 
 				if(_validated_attr == None and k in self._required):
 					raise Exception("Field is required")
@@ -173,12 +178,18 @@ class Object:
 				"schema": self._properties[k]
 			})
 
+
 def to_int(e):
 	return e and int(e)
+
+
 def to_str(e):
 	return e and str(e)
+
+
 def to_float(e):
 	return e and float(e)
+
 
 def item_validation(e, simple_types=(), complex_validations=(), nullable=True):
 	if(e == None and not nullable):
@@ -203,7 +214,7 @@ def item_validation(e, simple_types=(), complex_validations=(), nullable=True):
 
 
 def array_validation(arr, simple_types=(), complex_validations=(), default=_OBJ_END_, mix=False, nullable=True):
-	#sequece
+	# sequece
 	if(arr == None and not nullable):
 		if(default != _OBJ_END_):
 			return default
@@ -222,19 +233,19 @@ def array_validation(arr, simple_types=(), complex_validations=(), default=_OBJ_
 			for _complex_validation in complex_validations:
 				if(_complex_validation(e)):
 					valid = True
-		#check types should not mixed
-		if(not mix): # single type, so check type matches with previous
+		# check types should not mixed
+		if(not mix):  # single type, so check type matches with previous
 			_cur_type = type(e)
 			if(_prev_type == _OBJ_END_):
 				_prev_type = _cur_type
 			elif(_prev_type != _cur_type):
 				valid = False
-					
+
 		if(not valid):
 			arr[i] = None
 			filter_nones = True
 
-	if(filter_nones and not nullable): # null not allowed
+	if(filter_nones and not nullable):  # null not allowed
 		n = len(arr)
 		i = n - 1
 		while(i >= 0):
@@ -259,7 +270,8 @@ def schema(x):
 		x._required = _required = set()
 		for k, _type in get_type_hints(x).items():
 			is_required = True
-			if(_type.__module__ == 'typing'
+			if(
+				_type.__module__ == 'typing'
 				and getattr(_type, "__origin__", None) == typing.Union
 				and getattr(_type, "__args__", None)
 			):
@@ -276,38 +288,36 @@ def schema(x):
 				if(_default != _OBJ_END_ and not isinstance(_type, type)):
 					_type._default = _default
 
-
-
-		#create schema
+		# create schema
 		x._schema_ = ret = schema.defs[x.__name__] = {
-				"type": "object",
-			}
+			"type": "object",
+		}
 		_title = getattr(x, "_title_", None)
 		_description = getattr(x, "_description_", None)
 		if(_title):
 			ret["title"] = _title
 		if(_description):
 			ret["description"] = getattr(x, "_description_", None)
-				
+
 		if(_properties):
 			ret["properties"] = _properties
 
 		if(_required):
 			ret["required"] = list(_required)
-		
+
 		return x._schema_, x.validate
 
-	#special for tuples and list
-	elif(isinstance(x, (list, tuple))): # x = [int, str]->oneof, (int, str)->anyof
+	# special for tuples and list
+	elif(isinstance(x, (list, tuple))):  # x = [int, str]->oneof, (int, str)->anyof
 		is_nullable = False
 		if(None in x):
 			x.pop(x.index(None))
 			is_nullable = True
 
-		simple_types = [] # str, int, etc
-		complex_validations = [] # array, object, SomeObject
+		simple_types = []  # str, int, etc
+		complex_validations = []  # array, object, SomeObject
 		_schemas = []
-		for _type in x: #
+		for _type in x:  #
 			_s, _v = schema(_type)
 			_schemas.append(_s)
 
@@ -328,11 +338,11 @@ def schema(x):
 			ret["nullable"] = True
 
 		return ret, partial(
-						item_validation,
-						simple_types=tuple(simple_types),
-						complex_validations=complex_validations,
-						nullable=is_nullable
-					)
+			item_validation,
+			simple_types=tuple(simple_types),
+			complex_validations=complex_validations,
+			nullable=is_nullable
+		)
 
 	elif(x == int or x == Int):
 		return {"type": "integer"}, to_int
@@ -349,16 +359,16 @@ def schema(x):
 	elif(isinstance(x, Int)):
 		return x._schema_, x.validate
 
-	elif(x == Array or x == list): # genric
+	elif(x == Array or x == list):  # genric
 		return {"type": "array"}, (lambda e: e if isinstance(e, list) else None)
 
 	elif(x == Object or x == dict):
 		return {"type": "object"}, (lambda e: e if isinstance(e, dict) else None)
 
-	elif(isinstance(x, Array)): # Array(_types)
+	elif(isinstance(x, Array)):  # Array(_types)
 		return x._schema_, x.validate
 
-	elif(isinstance(x, Object)): # Object(id=Array)
+	elif(isinstance(x, Object)):  # Object(id=Array)
 		return x._schema_, x.validate
 
 	else:
@@ -366,6 +376,7 @@ def schema(x):
 
 
 schema.defs = {}
+
 
 def all_subclasses(cls):
 	return set(cls.__subclasses__()).union(

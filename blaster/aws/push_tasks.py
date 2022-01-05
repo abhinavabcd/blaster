@@ -20,14 +20,15 @@ from ..logging import LOG_WARN, LOG_SERVER
 push_tasks = {}
 sqs_reader_greenlets = []
 
+
 @use_connection_pool(queue="sqs")
 def start_boto_sqs_readers(num_readers=5, msgs_per_batch=10, queue=None):
     if(not config.sqs_url):
         LOG_WARN("server_info", data="No sqs queue url provided, not starting readers")
         return
-        
+
     queue_url = config.sqs_url
-    
+
     def process_from_sqs():
         while(is_server_running()):
             try:
@@ -39,7 +40,7 @@ def start_boto_sqs_readers(num_readers=5, msgs_per_batch=10, queue=None):
                         WaitTimeSeconds=20 # long polling gevent safe
                         # ,ReceiveRequestAttemptId=''   , make it unique for each instance , probably when bootup with an ip ?
                 )
-                    
+
                 for sqs_message in response.get("Messages", []):
                     message_payload = pickle.loads(
                         base64.a85decode(sqs_message.get("Body").encode())
@@ -47,8 +48,8 @@ def start_boto_sqs_readers(num_readers=5, msgs_per_batch=10, queue=None):
                     kwargs = message_payload.get("kwargs", {})
                     args = message_payload.get("args", [])
                     func_name = message_payload.get("func_v2", "")
-                    #task_id = message_payload.get("task_id", "")
-                    #TODO use task_id for logging
+                    # task_id = message_payload.get("task_id", "")
+                    # TODO use task_id for logging
                     func = push_tasks.get(func_name, None)
                     if func:
                         func(*args, **kwargs)
@@ -59,15 +60,14 @@ def start_boto_sqs_readers(num_readers=5, msgs_per_batch=10, queue=None):
                         QueueUrl=queue_url,
                         ReceiptHandle=sqs_message.get("ReceiptHandle", None)
                     )
-                    
+
                     LOG_SERVER("sqs_processed", data=json.dumps(_temp))
 
             except Exception:
                 LOG_WARN("sqs_exception", stack_trace=traceback.format_exc())
-        
+
     for i in range(num_readers):
         sqs_reader_greenlets.append(gevent.spawn(process_from_sqs))
-
 
 
 def push_task(func):
@@ -82,6 +82,7 @@ def push_task(func):
         #grab original function
         push_tasks[func.__name__] = func
         return func
+
 
 @use_connection_pool(queue="sqs")
 def post_a_task(func, *args, **kwargs):
@@ -118,18 +119,19 @@ def post_a_task(func, *args, **kwargs):
 
     response = queue.send_message(
         QueueUrl=config.sqs_url,
-        MessageBody=base64.a85encode(message_body).decode(),# to utf-8 string
+        MessageBody=base64.a85encode(message_body).decode(),  # to utf-8 string
         DelaySeconds=1
     )
     return response
-    
 
-@events.register_as_listener("blaster_after_shutdown")
+
+@events.register_as_listener("blaster_exit0")
 def wait_for_push_tasks_processing():
     if(sqs_reader_greenlets):
         LOG_WARN("server_info", data="finishing pending push tasks via SQS")
         gevent.joinall(sqs_reader_greenlets)
         del sqs_reader_greenlets[:]
+
 
 def run_later(func):
     _original = getattr(func, "_original", func)

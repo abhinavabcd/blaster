@@ -10,12 +10,14 @@ import sys
 import subprocess
 import shlex
 import collections
+import signal
 import random
 import string
 import socket
 import struct
 import fcntl
 import html
+import pickle
 from gevent import sleep
 from functools import reduce as _reduce
 from gevent.lock import BoundedSemaphore
@@ -1038,26 +1040,136 @@ class LowerKeyDict(dict):
 		return super().get(k.lower(), default)
 
 
-# milli seconds
-# TCP_USER_TIMEOUT kernel setting
-TCP_USER_TIMEOUT = 18
+# This is the most *important* socket wrapped implementation
+# used by blaster server.
+class BufferedSocket():
 
-def set_socket_options(sock):
-	l_onoff = 1
-	l_linger = 10  # seconds,
-	# don't wait too long to close the connection,
-	# after a timeout, abruptly close the connection
+	is_eof = False
+	sock = None
+	store = None
+
+	def __init__(self, sock):
+		self.sock = sock
+		self.store = bytearray()
+
+	def close(self):
+		self.sock.close()
+		self.is_eof = True
+
+	def send(self, *_data):
+		total_sent = 0
+		for data in _data:
+			if(isinstance(data, str)):
+				data = data.encode()
+			n = 0
+			data_len = len(data)
+			data_mview = memoryview(data)
+			while(n < data_len):
+				sent = self.sock.send(data_mview[n:])
+				if(sent < 0):
+					return sent  # return failed
+				n += sent
+			total_sent += n
+		return total_sent
+
+	def recv(self, n):
+		if(self.is_eof):
+			return None
+		if(self.store):
+			ret = self.store
+			self.store = bytearray()
+			return ret
+		return self.sock.recv(n)
+
+	def recvn(self, n):
+		if(self.is_eof):
+			return None
+		while(len(self.store) < n):
+			data = self.sock.recv(4096)
+			if(not data):
+				self.is_eof = True
+				break
+			self.store.extend(data)
+
+		# return n bytes for now
+		ret = self.store[:n]
+		# set remaining to new store
+		self.store = self.store[n:]
+		return ret
+
+	# fails if it couldn't find the delimiter until max_size
+	def readuntil(self, delimiter, max_size, discard_delimiter):
+		if(self.is_eof):
+			return None
+		# check in store
+		if(isinstance(delimiter, str)):
+			delimiter = delimiter.encode()
+
+		delimiter_len = len(delimiter)
+		# scan the store until end, if not found extend
+		# and continue until store > max_size
+		to_scan_len = len(self.store)
+		i = 0  # how much we scanned already
+
+		_store = self.store  # get a reference
+		while(True):
+			if(i > max_size):
+				self.is_eof = True
+				return None
+			if(i >= delimiter_len):
+				j = 0
+				lookup_from = i - delimiter_len
+				while(j < delimiter_len and _store[lookup_from + j] == delimiter[j]):
+					j += 1
+
+				if(j == delimiter_len):
+					# found
+					ret = None
+					if(discard_delimiter):
+						ret = _store[:i - delimiter_len]
+					else:
+						ret = _store[:i]
+					self.store = _store[i:]  # set store to unscanned/pending
+					return ret
+			if(i >= to_scan_len):
+				# scanned all buffer
+				data = self.sock.recv(4096)
+				if(not data):
+					self.is_eof = True
+					return None
+
+				_store.extend(data)  # fetch more data
+				to_scan_len = len(_store)
+			i += 1
+
+	def __getattr__(self, key):
+		ret = getattr(self.sock, key, _OBJ_END_)
+		if(ret == _OBJ_END_):
+			raise AttributeError()
+		return ret
+
+
+# milli seconds
+
+
+def set_socket_fast_close_options(sock):
+	# abruptly close the connection after 10 seconds
+	# without back and forth communication about closing
+	# i.e waiting in time_wait state
 	sock.setsockopt(
 		socket.SOL_SOCKET, socket.SO_LINGER,
-		struct.pack('ii', l_onoff, l_linger)
+		struct.pack('ii', 1, 10)
 	)
 	# it can wait 10 seconds,
 	# if there is congestion on the network card to send data
-	timeval = struct.pack('ll', 10, 0)
-	sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO, timeval)
+	sock.setsockopt(
+		socket.SOL_SOCKET, socket.SO_SNDTIMEO,
+		struct.pack('ll', 10, 0)
+	)
 
 	# after 30 seconds if there is no ack
 	# then we assume broken and close it
+	TCP_USER_TIMEOUT = 18
 	sock.setsockopt(socket.SOL_TCP, TCP_USER_TIMEOUT, 30 * 1000)
 
 
@@ -1278,7 +1390,7 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000):
 	ret_code = proc.wait()
 	state.return_code = ret_code
 	state.is_running = False
-	
+
 	output_parser_thread.join()
 	err_parser_thread.join()
 	return state
@@ -1383,7 +1495,7 @@ def empty_func():
 _joinables = []
 
 
-def start_background_thread(func, args=(), kwargs=None):
+def start_background_thread(func, args=(), kwargs={}):
 	if(not start_background_thread.can_run):
 		LOG_WARN(
 			"background_threads",
@@ -1440,6 +1552,9 @@ def __start_task_processors():
 __start_task_processors.started = False
 
 
+# submit a task:func to a partition
+# parition is used when you want them to execute in the
+# same order as submitted
 def submit_background_task(partition_key, func, *args, **kwargs):
 	# start processors if not started already
 	if(not __start_task_processors.started):
@@ -1451,14 +1566,15 @@ def submit_background_task(partition_key, func, *args, **kwargs):
 		.put((func, args, kwargs))
 
 
-# decorator/wrapper to fire and forget
+# decorator to be used for a short io tasks to be 
+# run in background
 def background_task(func):
 	def wrapper(*args, **kwargs):
 		# spawn the thread
 		if(not start_background_thread.can_run):
 			LOG_WARN(
 				"background_threads",
-				msg="Cannot run background threads. Correct copepaths"
+				msg="Cannot run background threads as can_run flag is not set. Correct codepaths"
 			)
 			return
 		submit_background_task(None, func, *args, **kwargs)
@@ -1468,9 +1584,10 @@ def background_task(func):
 	return wrapper
 
 
-@events.register_as_listener(["sigint", "blaster_atexit", "blaster_after_shutdown"])
-def cleanup_before_exit():
-
+# Blaster exit functions
+@events.register_as_listener(["blaster_exit0"])
+def exit_0():
+	# start of exit - background threads cannot run
 	if(not start_background_thread.can_run):
 		return  # double calling function
 
@@ -1480,7 +1597,11 @@ def cleanup_before_exit():
 	for _partitioned_task_queue in _partitioned_background_task_queues:
 		_partitioned_task_queue.put((empty_func, [], {}))
 
-	# reap all joinables
+
+@events.register_as_listener(["blaster_exit5"])
+def exit_5():
+	# reap all joinables of background threads,
+	# everything should be done by this point
 	for _joinable in _joinables:
 		_joinable.join()
 	_joinables.clear()
@@ -1508,6 +1629,12 @@ def call_after_func(func):
 			ret = func(*args, **kwargs)
 			after and after()
 			return ret
-			
+
 		new_func._original = getattr(func, "_original", func)
 		return new_func
+
+
+def all_subclasses(cls):
+	return set(cls.__subclasses__()).union(
+		[s for c in cls.__subclasses__() for s in all_subclasses(c)]
+	)

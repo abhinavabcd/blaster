@@ -1,8 +1,9 @@
 import os
-import socket
+# import socket
 import sys
 import time
-from datetime import datetime, timezone
+import signal
+from datetime import datetime
 import ujson as json
 from gevent.queue import Queue
 from gevent.threading import Thread
@@ -124,14 +125,17 @@ def start_log_streaming(es_config=None, udp_config=None, log_handlers=None):
 	stream_logs_loop.can_run = True
 
 
-@events.register_as_listener(["sigint", "blaster_atexit", "blaster_after_shutdown"])
-def flush_and_exit_log_streaming():
-
+@events.register_as_listener(["blaster_exit0"])
+def stop_log_streaming():
+	# cannot start log streaming anymore
 	if(not stream_logs_loop.can_run):
 		return  # double calling function
 
 	stream_logs_loop.can_run = False
 
+
+@events.register_as_listener(["blaster_exit1"])
+def flush_and_exit_log_streaming():
 	# don't remove it , it will push an empty function to queues to flush them off
 	LOG(LOG_LEVEL, "log_flushing", msg="flushing logs and exiting")
 
