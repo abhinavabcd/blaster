@@ -10,12 +10,14 @@ import sys
 import subprocess
 import shlex
 import collections
+import signal
 import random
 import string
 import socket
 import struct
 import fcntl
 import html
+import pickle
 from gevent import sleep
 from functools import reduce as _reduce
 from gevent.lock import BoundedSemaphore
@@ -47,9 +49,9 @@ _OBJ_END_ = object()
 
 def cur_ms():
 	return int(1000 * time.time())
-#random id
 
-#genetic LRU cache
+
+# genetic LRU cache
 class LRUCache:
 	cache = None
 	capacity = None
@@ -57,15 +59,15 @@ class LRUCache:
 	def __init__(self, capacity, items=None):
 		self.capacity = capacity
 		self.cache = collections.OrderedDict(items or [])
-		#in addition to recentness of use
+		# in addition to recentness of use
 
 	def exists(self, key):
 		return self.cache.get(key, None)
 		
 	def get(self, key, default=None):
 		try:
-			#remove and reinsert into
-			#ordered dict to move to recent
+			# remove and reinsert into
+			# ordered dict to move to recent
 			value = self.cache.pop(key)
 			self.cache[key] = value
 			return value
@@ -77,31 +79,32 @@ class LRUCache:
 		try:
 			self.cache.pop(key)
 		except KeyError:
-			#new entry so cleanup space if it's beyond capacity
+			# new entry so cleanup space if it's beyond capacity
 			while(len(self.cache) >= self.capacity):
 				removed_entries.append(self.cache.popitem(last=False))
 		self.cache[key] = value
-		
+
 		return removed_entries
-		
+
 	def delete(self, key):
 		return self.cache.pop(key, None)
-	
+
 	def clear(self):
 		return self.cache.clear()
-	
+
 	def to_son(self):
 		ret = {}
 		for key, val in self.cache:
 			ret[key] = val.to_son() if hasattr(val, "to_son") else val
 		return ret
 
+
 class ExpiringCache:
 	cache = None
 	capacity = None
 	ttl = None
 
-	#ttl in millis, 5 minutes default
+	# ttl in millis, 5 minutes default
 	def __init__(self, capacity, items=None, ttl=5 * 60 * 1000):
 		self.capacity = capacity
 		self.cache = collections.OrderedDict()
@@ -112,8 +115,8 @@ class ExpiringCache:
 
 	def get(self, key, default=None):
 		try:
-			#remove and reinsert into
-			#ordered dict to move to recent
+			# remove and reinsert into
+			# ordered dict to move to recent
 			cur_timestamp = cur_ms()
 			timestamp_and_value = self.cache.get(key)
 			if(not timestamp_and_value):
@@ -123,20 +126,19 @@ class ExpiringCache:
 			if(cur_timestamp < timestamp + self.ttl):
 				return value
 			else:
-				#remove if expired
+				# remove if expired
 				self.cache.pop(key, None)
 
 			return default
 		except KeyError:
 			return default
 
-
 	def set(self, key, value):
 		removed_entries = []
 		try:
 			self.cache.pop(key)
 		except KeyError:
-			#new entry so cleanup space if it's beyond capacity
+			# new entry so cleanup space if it's beyond capacity
 			cur_timestamp = cur_ms()
 			while(len(self.cache) >= self.capacity):
 				_key, (timestamp, _value) = self.cache.popitem(last=False)
@@ -144,18 +146,18 @@ class ExpiringCache:
 					removed_entries.append((_key, _value))
 
 		self.cache[key] = (cur_ms(), value)
-		
+
 		return removed_entries
 
 	def exists(self, key):
 		return self.cache.get(key, _OBJ_END_) != _OBJ_END_
-		
+
 	def delete(self, key):
 		return self.cache.pop(key, None)
-	
+
 	def clear(self):
 		return self.cache.clear()
-	
+
 	def to_son(self):
 		ret = {}
 		cur_timestamp = cur_ms()
@@ -166,7 +168,7 @@ class ExpiringCache:
 		return ret
 
 
-#get SON of the fields from any generic python object
+# get SON of the fields from any generic python object
 def to_son(obj):
 	ret = obj.__dict__
 	for k in ret.keys():
@@ -181,15 +183,18 @@ def from_kwargs(cls, **kwargs):
 		setattr(ret, key, kwargs[key])
 	return ret
 
-def get_by_key_list(d , *keyList):
+
+def get_by_key_list(d, *keyList):
 	for key in keyList:
 		if(not d):
 			return None
 		d = d.get(key, None)
 	return d
 
+
 def date2string(date):
 	return date.isoformat()
+
 
 def date2timestamp(dt):
 	# datetime to timestamp
@@ -201,14 +206,17 @@ def date2timestamp(dt):
 		timestamp = time.mktime(dt.timetuple()) + dt.microsecond / 1e6
 		return timestamp
 
+
 def timestamp2date(timestamp):
 	if not isinstance(timestamp, (int, float)):
 		return timestamp
 	date = datetime.utcfromtimestamp(timestamp)
 	return date
 
+
 def zrfill(tup, n):
 	return tup + tuple(0 for x in range(n - len(tup)))
+
 
 def zlfill(tup, n):
 	return tuple(0 for x in range(n - len(tup))) + tup
@@ -216,9 +224,16 @@ def zlfill(tup, n):
 
 DATE_REGEX = re.compile("(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})")
 TIME_REGEX = re.compile("(?:(0?[1-9]|1[012])(?::([0-5]\d))?(?::([0-5]\d))?\s*([AP]\.?M\.?))|([01]\d|2[0-3])(:[0-5]\d){1,2}", re.IGNORECASE)
-DAY_REGEX = re.compile("(mon|tues|wed(nes)?|thur(s)?|fri|sat(ur)?|sun)(day)?", re.IGNORECASE)
+DAY_REGEX = re.compile(
+	"(mon|tues|wed(nes)?|thur(s)?|fri|sat(ur)?|sun)(day)?",
+	re.IGNORECASE
+)
+DAYS_OF_WEEK = [
+	'monday', 'tuesday', 'wednesday',
+	'thursday', 'friday', 'saturday', 'sunday'
+]
 
-DAYS_OF_WEEK = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+
 def get_time_overlaps(a, b, x: str, limit=10, partial=True):
 	if(isinstance(a, int)):
 		a = timestamp2date(a)
@@ -282,7 +297,6 @@ def get_time_overlaps(a, b, x: str, limit=10, partial=True):
 		else:
 			offset_check_y = offset_check_y + timedelta(hours=1)
 
-
 	if(date_matches):
 		day, month, year, *_ = map(lambda x: int(x) if x else 0, date_matches[0])
 		if(year < 2000):
@@ -308,15 +322,17 @@ def get_time_overlaps(a, b, x: str, limit=10, partial=True):
 					t_start_of_day + offset_check_x,
 					t_start_of_day + offset_check_y
 				))
-			t += timedelta(days=1) # increment by 1 day and keep on checking
+			t += timedelta(days=1)  # increment by 1 day and keep on checking
 
 	else:
 		t = a
 		while(t < b and len(time_ranges) < limit):
 			t_start_of_day = datetime(a.year, a.month, a.day)
-			time_ranges.append((t_start_of_day + offset_check_x, t_start_of_day + offset_check_y))
+			time_ranges.append((
+				t_start_of_day + offset_check_x,
+				t_start_of_day + offset_check_y	
+			))
 			t += timedelta(days=1)
-
 
 	ret = []
 	for start, end in time_ranges:
@@ -332,14 +348,16 @@ def get_time_overlaps(a, b, x: str, limit=10, partial=True):
 	return ret
 
 
-###############EPOCH
+# EPOCH
 EPOCH = timestamp2date(0)
+
 
 def find_index(a_list, value):
 	try:
 		return a_list.index(value)
 	except ValueError:
 		return -1
+
 
 def find_nth(haystack, needle, n):
 	''' Find position of nth occurance in a string'''
@@ -355,18 +373,21 @@ def find_nth(haystack, needle, n):
 SOME_TIME_WHEN_WE_STARTED_THIS = 1471504855
 SOME_TIME_WHEN_WE_STARTED_THIS_MILLIS_WITH_10 = 16111506425808
 
-### this function is inspired from instagram engineering post on generating 64bit keys with 12 bit shard_id inside it
+
+# this function is inspired from instagram engineering
+# post on generating 64bit keys with 12 bit shard_id inside it
 # __thread_data = LRUCache(10000)
-def generate_64bit_key(shard_id): # shard id should be a 12 bit number
+def generate_64bit_key(shard_id):  # shard id should be a 12 bit number
 	# may be later use dattime
 	millis_elapsed = int((time.time() - SOME_TIME_WHEN_WE_STARTED_THIS) * 1000)
-	
-	_id = (((1 << 41) - 1) & millis_elapsed) << 23 # 41 bits , clear 22 places for random id and shard_id
-	
-	_id |= (((1 << 12) - 1) & shard_id) << 11 # 12 bit shard id, on top
-	
 
-	#increment per thread number
+	# 41 bits , clear 22 places for random id and shard_id
+	_id = (((1 << 41) - 1) & millis_elapsed) << 23
+
+	# 12 bit shard id, on top
+	_id |= (((1 << 12) - 1) & shard_id) << 11
+
+	# increment per thread number
 	# thread_id = threading.current_thread().ident
 	# thread_data = __thread_data.get(thread_id, None)
 	# if(not thread_data):
@@ -374,18 +395,24 @@ def generate_64bit_key(shard_id): # shard id should be a 12 bit number
 	#     __thread_data.set(thread_id , thread_data)
 	# thread_data[0] = (thread_data[0] + 1)%(1 << 11)
 	random_11_bits = random.randrange(0, 1 << 11)
-	_id |= (((1 << 11) - 1) & random_11_bits) # clear 12 places for random
+	_id |= (((1 << 11) - 1) & random_11_bits)  # clear 12 places for random
 
-	#shard_id|timestmap|random_number
-	
+	# shard_id|timestmap|random_number
+
 	return _id
 
+
 def int_to_bytes(number: int) -> bytes:
-	return number.to_bytes(length=(8 + (number + (number < 0)).bit_length()) // 8, byteorder='big', signed=True)
+	return number.to_bytes(
+		length=(8 + (number + (number < 0)).bit_length()) // 8,
+		byteorder='big',
+		signed=True
+	)
 
 
 BASE_62_LIST = string.ascii_uppercase + string.digits + string.ascii_lowercase
 BASE_62_DICT = dict((c, i) for i, c in enumerate(BASE_62_LIST))
+
 
 def str_to_int(string, reverse_base=BASE_62_DICT):
 	length = len(reverse_base)
@@ -394,6 +421,7 @@ def str_to_int(string, reverse_base=BASE_62_DICT):
 		ret += (length ** i) * reverse_base[c]
 
 	return ret
+
 
 def int_to_str(integer, base=BASE_62_LIST):
 	if integer == 0:
@@ -407,8 +435,12 @@ def int_to_str(integer, base=BASE_62_LIST):
 
 	return ret
 
+
 def get_int_id():
-	return int(time.time() * 10000 - SOME_TIME_WHEN_WE_STARTED_THIS_MILLIS_WITH_10)
+	time_elapsed \
+		= time.time() * 10000 - SOME_TIME_WHEN_WE_STARTED_THIS_MILLIS_WITH_10
+	return int(time_elapsed)
+
 
 def get_str_id():
 	return int_to_str(get_int_id())
@@ -425,62 +457,65 @@ def is_almost_equal(a, b, max_diff=0.01):
 	return True
 
 
-##### protobuf + mysql utility functions
+# protobuf + mysql utility functions
 def list_to_protobuf(values, message):
 	'''parse list to protobuf message'''
 	if not values:
 		return
-	if isinstance(values[0], dict): # value needs to be further parsed
+	if isinstance(values[0], dict):  # value needs to be further parsed
 		for v in values:
 			cmd = message.add()
 			dict_to_protobuf(v, cmd)
-	else: # value can be set
+	else:  # value can be set
 		message.extend(values)
 
 
-#just like move constructor ;) , move values much faster than copies
-def dict_to_protobuf(values, obj, transformations=None, excludes=None, preserve_values=True):
+# just like move constructor ;) , move values much faster than copies
+def dict_to_protobuf(
+	values, obj,
+	transformations=None, excludes=None, preserve_values=True
+):
 	if(not preserve_values):
 		if(transformations):
 			for k, func in transformations.items():
 				values[k] = func(values.get(k, None))
-				
+
 		if(excludes):
 			for exclude, flag in excludes.items():
 				if(hasattr(values, exclude)):
 					del values[exclude]
-			
+
 	for k, v in values.items():
 		if(preserve_values):
 			if(transformations and k in transformations):
 				v = transformations[k](v)
-							
+
 			if(excludes and k in excludes):
 				continue
 
 		if hasattr(obj, k):
-			if isinstance(v, dict): # value needs to be further parsed
+			if isinstance(v, dict):  # value needs to be further parsed
 				dict_to_protobuf(v, getattr(obj, k))
 			elif isinstance(v, list):
 				list_to_protobuf(v, getattr(obj, k))
-			else: # value can be set
-				if v: # otherwise default
+			else:  # value can be set
+				if v:  # otherwise default
 					setattr(obj, k, v)
 
+
 def get_mysql_rows_as_dict(res):
-	
 	rows_as_dict = []
 	for row in res.rows:
 		as_dict = {}
 		for field, val in zip(res.fields, row):
 			as_dict[field[0]] = val
-		
-		
+
 		rows_as_dict.append(as_dict)
-	
+
 	return rows_as_dict
 
 ########################
+
 
 def remove_duplicates(lst):
 	exists = set()
@@ -495,10 +530,10 @@ def remove_duplicates(lst):
 
 def get_shard_id(_id):
 	return (int(_id) & (((1 << 12) - 1) << 11)) >> 11
-	
-	
-## move it to seperate module ?
-## copied from internet sha1 token encode - decode module
+
+
+# move it to seperate module ?
+# copied from internet sha1 token encode - decode module
 
 if hasattr(hmac, 'compare_digest'):  # python 3.3
 	_time_independent_equals = hmac.compare_digest
@@ -521,6 +556,7 @@ def utf8(value) -> bytes:
 		return value
 	return value.encode("utf-8")
 
+
 def create_signed_value(name, value, secret):
 	timestamp = utf8(str(int(time.time())))
 	value = base64.b64encode(utf8(value))
@@ -528,20 +564,21 @@ def create_signed_value(name, value, secret):
 	signed_value = b"|".join([value, timestamp, signature])
 	return signed_value
 
+
 def decode_signed_value(name, value, secret, max_age_days=-1):
 	if not value:
 		return None
 	parts = utf8(value).split(b"|")
 	if(len(parts) < 3):
 		return None
-	#check signature matches or not
+	# check signature matches or not
 	signature = _create_signature(secret, name, parts[0], parts[1])
 	if not _time_independent_equals(parts[2], signature):
 		return None
 	if(max_age_days > 0):
 		timestamp = int(parts[1])
 		if timestamp < time.time() - max_age_days * 86400:
-			LOG_APP_INFO("cookie", msg="Expired cookie %s"%value)
+			LOG_APP_INFO("cookie", msg="Expired cookie {:s}".format(value))
 			return None
 		if timestamp > time.time() + 31 * 86400:
 			# _cookie_signature does not hash a delimiter between the
@@ -549,7 +586,10 @@ def decode_signed_value(name, value, secret, max_age_days=-1):
 			# digits from the payload to the timestamp without altering the
 			# signature.  For backwards compatibility, sanity-check timestamp
 			# here instead of modifying _cookie_signature.
-			LOG_APP_INFO("cookie", msg="Cookie timestamp in future; possible tampering %s"%value)
+			LOG_APP_INFO(
+				"cookie",
+				msg="Cookie timestamp in future; possible tampering {:s}".format(value)
+			)
 			return None
 	if parts[1].startswith(b"0"):
 		logging.warning("Tampered cookie %r", value)
@@ -573,6 +613,8 @@ def _create_signature(secret, *parts):
 	dependences, each subsequent set consists of items that depend upon
 	items in the preceeding sets.
 """
+
+
 def toposort(data):
 
 	# Special case empty input.
@@ -594,30 +636,33 @@ def toposort(data):
 		if not ordered:
 			break
 		yield ordered
-		data = {item: (dep - ordered)
+		data = {
+			item: (dep - ordered)
 			for item, dep in data.items() if item not in ordered
 		}
 	if len(data) != 0:
-		exception_string = 'Circular dependencies exist among these items: {{{}}}'.format(
+		exception_string = \
+			'Circular dependencies exist among these items: {{{}}}'.format(
 				', '.join([
 					'{!r}:{!r}'.format(key, value) for key, value in sorted(data.items())
 				])
-		)
+			)
 		raise Exception(exception_string)
-
-
 
 
 # Console or Cloud Console.
 def get_random_id(length=10, include_timestamp=True):
-	'''returns a 10 character random string containing numbers lowercase upper case'''
+	'''returns a random string containing numbers lowercase upper case'''
 	'''http://stackoverflow.com/questions/2257441/random-string-generation-with-upper-case-letters-and-digits-in-python'''
 
-	key_str = ''.join(random.SystemRandom().choice(BASE_62_LIST) for _ in range(length)) 
+	key_str = ''.join(
+		random.SystemRandom().choice(BASE_62_LIST) for _ in range(length)  # iter
+	)
 	if(include_timestamp):
-		key_str = key_str + ("%d" % time.time())
-	#key_str = hashlib.md5(key_str).hexdigest()
+		key_str = key_str + ("{:d}".format(time.time()))
+	# key_str = hashlib.md5(key_str).hexdigest()
 	return key_str
+
 
 # jump consistent hash function , jump_hash("Asdasd", 100) assigns to a bucket
 def jump_hash(key, num_buckets):
@@ -629,24 +674,32 @@ def jump_hash(key, num_buckets):
 		j = float(b + 1) * (float(1 << 31) / float((key >> 33) + 1))
 	return int(b)
 
+##############
+
 
 number_regex = re.compile(r"([0-9\.]+)")
 non_alpha_regex = re.compile("[^0-9a-zA-Z \.]", re.DOTALL)
+non_alpha_regex_2 = re.compile("[^0-9a-zA-Z]", re.DOTALL)
+
+
 def sanitize_string(text):
 	return non_alpha_regex.sub("", text)
 
 
-non_alpha_regex_2 = re.compile("[^0-9a-zA-Z]", re.DOTALL)
 def sanitize_to_id(text):
 	return non_alpha_regex_2.sub("", text.lower())
 
 
-EMAIL_REGEX = re.compile('^[_a-z0-9-]+(\.[_a-z0-9-]+)*(\+[_a-z0-9-]+)?\@[a-z0-9-]+(\.[a-z0-9-]+)*(\.[a-z]{2,6})$')
+EMAIL_REGEX = re.compile(r'^[_a-z0-9-]+(\.[_a-z0-9-]+)*(\+[_a-z0-9-]+)?\@[a-z0-9-]+(\.[a-z0-9-]+)*(\.[a-z]{2,6})$')
+
+
 def is_valid_email(email):
 	return EMAIL_REGEX.match(email)
-	
+
 
 SANITIZE_EMAIL_REGEX_NO_PLUS_ALLOWED = re.compile("\+[^@]*")
+
+
 def sanitize_email_id(email_id, plus_allowed=True):
 	if(not email_id):
 		return None
@@ -667,8 +720,9 @@ def list_diff(first, second):
 	second = set(second)
 	return [item for item in first if item not in second]
 
+
 # what are added vs what need to be deleted from first
-#no order
+# no order
 def list_diff2(first, second, key=None):
 	if(not first and second):
 		return [], second
@@ -745,6 +799,7 @@ def normalize(val, n=13):
 
 	raise Exception('cannot have greater length, ensure about this')
 
+
 # normalize a int/str to n number of characters 
 # and clips of any characters more than n characters
 def normalize_no_warn(val, n=13):
@@ -755,23 +810,24 @@ def normalize_no_warn(val, n=13):
 	return val
 
 
-
 def ltrim(_str, str_to_remove):
 	if(str_to_remove and _str.startswith(str_to_remove)):
 		return _str[len(str_to_remove):]
 	return _str
+
 
 def rtrim(_str, str_to_remove):
 	if(str_to_remove and _str.endswith(str_to_remove)):
 		return _str[:len(_str) - len(str_to_remove)]
 	return _str
 
+
 def trim(_str, str_to_remove):
 	return rtrim(ltrim(_str, str_to_remove), str_to_remove)
 
 
-#remove zeros in the front
-#returns 0 if it's all zeroes
+# remove zeros in the front
+# returns 0 if it's all zeroes
 def de_normalize(id1):
 	i = 0
 	length = len(id1)
@@ -783,6 +839,7 @@ def de_normalize(id1):
 		return '0'
 	return id1[i:]
 
+
 def set_non_blocking(fd):
 	"""
 	Set the file description of the given file descriptor to non-blocking.
@@ -792,28 +849,27 @@ def set_non_blocking(fd):
 	fcntl.fcntl(fd, fcntl.F_SETFL, flags)
 
 
-#generic thread pool to submit tasks which will be
-#picked up wokers and processed
+# generic thread pool to submit tasks which will be
+# picked up wokers and processed
 class Worker(Thread):
-	
 	is_running = True
 
 	""" Thread executing tasks from a given tasks queue """
-	def __init__(self, tasks):
-		Thread.__init__(self)
-		self.tasks = tasks
-		self.daemon = True
+	def __init__(self, tasks=None, name="worker thread"):
+		self.tasks = tasks or Queue()
+		super().__init__(name=name)
 
 	def run(self):
 		while self.is_running:
-			#get a task from queue
+			# get a task from queue
 			func, args, kargs = self.tasks.get()
 			try:
 				func(*args, **kargs)
 			except Exception as ex:
 				# An exception happened in this thread
 				stacktrace_string = traceback.format_exc()
-				LOG_ERROR("blaster_worker_thread",
+				LOG_ERROR(
+					"blaster_worker_thread",
 					exception_str=str(ex),
 					stacktrace_string=stacktrace_string
 				)
@@ -822,9 +878,10 @@ class Worker(Thread):
 				# Mark this task as done, whether an exception happened or not
 				self.tasks.task_done()
 
+
 class ThreadPool:
 	""" Pool of threads consuming tasks from a single queue """
-	#queue of tasks
+	# queue of tasks
 	tasks = None
 	worker_threads = None
 
@@ -834,7 +891,7 @@ class ThreadPool:
 		for _ in range(num_threads):
 			worker_thread = Worker(self.tasks)
 			self.worker_threads.append(worker_thread)
-			#start the worker thread
+			# start the worker thread
 			worker_thread.start()
 
 	def add_task(self, func, *args, **kargs):
@@ -844,12 +901,13 @@ class ThreadPool:
 	def join(self):
 		""" Wait for completion of all the tasks in the queue """
 		self.tasks.join()
-		#stop processing
+		# stop processing
 		for worker_thread in self.worker_threads:
 			worker_thread.is_running = False
-		#join all threads
+		# join all threads
 		for worker_thread in self.worker_threads:
 			worker_thread.join()
+
 
 def make_xss_safe(_html):
 	if(not _html):
@@ -859,7 +917,8 @@ def make_xss_safe(_html):
 	parser.close()
 	return parser.getHtml()
 
-#yeild batches of items from iterator
+
+# yeild batches of items from iterator
 def batched_iter(iterable, n=1):
 	current_batch = []
 	for item in iterable:
@@ -871,16 +930,16 @@ def batched_iter(iterable, n=1):
 		yield current_batch
 
 
-##### custom containers ##########
-#SanitizedList and SanitizedDict are used for HTML safe operation
-#the idea is to wrap them to sanitizeContainers while inserting
-#rather than retrieving
+# custom containers ##########
+# SanitizedList and SanitizedDict are used for HTML safe operation
+# the idea is to wrap them to sanitizeContainers while inserting
+# rather than retrieving
 
 class SanitizedSetterGetter(object):
 	def __getitem__(self, k, escape_quotes=True, escape_html=True):
 		val = super().__getitem__(k)
 		if(escape_html and isinstance(val, str)):
-			#make it html safe
+			# make it html safe
 			return html.escape(val, quote=escape_quotes)
 		return val
 
@@ -888,7 +947,7 @@ class SanitizedSetterGetter(object):
 		if(isinstance(val, dict)):
 			new_val = SanitizedDict()
 			for k, v in val.items():
-				new_val[k] = v # calls __setitem__ nested way
+				new_val[k] = v  # calls __setitem__ nested way
 			super().__setitem__(key, new_val)
 
 		elif(isinstance(val, list)):
@@ -899,10 +958,11 @@ class SanitizedSetterGetter(object):
 		else:
 			super().__setitem__(key, val)
 
+
 class SanitizedList(SanitizedSetterGetter, list):
 
 	def __iter__(self):
-		#unoptimized but for this it's okay, always returns sanitized one
+		# unoptimized but for this it's okay, always returns sanitized one
 		def sanitized(val):
 			if(isinstance(val, str)):
 				return html.escape(val, quote=True)
@@ -910,23 +970,24 @@ class SanitizedList(SanitizedSetterGetter, list):
 		return map(sanitized, list.__iter__(self))
 
 	def at(self, k, escape_quotes=True, escape_html=True):
-		self.__getitem__(k,
+		self.__getitem__(
+			k,
 			escape_quotes=escape_quotes,
 			escape_html=escape_html
 		)
 
 	def extend(self, _list):
 		for val in _list:
-			#calls __setitem__ again
+			# calls __setitem__ again
 			self.append(val)
-		#allow chaining
+		# allow chaining
 		return self
 
 	def append(self, val):
 		if(isinstance(val, dict)):
 			new_val = SanitizedDict()
 			for k, v in val.items():
-				new_val[k] = v # calls __setitem__ nested way
+				new_val[k] = v  # calls __setitem__ nested way
 			super().append(new_val)
 
 		elif(isinstance(val, list)):
@@ -936,12 +997,13 @@ class SanitizedList(SanitizedSetterGetter, list):
 			super().append(new_val)
 		else:
 			super().append(val)
-		#allow chaining
+		# allow chaining
 		return self
 
-#intercepts all values setting and
+
+# intercepts all values setting and
 class SanitizedDict(SanitizedSetterGetter, dict):
-	#can pass escape_html=false if you want raw data
+	# can pass escape_html=false if you want raw data
 	def get(self, key, default=None, escape_html=True, escape_quotes=True):
 		try:
 			val = self.__getitem__(
@@ -954,7 +1016,7 @@ class SanitizedDict(SanitizedSetterGetter, dict):
 			return default
 
 	def items(self):
-		#unoptimized but for this it's okay, always returns sanitized one
+		# unoptimized but for this it's okay, always returns sanitized one
 		def sanitized(key_val):
 			key, val = key_val
 			if(isinstance(val, str)):
@@ -964,9 +1026,9 @@ class SanitizedDict(SanitizedSetterGetter, dict):
 
 	def update(self, another):
 		for k, v in another.items():
-			#calls __setitem__ again
+			# calls __setitem__ again
 			self[k] = v
-		#allow chaining
+		# allow chaining
 		return self
 
 
@@ -978,81 +1040,207 @@ class LowerKeyDict(dict):
 		return super().get(k.lower(), default)
 
 
+# This is the most *important* socket wrapped implementation
+# used by blaster server.
+class BufferedSocket():
+
+	is_eof = False
+	sock = None
+	store = None
+
+	def __init__(self, sock):
+		self.sock = sock
+		self.store = bytearray()
+
+	def close(self):
+		self.sock.close()
+		self.is_eof = True
+
+	def send(self, *_data):
+		total_sent = 0
+		for data in _data:
+			if(isinstance(data, str)):
+				data = data.encode()
+			n = 0
+			data_len = len(data)
+			data_mview = memoryview(data)
+			while(n < data_len):
+				sent = self.sock.send(data_mview[n:])
+				if(sent < 0):
+					return sent  # return failed
+				n += sent
+			total_sent += n
+		return total_sent
+
+	def recv(self, n):
+		if(self.is_eof):
+			return None
+		if(self.store):
+			ret = self.store
+			self.store = bytearray()
+			return ret
+		return self.sock.recv(n)
+
+	def recvn(self, n):
+		if(self.is_eof):
+			return None
+		while(len(self.store) < n):
+			data = self.sock.recv(4096)
+			if(not data):
+				self.is_eof = True
+				break
+			self.store.extend(data)
+
+		# return n bytes for now
+		ret = self.store[:n]
+		# set remaining to new store
+		self.store = self.store[n:]
+		return ret
+
+	# fails if it couldn't find the delimiter until max_size
+	def readuntil(self, delimiter, max_size, discard_delimiter):
+		if(self.is_eof):
+			return None
+		# check in store
+		if(isinstance(delimiter, str)):
+			delimiter = delimiter.encode()
+
+		delimiter_len = len(delimiter)
+		# scan the store until end, if not found extend
+		# and continue until store > max_size
+		to_scan_len = len(self.store)
+		i = 0  # how much we scanned already
+
+		_store = self.store  # get a reference
+		while(True):
+			if(i > max_size):
+				self.is_eof = True
+				return None
+			if(i >= delimiter_len):
+				j = 0
+				lookup_from = i - delimiter_len
+				while(j < delimiter_len and _store[lookup_from + j] == delimiter[j]):
+					j += 1
+
+				if(j == delimiter_len):
+					# found
+					ret = None
+					if(discard_delimiter):
+						ret = _store[:i - delimiter_len]
+					else:
+						ret = _store[:i]
+					self.store = _store[i:]  # set store to unscanned/pending
+					return ret
+			if(i >= to_scan_len):
+				# scanned all buffer
+				data = self.sock.recv(4096)
+				if(not data):
+					self.is_eof = True
+					return None
+
+				_store.extend(data)  # fetch more data
+				to_scan_len = len(_store)
+			i += 1
+
+	def __getattr__(self, key):
+		ret = getattr(self.sock, key, _OBJ_END_)
+		if(ret == _OBJ_END_):
+			raise AttributeError()
+		return ret
+
+
 # milli seconds
-# TCP_USER_TIMEOUT kernel setting
-_tcp_user_timeout = 30 * 1000
 
-def set_socket_options(sock):
-	l_onoff = 1
-	l_linger = 10 # seconds,
-	sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
-				struct.pack('ii', l_onoff, l_linger))# don't wait too long to close the connection, after a timeout, abruptly close the connection
-	
-	timeval = struct.pack('ll', 10, 0) # it can wait 10 seconds, if there is congestion on the network card to send data
-	sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO, timeval)
 
-	TCP_USER_TIMEOUT = 18 # after 18 seconds if there is no ack then we assume broken and close it
-	sock.setsockopt(socket.SOL_TCP, TCP_USER_TIMEOUT, _tcp_user_timeout) # close means a close understand ?
+def set_socket_fast_close_options(sock):
+	# abruptly close the connection after 10 seconds
+	# without back and forth communication about closing
+	# i.e waiting in time_wait state
+	sock.setsockopt(
+		socket.SOL_SOCKET, socket.SO_LINGER,
+		struct.pack('ii', 1, 10)
+	)
+	# it can wait 10 seconds,
+	# if there is congestion on the network card to send data
+	sock.setsockopt(
+		socket.SOL_SOCKET, socket.SO_SNDTIMEO,
+		struct.pack('ll', 10, 0)
+	)
 
-#wraps send method of websocket which keeps a buffer of messages for 20 seconds
-#if the connection closes, you can use them to resend
+	# after 30 seconds if there is no ack
+	# then we assume broken and close it
+	TCP_USER_TIMEOUT = 18
+	sock.setsockopt(socket.SOL_TCP, TCP_USER_TIMEOUT, 30 * 1000)
+
+
+# wraps send method of websocket which keeps a buffer of messages
+# for 20 seconds if the connection closes, you can use them to resend
 class WebsocketConnection(WebSocket):
-	queue = None# to keep track of how many greenlets are waiting on semaphore to send
-	msg_assumed_sent = None# queue for older sent messages in case of reset we try to retransmit
+	# to keep track of how many greenlets are waiting on semaphore to send
+	queue = None
+	# queue for older sent messages in case of reset we try to retransmit
+	msg_assumed_sent = None
 	ws = None
 	lock = BoundedSemaphore()
 	is_stale = False
 	last_msg_recv_timestamp = None
 	last_msg_sent_timestamp = None
-	
-	
+
 	user_id = None
 	is_viewer_list = False
-	
+
 	def __init__(self, ws, user_id):
 		self.ws = ws
-		self.queue = collections.deque()# to keep track of how many greenlets are waiting on semaphore to send
-		self.msg_assumed_sent = collections.deque()# queue for older sent messages in case of reset we try to retransmit
+		# to keep track of how many greenlets are waiting on semaphore to send
+		self.queue = collections.deque()
+		# queue for older sent messages in case of reset we try to retransmit
+		self.msg_assumed_sent = collections.deque()
 		self.user_id = user_id
 
-		self.last_msg_recv_timestamp = self.last_msg_sent_timestamp = time.time() * 1000
-		
-		
-	def send(self, msg, ref=None, add_to_assumend_sent=True): # msg is only string data , #ref is used , just in case an exception occurs , we pass that ref 
+		self.last_msg_recv_timestamp\
+			= self.last_msg_sent_timestamp \
+			= time.time() * 1000
+
+	# msg is only string data , #ref is used
+	# just in case an exception occurs , we pass that ref
+	def send(self, msg, ref=None, add_to_assumend_sent=True):
 		if(self.is_stale):
 			raise Exception("stale connection")
-		
+
 		self.queue.append((ref, msg))
 		if(self.lock.locked()):
 			return
-		
+
 		self.lock.acquire()
 		data_ref = None
 		data = None
 		try:
 			while(not self.is_stale and len(self.queue) > 0):
-				data_ref, data = self.queue.popleft() # peek
-				self.ws.send(data) # msg objects only
+				data_ref, data = self.queue.popleft()  # peek
+				self.ws.send(data)  # msg objects only
 				current_timestamp = time.time() * 1000
 				self.last_msg_sent_timestamp = current_timestamp
 				if(add_to_assumend_sent):
-					while(len(self.msg_assumed_sent) > 0 and self.msg_assumed_sent[0][0] < current_timestamp - _tcp_user_timeout):
-						#keep inly 20 seconds of previous data
+					while(
+						len(self.msg_assumed_sent) > 0
+						and self.msg_assumed_sent[0][0] < current_timestamp - _tcp_user_timeout
+					):
+						# keep inly 20 seconds of previous data
 						self.msg_assumed_sent.popleft()
-					
-					self.msg_assumed_sent.append((current_timestamp , data_ref, data))
-				
-		except Exception as ex:
-			err_msg = "Exception while sending message to %s might be closed "%(self.user_id)
+
+					self.msg_assumed_sent.append((current_timestamp, data_ref, data))
+		except Exception:
+			err_msg = "Exception while sending message to {!s}, might be closed ".format(
+				self.user_id
+			)
 			self.is_stale = True
 			raise Exception(err_msg)
-			
 		finally:
 			self.lock.release()
 		return
-	
-	
-#upload related mime_types
+
+
+# upload related mime_types
 TypeDescriptor = namedtuple('TypeDescriptor', ['mime_type'])
 MIME_TYPE_MAP = dict(
 	gif=TypeDescriptor(mime_type='image/gif'),
@@ -1079,19 +1267,18 @@ MIME_TYPE_MAP = dict(
 	wma=TypeDescriptor(mime_type='audio/wma'),
 	gpp=TypeDescriptor(mime_type='audio/3gpp'),
 	flac=TypeDescriptor(mime_type='audio/flac'),
-	
+
 	css=TypeDescriptor(mime_type='text/css'),
 	js=TypeDescriptor(mime_type='text/javascript')
-	
+
 )
-#mime_type -> file extension map
+# mime_type -> file extension map
 MIME_TYPE_TO_EXTENSION = {v.mime_type: k for k, v in MIME_TYPE_MAP.items()}
 
 
 def get_mime_type_from_filename(file_name):
 	ext = os.path.splitext(file_name)[1][1:]
 	return MIME_TYPE_MAP.get(ext, None)
-
 
 
 def parse_cmd_line_arguments():
@@ -1123,21 +1310,21 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000):
 	state.total_output = ""
 	state.total_err = ""
 
-	#keep parsing output
+	# keep parsing output
 	def process_output(proc_out, proc_in):
 		while(state.is_running):
 			_out = proc_out.read(1)
 			if(not _out):
 				break
 			_out = _out.decode('utf-8', 'ignore')
-			#add to our input
+			# add to our input
 			state.total_output += _out
 			if(len(state.total_output) > 2 * max_buf):
 				state.total_output = state.total_output[-max_buf:]
 
 			if(output_parser):
-				#parse the output and if it returns something
-				#we write that to input file(generally stdin)
+				# parse the output and if it returns something
+				# we write that to input file(generally stdin)
 				_inp = output_parser(state.total_output, state.total_err)
 				if(_inp):
 					proc_in.write(_inp)
@@ -1150,13 +1337,13 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000):
 			if(not _err):
 				break
 			_err = _err.decode('utf-8', 'ignore')
-			#add to our input
+			# add to our input
 			state.total_err += _err
 			if(len(state.total_err) > 2 * max_buf):
 				state.total_err = state.total_err[-max_buf:]
 			if(output_parser):
-				#parse the output and if it returns something
-				#we write that to input file(generally stdin)
+				# parse the output and if it returns something
+				# we write that to input file(generally stdin)
 				_inp = output_parser(state.total_output, state.total_err)
 				if(_inp):
 					proc_in.write(_inp)
@@ -1177,7 +1364,7 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000):
 	)
 	state.is_running = True
 
-	#process output reader
+	# process output reader
 	output_parser_thread = Thread(
 		target=process_output,
 		args=(
@@ -1185,7 +1372,7 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000):
 			proc.stdin
 		)
 	)
-	#process err reader
+	# process err reader
 	err_parser_thread = Thread(
 		target=process_error,
 		args=(
@@ -1198,20 +1385,20 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000):
 
 	os.close(dup_stdin) if dup_stdin != subprocess.PIPE else None
 
-	#just keep printing error
-	#wait for process to terminate
+	# just keep printing error
+	# wait for process to terminate
 	ret_code = proc.wait()
 	state.return_code = ret_code
 	state.is_running = False
-	
+
 	output_parser_thread.join()
 	err_parser_thread.join()
 	return state
 
 
-#args is array of strings or array or array of words
-#you can use this to return a bunch of strings to index
-#in elasticsearch with key "search_words"
+# args is array of strings or array or array of words
+# you can use this to return a bunch of strings to index
+# in elasticsearch with key "search_words"
 def condense_for_search(*args):
 	global_word_map = {}
 	for arg in args:
@@ -1240,7 +1427,8 @@ def condense_for_search(*args):
 
 	return ret
 
-#returns None when there are exceptions instead of throwing
+
+# returns None when there are exceptions instead of throwing
 def ignore_exceptions(*exceptions):
 	def decorator(func):
 		def new_func(*args, **kwargs):
@@ -1256,9 +1444,10 @@ def ignore_exceptions(*exceptions):
 		return new_func
 	return decorator
 
-#r etries all exceptions or specific given expections only
-#backoff = 1 => exponential sleep
-#max_time milliseconds for exception to sleep, not counts the func runtime
+
+# r etries all exceptions or specific given expections only
+# backoff = 1 => exponential sleep
+# max_time milliseconds for exception to sleep, not counts the func runtime
 def retry(num_retries=2, exceptions=None, max_time=5000):
 	num_retries = max(2, num_retries)
 	sleep_time_on_fail = max_time / num_retries
@@ -1284,7 +1473,6 @@ def retry(num_retries=2, exceptions=None, max_time=5000):
 	return decorator
 
 
-
 def original_function(func):
 	_original = getattr(func, "_original", _OBJ_END_)
 	if(_original != _OBJ_END_):
@@ -1298,18 +1486,27 @@ def original_function(func):
 
 	return func
 
+
 def empty_func():
 	pass
 
 
-#when server shutsdown
+# when server shutsdown
 _joinables = []
-def start_background_thread(func, args=(), kwargs=None):
+
+
+def start_background_thread(func, args=(), kwargs={}):
 	if(not start_background_thread.can_run):
-		LOG_WARN("background_threads", msg="Cannot run background threads. Correct copepaths")
+		LOG_WARN(
+			"background_threads",
+			msg="Cannot run background threads. Correct copepaths"
+		)
 		return
 
-	LOG_APP_INFO("background_threads", msg="starting background thread", func=func.__name__)
+	LOG_APP_INFO(
+		"background_threads", msg="starting background thread",
+		func=func.__name__
+	)
 	_thread_to_start = Thread(
 		target=func,
 		args=args,
@@ -1321,8 +1518,10 @@ def start_background_thread(func, args=(), kwargs=None):
 
 start_background_thread.can_run = True
 
-#partioned queues
+# partioned queues
 _partitioned_background_task_queues = tuple(Queue() for i in range(4))
+
+
 def _process_partitioned_task_queue_items(_queue):
 	while start_background_thread.can_run or not _queue.empty():
 		func, args, kwargs = _queue.get()
@@ -1330,42 +1529,53 @@ def _process_partitioned_task_queue_items(_queue):
 			func(*args, **kwargs)
 		except Exception as ex:
 			stacktrace_string = traceback.format_exc()
-			LOG_WARN("background_thread_run_error", func_name=func.__name__,
+			LOG_WARN(
+				"background_thread_run_error",
+				func_name=func.__name__,
 				exception_str=str(ex),
 				stacktrace_string=stacktrace_string
 			)
 			IS_DEV and traceback.print_exc()
 
 
-#singleton
+# singleton
 def __start_task_processors():
-	#start threads to process entries in partitioned queues
+	# start threads to process entries in partitioned queues
 	for _queue in _partitioned_background_task_queues:
-		start_background_thread(_process_partitioned_task_queue_items, args=(_queue,))
+		start_background_thread(
+			_process_partitioned_task_queue_items, args=(_queue,)
+		)
 	__start_task_processors.started = True
 
 
-#set initial flag
+# set initial flag
 __start_task_processors.started = False
 
+
+# submit a task:func to a partition
+# parition is used when you want them to execute in the
+# same order as submitted
 def submit_background_task(partition_key, func, *args, **kwargs):
-	
-	#start processors if not started already
+	# start processors if not started already
 	if(not __start_task_processors.started):
 		__start_task_processors()
 
 	if(partition_key == None):
-		partition_key = cur_ms() # choose a random key
+		partition_key = cur_ms()  # choose a random key
 	_partitioned_background_task_queues[hash(str(partition_key)) % len(_partitioned_background_task_queues)]\
 		.put((func, args, kwargs))
 
 
-#decorator/wrapper to fire and forget
+# decorator to be used for a short io tasks to be 
+# run in background
 def background_task(func):
 	def wrapper(*args, **kwargs):
-		#spawn the thread
+		# spawn the thread
 		if(not start_background_thread.can_run):
-			LOG_WARN("background_threads", msg="Cannot run background threads. Correct copepaths")
+			LOG_WARN(
+				"background_threads",
+				msg="Cannot run background threads as can_run flag is not set. Correct codepaths"
+			)
 			return
 		submit_background_task(None, func, *args, **kwargs)
 		return True
@@ -1373,26 +1583,32 @@ def background_task(func):
 	wrapper._original = getattr(func, "_original", func)
 	return wrapper
 
-@events.register_as_listener(["sigint", "blaster_atexit", "blaster_after_shutdown"])
-def cleanup_before_exit():
 
+# Blaster exit functions
+@events.register_as_listener(["blaster_exit0"])
+def exit_0():
+	# start of exit - background threads cannot run
 	if(not start_background_thread.can_run):
-		return # double calling function
+		return  # double calling function
 
 	start_background_thread.can_run = False
 
-	#push an empty function to queues to flush them off
+	# push an empty function to queues to flush them off
 	for _partitioned_task_queue in _partitioned_background_task_queues:
 		_partitioned_task_queue.put((empty_func, [], {}))
 
-	#reap all joinables
+
+@events.register_as_listener(["blaster_exit5"])
+def exit_5():
+	# reap all joinables of background threads,
+	# everything should be done by this point
 	for _joinable in _joinables:
 		_joinable.join()
 	_joinables.clear()
 	LOG_APP_INFO("background_threads", msg="cleanedup")
 
 
-#calls a function after the function returns given by argument after
+# calls a function after the function returns given by argument after
 def call_after_func(func):
 
 	if(isinstance(func, str)):
@@ -1413,6 +1629,12 @@ def call_after_func(func):
 			ret = func(*args, **kwargs)
 			after and after()
 			return ret
-			
+
 		new_func._original = getattr(func, "_original", func)
 		return new_func
+
+
+def all_subclasses(cls):
+	return set(cls.__subclasses__()).union(
+		[s for c in cls.__subclasses__() for s in all_subclasses(c)]
+	)

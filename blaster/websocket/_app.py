@@ -188,8 +188,10 @@ class WebSocketApp(object):
             if ping_interval:
                 event = threading.Event()
                 thread = threading.Thread(
-                    target=self._send_ping, args=(ping_interval, event))
-                thread.setDaemon(True)
+                    target=self._send_ping, args=(ping_interval, event),
+                    name="websocket_ping"
+                )
+                # thread.setDaemon(True)
                 thread.start()
 
             while self.sock.connected:
