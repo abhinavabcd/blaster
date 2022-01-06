@@ -129,8 +129,6 @@ class Body(Object):
 		super().__init__(**kwargs)
 
 
-# Array(str), Array((int, str), default=None), Array(Object), Array(Pet)
-# Object(id=int, name=str ), class Pet: id = int, name = str, friend = Pet
 class Request:
 	# class level
 	_before_hooks = []

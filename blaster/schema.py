@@ -17,7 +17,16 @@ class _Optional:
 		return _Optional(*keys)
 
 
+class _Required:
+	def __init__(self, *types):
+		self._types = types
+
+	def __getitem__(self, *keys):
+		return _Required(*keys)
+
+
 Optional = _Optional()
+Required = _Required()
 
 
 class Int:
@@ -125,22 +134,42 @@ class Array:
 			**_v.keywords
 		)
 
+	def __getitem__(self, *keys):
+		return Array(keys)
+
+
+List = Array(None)
+
 
 class Object:
-	def __init__(self, default=_OBJ_END_, _required_=None, **keys):
-		self._keys = keys
+	def __init__(self, *args, default=_OBJ_END_, _required_=None, **keys):
 		self._default = default
 		self._required = set(_required_) if _required_ else set()
 
-		# instance specific schema
-		self._properties = {}
-		self._validations = {}
-		for k, _type in keys.items():
-			_s, _v = schema(_type)
-			self._properties[k] = _s
-			self._validations[k] = _v
+		if(args):  # single type of value
+			_key_val_type = args[0]\
+				if isinstance(args[0], (list, tuple))\
+				else args
+			self._schema_ = _schema = {
+				"type": "object",
+				"additionalProperties": schema[_key_val_type[1]][0]
+			}
+		else:  # specify property: valuetypes
+			# instance specific schema
+			self._properties = {}
+			self._validations = {}
+			for k, _type in keys.items():
+				if(isinstance(_type) == Required):
+					_type = _type._types[0]
+					# mark the key as required
+					self._required.add(k)
+				elif(isinstance(_type) == Optional):
+					_type = _type._types[0]
+				_s, _v = schema(_type)
+				self._properties[k] = _s
+				self._validations[k] = _v
 
-		self._schema_ = _schema = {"type": "object", "properties": self._properties}
+			self._schema_ = _schema = {"type": "object", "properties": self._properties}
 		if(default != _OBJ_END_):
 			_schema["default"] = default
 
@@ -177,6 +206,12 @@ class Object:
 				"value": attr_value,
 				"schema": self._properties[k]
 			})
+
+	def __getitem__(self, *keys):
+		return Object(keys)
+
+
+Dict = Object()
 
 
 def to_int(e):
@@ -256,9 +291,14 @@ def array_validation(arr, simple_types=(), complex_validations=(), default=_OBJ_
 	return arr
 
 
-'''
-	given any instance/class, returns schema, _validation function
-'''
+# Array(str), Array((int, str), default=None), Array(Object), Array(Pet)
+# List[str, int]-> anyOf int, str
+# List[[str, int]] -> oneOf int, str
+
+# Object(id=int, name=str)
+# Dict[str, int]
+
+# given any instance/class, returns schema, _validation function
 def schema(x):
 	if(isinstance(x, type) and issubclass(x, Object) and x != Object):
 		ret = schema.defs.get(x.__name__)
@@ -362,7 +402,7 @@ def schema(x):
 	elif(x == Array or x == list):  # genric
 		return {"type": "array"}, (lambda e: e if isinstance(e, list) else None)
 
-	elif(x == Object or x == dict):
+	elif(x == Object or x == dict):  # generic without any attributes
 		return {"type": "object"}, (lambda e: e if isinstance(e, dict) else None)
 
 	elif(isinstance(x, Array)):  # Array(_types)
