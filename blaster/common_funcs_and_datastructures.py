@@ -105,7 +105,7 @@ class ExpiringCache:
 	ttl = None
 
 	# ttl in millis, 5 minutes default
-	def __init__(self, capacity, items=None, ttl=5 * 60 * 1000):
+	def __init__(self, capacity, items=None, ttl=3 * 60 * 1000):
 		self.capacity = capacity
 		self.cache = collections.OrderedDict()
 		self.ttl = ttl
@@ -1047,6 +1047,7 @@ class BufferedSocket():
 	is_eof = False
 	sock = None
 	store = None
+	lock = None
 
 	def __init__(self, sock):
 		self.sock = sock
@@ -1071,6 +1072,14 @@ class BufferedSocket():
 				n += sent
 			total_sent += n
 		return total_sent
+
+	def sendl(self, *_data):
+		if(not self.lock):
+			self.lock = BoundedSemaphore()
+		self.lock.acquire()
+		ret = self.send(*_data)
+		self.lock.release()
+		return ret
 
 	def recv(self, n):
 		if(self.is_eof):

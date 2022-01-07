@@ -10,7 +10,7 @@ from collections import OrderedDict
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 from pymongo import ReturnDocument, ReadPreference
-from .common_funcs_and_datastructures import all_subclasses, jump_hash,\
+from .common_funcs_and_datastructures import ExpiringCache, all_subclasses, jump_hash,\
 	cur_ms, list_diff2, batched_iter, get_by_key_list
 from .config import DEBUG_LEVEL as BLASTER_DEBUG_LEVEL, IS_DEV
 from gevent.threading import Thread
@@ -1368,7 +1368,7 @@ def initialize_model(_Model):
 	_Model._secondary_shards_ = {}
 	_Model._indexes_ = getattr(_Model, "_indexes_", [("_id",)])
 	# create a default cache
-	_Model.__cache__ = getattr(_Model, "_cache_", None)
+	_Model.__cache__ = getattr(_Model, "_cache_", ExpiringCache(10000))
 
 	# temp usage _id_attr
 	_id_attr = Attribute(ObjectId) # default is of type objectId

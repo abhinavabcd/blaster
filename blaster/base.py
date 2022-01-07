@@ -861,10 +861,14 @@ class App:
 			status, response_headers, body = App.response_body_to_parts(response_from_handler)
 
 			if(status or body != I_AM_HANDLING_THE_SOCKET):
+				# we will send the status, either default
+				# or given from response
 				status = str(status) if status else '200 OK'
 				buffered_socket.send(b'HTTP/1.1 ', status, b'\r\n')
 
 			if(response_headers or body != I_AM_HANDLING_THE_SOCKET):
+				# we will be sending headers of this request
+				# either default or given by response
 				if(isinstance(response_headers, list)):
 					# send only the specified headers
 					for header in response_headers:
@@ -1168,6 +1172,9 @@ Request.set_arg_type_hook(WebSocketServerHandler, _get_web_socket_handler)
 # MULTIPROCESS SERVER
 
 # forks current process x num_process
+# creates a connection between process using local unix socket
+# can broadcast events to all process
+# can call top level functions on master process
 def set_num_procs(num_procs=min(3, os.cpu_count())):
 
 	if(set_num_procs._has_cloned):
@@ -1182,6 +1189,16 @@ def set_num_procs(num_procs=min(3, os.cpu_count())):
 	sock = None
 	tracked_connections = []
 
+	# message types
+	EVENT = 0
+	FUNCTION_CALL = 1
+	FUNCTION_CALL_RESPONSE = 1
+
+	def create_message_to_send(data):
+		data_to_send = pickle.dumps(data)
+		data_len_bytes = len(data_to_send).to_bytes(4, byteorder=sys.byteorder)
+		return data_len_bytes, data_to_send
+
 	# starts reading for events
 	def read_data_from_other_process(sock):
 		CUR_PID = os.getpid()
@@ -1193,13 +1210,24 @@ def set_num_procs(num_procs=min(3, os.cpu_count())):
 			data_size = int.from_bytes(data_size_bytes, byteorder=sys.byteorder)
 			data_bytes = sock.recvn(data_size)
 			data = pickle.loads(data_bytes)
-			events.broadcast_event(data["event"], *data["args"], **data["kwargs"])
-			# rebroadcast to others
-			if(BROADCASTER_PID == CUR_PID):
-				# we are the central broadcaster process
-				# broadcast to all clients
-				for _sock in tracked_connections:
-					_sock.sendall(data_bytes)
+			if(data["type"] == EVENT):
+				events.broadcast_event(data["event"], *data["args"], **data["kwargs"])
+				# rebroadcast to others
+				if(BROADCASTER_PID == CUR_PID):
+					# we are the central broadcaster process
+					# broadcast to all clients
+					for _sock in tracked_connections:
+						_sock.sendl(data_bytes)  # locked send
+			if(data["type"] == FUNCTION_CALL):
+				if(BROADCASTER_PID == CUR_PID):
+					# execute only on master
+					ret = data["func"](*data["args"], **data["kwargs"])
+					# send this to the sock
+					sock.sendl(
+						*create_message_to_send({
+							"type": FUNCTION_CALL_RESPONSE, "hash": data["hash"], "ret": ret
+						})
+					)
 
 		sock.close()
 		(sock in tracked_connections) and tracked_connections.remove(sock)
@@ -1223,23 +1251,22 @@ def set_num_procs(num_procs=min(3, os.cpu_count())):
 	def broadcast_event_multiproc(_id, *args, **kwargs):
 		# send it to master process, which broadcasts to every
 		# process including the current one
-		data_to_send = pickle.dumps(
-			{"event": _id, "args": args, "kwargs": kwargs}
+		msg_header, msg_payload = create_message_to_send(
+			{"type": EVENT, "event": _id, "args": args, "kwargs": kwargs}
 		)
-		data_len = len(data_to_send)
+
 		if(BROADCASTER_PID == os.getpid()):
 			# we are the central broadcaster process
 			# broadcast to all clients
 			for _sock in tracked_connections:
-				_sock.send(
-					data_len.to_bytes(4, byteorder=sys.byteorder),
-					data_to_send
-				)
+				_sock.sendl(msg_header, msg_payload)
+			# broadcast to current process
+			events.broadcast_event(_id, *args, **kwargs)
 		else:
-			sock.send(
-				data_len.to_bytes(4, byteorder=sys.byteorder),
-				data_to_send
-			)
+			# send it to master process which
+			# broadcast to everywhere else
+			sock.sendl(msg_header, msg_payload)
+
 	events.broadcast_event_multiproc = broadcast_event_multiproc
 
 	@events.register_as_listener("blaster_exit1")

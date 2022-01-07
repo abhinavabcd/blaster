@@ -138,9 +138,6 @@ class Array:
 		return Array(keys)
 
 
-List = Array(None)
-
-
 class Object:
 	def __init__(self, *args, default=_OBJ_END_, _required_=None, **keys):
 		self._default = default
@@ -414,6 +411,9 @@ def schema(x):
 	else:
 		return None, None
 
+
+# Defs, that require schema to be defined
+List = Array(None)
 
 schema.defs = {}
 
