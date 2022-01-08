@@ -30,11 +30,12 @@ Required = _Required()
 
 
 class Int:
-	def __init__(self, one_of=None, _min=_OBJ_END_, _max=_OBJ_END_, default=_OBJ_END_):
+	def __init__(self, one_of=None, _min=_OBJ_END_, _max=_OBJ_END_, default=_OBJ_END_, _name=None):
 		self._min = _min
 		self._max = _max
 		self.one_of = set(one_of) if one_of else None
 		self._default = default
+		self._name = _name
 		# make schema
 		self._schema_ = _schema = {"type": "integer"}
 		if(default != _OBJ_END_):
@@ -71,13 +72,14 @@ class Str:
 
 	def __init__(
 		self, one_of=None, minlen=0, maxlen=4294967295,
-		regex=None, default=_OBJ_END_, **kwargs
+		regex=None, default=_OBJ_END_, _name=None, **kwargs
 	):
 		self.minlen = minlen
 		self.maxlen = maxlen
 		self.one_of = set(one_of) if one_of else None
 		self._default = default
 		self.regex = regex and re.compile(regex)
+		self._name = _name
 		_fmt = kwargs.pop("format", None)
 		self.fmt = _fmt and Str.format_validators[_fmt]
 
@@ -116,7 +118,8 @@ class Str:
 
 
 class Array:
-	def __init__(self, _types, default=_OBJ_END_):
+	def __init__(self, _types, default=_OBJ_END_, _name=None):
+		self._name = _name
 		self._types = _types if isinstance(_types, (list, tuple)) else [_types]
 		self._default = default
 
@@ -139,14 +142,15 @@ class Array:
 
 
 class Object:
-	def __init__(self, *args, default=_OBJ_END_, _required_=None, **keys):
+	def __init__(self, *val_type, default=_OBJ_END_, _required_=None, _name=None, **keys):
 		self._default = default
 		self._required = set(_required_) if _required_ else set()
+		self._name = _name
 
-		if(args):  # single type of value
-			_key_val_type = args[0]\
-				if isinstance(args[0], (list, tuple))\
-				else args
+		if(val_type):  # single type of value {"name": argType}
+			_key_val_type = val_type[0]\
+				if isinstance(val_type[0], (list, tuple))\
+				else val_type
 			self._schema_ = _schema = {
 				"type": "object",
 				"additionalProperties": schema[_key_val_type[1]][0]

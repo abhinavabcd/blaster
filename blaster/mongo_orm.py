@@ -47,6 +47,9 @@ class Attribute(object):
 		self.__dict__.update(kwargs)
 
 
+__all_models__ = {}
+
+
 class Model(object):
 	# class level
 	_attrs = None
@@ -257,7 +260,6 @@ class Model(object):
 
 			def remove(this, item):  # can raise value exception
 				super(ListObj, this).remove(item)
-				# reset full array very inefficient : (
 				_pull = self._other_query_updates.get("$pull")
 				if(_pull == None):
 					self._other_query_updates["$pull"] = _pull = {}
@@ -311,6 +313,10 @@ class Model(object):
 					if(_push == None):
 						_push = self._other_query_updates["$push"] = {}
 					_push[path] = item
+
+			def extend(this, items):
+				for i in items:
+					this.append(i)
 
 		ret = ListObj()
 		for item in _list_obj:
@@ -460,7 +466,8 @@ class Model(object):
 	def get_collection_on_all_db_nodes(_Model):
 		return map(lambda db_node: db_node.get_collection(_Model), _Model._db_nodes_)
 
-	# give a shard key from query we return multiple connect
+	# give a shard key from query we return
+	# mongo collections list
 	@classmethod
 	def get_collections_to_query(cls, _query, sort):
 		shard_key = _query.get(cls._shard_key_, _OBJ_END_)
@@ -508,12 +515,10 @@ class Model(object):
 	@classmethod
 	def propagate_update_to_secondary_shards(
 		cls, before_doc, after_doc,
-		force=False, specific_shards=None
+		delete_and_reinsert=False, specific_shards=None
 	):
-		# CONS of this multi table sharding:
-		# - Primary index updated but secondary constraint can fail
-		# - in that case, the data exists in primary shard, but it's not valid data
-		# update all secondary shards
+		# go through all secondary shards
+		# and update them
 		for shard_key in (specific_shards or cls._secondary_shards_.keys()):
 			# actual secondary shard
 			shard = cls._secondary_shards_[shard_key]
@@ -542,7 +547,7 @@ class Model(object):
 				= (_before_shard_key != None) and secondary_Model.get_collection(_before_shard_key)
 
 			# shard key has changed
-			if(is_shard_key_changed or force):
+			if(is_shard_key_changed or delete_and_reinsert):
 				# belonged to a shard delete it
 				if(_secondary_collection and _before_id != None):
 					_secondary_collection.find_one_and_delete(_secondary_pk)
@@ -555,6 +560,7 @@ class Model(object):
 						)
 
 				if(_after_shard_key != None and after_doc["_id"]):
+					# update all subset of attributes of this shard
 					for attr, _attr_obj in shard.attrs.items():
 						_secondary_values_to_set[attr] = after_doc.get(attr)
 					# just force set _id again
@@ -562,19 +568,20 @@ class Model(object):
 					# find new shard
 					_secondary_collection = secondary_Model.get_collection(
 						_secondary_values_to_set[shard_key]  # same as after_shard_key
-					)
-					# insert new one
+					)					
+					_secondary_collection.insert_one(_secondary_values_to_set)
+
+					# debug log
 					IS_DEV \
 						and MONGO_DEBUG_LEVEL > 1 \
 						and LOG_SERVER(
 							"MONGO",
-							description="deleting and inserting new secondary",
+							description="deleting and inserted to new secondary",
 							secondary_pk=str(_secondary_pk),
 							values_to_set=str(_secondary_values_to_set),
 							model=secondary_Model.__name__,
 							collection=COLLECTION_NAME(_secondary_collection)
 						)
-					_secondary_collection.insert_one(_secondary_values_to_set)
 				
 			else:
 
@@ -1100,7 +1107,7 @@ class Model(object):
 
 				self._id = self._set_query_updates["_id"] = self._insert_result.inserted_id
 
-				# update secondary shards now
+				# insert in secondary shards now
 				cls.propagate_update_to_secondary_shards({}, self._set_query_updates)
 
 				# set _id updates
@@ -1290,7 +1297,36 @@ class ControlJobs(Model):
 
 	def run(self):
 		if(self._type == ControlJobs.ADD_NEW_ATTRIBUTES_TO_SECONDARY_SHARD):
-			pass
+			_SecondaryShardModel = __all_models__[self.collection]
+			_PrimaryShardModel = _SecondaryShardModel._primary_model_class_
+			# TODO: make this run on multiple nodes
+			# by running query on specific nodes
+			for db_node in _PrimaryShardModel._db_nodes_:
+				print("querying", _PrimaryShardModel, "from", db_node.hosts, " to reindex")
+				i = 0
+				for _doc in db_node.get_collection(_PrimaryShardModel).find({}):
+					_PrimaryShardModel.propagate_update_to_secondary_shards(
+						_doc,  # latest from db
+						_doc,
+						delete_and_reinsert=True,
+						specific_shards=(_SecondaryShardModel._shard_key_,)
+					)
+					i += 1
+					if(i % 1000 == 0):
+						print("propagated", i, "records to secondary shard")
+				print("propagated", i, "records to secondary shard")
+			self.status = 1  # completed
+			# remove the attributes
+			collection_tracker_entry = CollectionTracker.get(
+				_SecondaryShardModel._collection_tracker_key_
+			)
+			for _attr in self.data["to_remove_attrs"]:
+				collection_tracker_entry.attrs.remove(_attr)
+			collection_tracker_entry.commit()
+			# add the new attributes
+			collection_tracker_entry.attrs.extend(self.data["to_add_attrs"])
+			collection_tracker_entry.commit()
+
 		if(self._type == ControlJobs.CREATE_SECONDARY_SHARD):
 			pass
 
@@ -1509,6 +1545,9 @@ def initialize_model(_Model):
 		_Model._collection_name_with_shard_
 	)
 
+	# just keep a track, for random use cases to retrive by name
+	__all_models__[_Model._collection_name_with_shard_] = _Model
+
 	IS_DEV \
 		and MONGO_DEBUG_LEVEL > 1 \
 		and print(
@@ -1571,7 +1610,8 @@ def initialize_model(_Model):
 			raise Exception(
 				"\n\n#MONGO_EXCEPTION: Primary shard key changed for ",
 				_Model, 
-				"It has secondary shards, that point to primary shard key. You will have to drop shard secondary shards and force reindex everything again"
+				"It has secondary shards, that point to primary shard key. ",
+				"You will have to drop shard secondary shards and force reindex everything again. "
 			)
 
 		if(not _Model._is_secondary_shard):
@@ -1596,7 +1636,13 @@ def initialize_model(_Model):
 							_Model, shard_key_name
 						)
 				except DuplicateKeyError:
-					print("Secondary shard not created yet, queries on this shard won't give results for existing entries, please propagate all data to this shard", _Model, shard_key_name)
+					print(
+						(
+							"Secondary shard not synced yet, queries on this shard won't "
+							"give results for previously created entries, please propagate all data to this shard. "
+							"Add mark this ControlJob as complete"
+						), _Model, shard_key_name
+					)
 
 		if(_Model._is_secondary_shard):
 			to_add_attrs, to_remove_attrs = list_diff2(
@@ -1621,20 +1667,29 @@ def initialize_model(_Model):
 						)
 					raise Exception(
 						"Attributes have been changed on the Secondary shard, "
-						"you need to backfill the data by setting _is_migrating_ = True"
+						"you need to fill the attribute in the shard "
 					)
 				except DuplicateKeyError:
 					LOG_ERROR(
 						"MONGO",
-						desc="There is already a pending job to update attributes, it needs to be finished ",
-						model=_Model.__name__
+						desc=(
+							"There is already a pending job to add {}, remove {} attributes in {}"
+							"queries involving these attrs will not give correct results"
+							"perform this to correct ::-> "
+							"ControlJobs.get(db='{:s}', collection='{:s}', _type={:d}, uid='').run()"
+						).format(
+							to_add_attrs, to_remove_attrs, _Model,
+							# attrs
+							_Model._db_name_, _Model._collection_name_with_shard_,
+							ControlJobs.ADD_NEW_ATTRIBUTES_TO_SECONDARY_SHARD
+						)
 					)
+					# for now do not use it for consistency checks
 					_Model._attrs_to_backfill_ = {}
 					for _attr_name in to_add_attrs:
 						_Model._attrs_to_backfill_[_attr_name] = _Model._attrs[_attr_name]
 
 		# check if new attribute added to secondary shard
-
 
 	# TODO: create or delete index using control jobs
 	for pymongo_index, additional_mongo_index_args in _pymongo_indexes_to_create:
@@ -1659,9 +1714,12 @@ def initialize_model(_Model):
 			"_db_name_": _Model._db_name_,  # same as from primary
 			"_indexes_": _secondary_shard.indexes,
 			"_shard_key_": _secondary_shard_key,
-			"_collection_name_": _Model._collection_name_,  # same as from primary
+			# collection name is same as from primary, 
+			# it's updated accordingly when initializing
+			"_collection_name_": _Model._collection_name_,
 			"_is_secondary_shard": True,
-			"_db_nodes_": None
+			"_db_nodes_": None, 
+			"_primary_model_class_": _Model # reference
 		}
 
 		# add primary shard attributes of the main class to
@@ -1678,7 +1736,7 @@ def initialize_model(_Model):
 
 		_secondary_shard._Model_ = type(
 			"{:s}_{:s}".format(_Model.__name__, _secondary_shard_key.upper()),
-			(Model,),
+			(Model,), # base class
 			class_attrs
 		)
 		# initialize this new model

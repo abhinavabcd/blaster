@@ -325,7 +325,12 @@ class Request:
 				return None
 			ret = {}
 			for k, attr_validation in _type._validations.items():
-				ret.k = attr_validation(self._post.get(k, escape_quotes=False))
+				_alternate_k = getattr(_type, "_name", None)
+				_val = (
+					_alternate_k and self._post.get(_alternate_k, escape_quotes=False)
+				) or self._post.get(k, escape_quotes=False)
+
+				ret.k = attr_validation(_val)
 			return DummyObject(ret)
 
 		# type should be class at this point
@@ -427,8 +432,10 @@ class App:
 				handlers_with_methods.append(_handler)
 
 		# add a openapi.json route handler
-		self.openapi = {"components": {
-			"schemas": dict(schema_func.defs)},
+		self.openapi = {
+			"components": {
+				"schemas": schema_func.defs
+			},
 			"paths": {},
 			"openapi": "3.0.1",
 			"info": self.info
