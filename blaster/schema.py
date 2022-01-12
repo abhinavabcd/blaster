@@ -109,9 +109,9 @@ class Str:
 		if(len(e) > self.maxlen):
 			e = e[:self.maxlen]
 		if(self.one_of and e not in self.one_of):
-			raise Exception("should be one of {!s}".format(self.one_of))
+			raise Exception("should be one of {}".format(self.one_of))
 		if(self.regex and not self.regex.fullmatch(e)):
-			raise Exception("did not match the pattern {!s}".format(self.one_of))
+			raise Exception("did not match the pattern {}".format(self.one_of))
 		if(self.fmt):
 			return self.fmt(e)
 		return e
@@ -132,8 +132,8 @@ class Array:
 		# this is spefic validataion
 		self.validate = partial(
 			array_validation,
+			self,
 			mix=isinstance(self._types, tuple),
-			default=self._default,
 			**_v.keywords
 		)
 
@@ -159,6 +159,7 @@ class Object:
 			# instance specific schema
 			self._properties = {}
 			self._validations = {}
+			self._property_types = {}
 			for k, _type in keys.items():
 				if(isinstance(_type) == Required):
 					_type = _type._types[0]
@@ -169,6 +170,7 @@ class Object:
 				_s, _v = schema(_type)
 				self._properties[k] = _s
 				self._validations[k] = _v
+				self._property_types[k] = _type
 
 			self._schema_ = _schema = {"type": "object", "properties": self._properties}
 		if(default != _OBJ_END_):
@@ -249,11 +251,11 @@ def item_validation(e, simple_types=(), complex_validations=(), nullable=True):
 	raise Exception("Cannot be none")
 
 
-def array_validation(arr, simple_types=(), complex_validations=(), default=_OBJ_END_, mix=False, nullable=True):
+def array_validation(_type, arr, simple_types=(), complex_validations=(), mix=False, nullable=True):
 	# sequece
 	if(arr == None and not nullable):
-		if(default != _OBJ_END_):
-			return default
+		if(_type._default != _OBJ_END_):
+			return _type._default
 		raise Exception("Cannot be none")
 	if(not isinstance(arr, list)):
 		arr = json.loads(arr)
@@ -302,12 +304,15 @@ def array_validation(arr, simple_types=(), complex_validations=(), default=_OBJ_
 # given any instance/class, returns schema, _validation function
 def schema(x):
 	if(isinstance(x, type) and issubclass(x, Object) and x != Object):
+		# thi is the main proceduce that defines and 
+		# initialized new types, but for single object(a=Int..)
 		ret = schema.defs.get(x.__name__)
 		if(ret):
 			return {"schema": {"$ref": "#/definitions/" + x.__name__}}, x.validate
 
 		x._validations = _validations = {}
 		x._properties = _properties = {}
+		x._property_types = {}
 		x._required = _required = set()
 		for k, _type in get_type_hints(x).items():
 			is_required = True
@@ -328,7 +333,8 @@ def schema(x):
 				_default = x.__dict__.get(k, _OBJ_END_)
 				if(_default != _OBJ_END_ and not isinstance(_type, type)):
 					_type._default = _default
-
+				# keep track of propeties
+				x._property_types[k] = _type
 		# create schema
 		x._schema_ = ret = schema.defs[x.__name__] = {
 			"type": "object",

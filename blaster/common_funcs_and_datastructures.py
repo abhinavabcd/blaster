@@ -659,7 +659,7 @@ def get_random_id(length=10, include_timestamp=True):
 		random.SystemRandom().choice(BASE_62_LIST) for _ in range(length)  # iter
 	)
 	if(include_timestamp):
-		key_str = key_str + ("{:d}".format(time.time()))
+		key_str = key_str + ("{:d}".format(int(time.time())))
 	# key_str = hashlib.md5(key_str).hexdigest()
 	return key_str
 
@@ -1239,7 +1239,7 @@ class WebsocketConnection(WebSocket):
 
 					self.msg_assumed_sent.append((current_timestamp, data_ref, data))
 		except Exception:
-			err_msg = "Exception while sending message to {!s}, might be closed ".format(
+			err_msg = "Exception while sending message to {}, might be closed ".format(
 				self.user_id
 			)
 			self.is_stale = True

@@ -196,7 +196,7 @@ class Request:
 	def __getattr__(self, key):
 		ret = self.get(key, default=_OBJ_END_)
 		if(ret == _OBJ_END_):
-			raise AttributeError()
+			raise AttributeError("{} not found".format(key))
 		return ret
 
 	def GET(self, key=None, **kwargs):
@@ -231,7 +231,7 @@ class Request:
 						if(v is not True):
 							# if mentioned as True just the key
 							# is suffice like httpsOnly, secureOnly
-							_cookie_val += "={!s};".format(v)
+							_cookie_val += "={};".format(v)
 				cookie_value = _cookie_val
 			if(isinstance(cookie_value, str)):
 				self._cookies_to_set[key] = cookie_value
@@ -288,8 +288,8 @@ class Request:
 				cls.__argument_creator_hooks[_type] = func
 				return func
 			return wrapper
-
-		cls.__argument_creator_hooks[_type] = hook
+		else:
+			cls.__argument_creator_hooks[_type] = hook
 
 	# create the value of the argument based on type, default
 	def make_arg(self, name, _type, default, validator):
@@ -325,12 +325,13 @@ class Request:
 				return None
 			ret = {}
 			for k, attr_validation in _type._validations.items():
-				_alternate_k = getattr(_type, "_name", None)
-				_val = (
-					_alternate_k and self._post.get(_alternate_k, escape_quotes=False)
-				) or self._post.get(k, escape_quotes=False)
+				_alternate_k = getattr(_type._property_types[k], "_name", None)
+				# first check if an alternate serialized name is given
+				_val = _alternate_k and self._post.get(_alternate_k, escape_quotes=False)
+				# also try with basic name
+				_val = _val or self._post.get(k, escape_quotes=False)
 
-				ret.k = attr_validation(_val)
+				ret[k] = attr_validation(_val)
 			return DummyObject(ret)
 
 		# type should be class at this point
@@ -342,17 +343,33 @@ class Request:
 		elif(issubclass(_type, Query)):  # :LoginRequestQuery
 			ret = _type()
 			for k, attr_validation in _type._validations.items():
-				setattr(ret, k, self._get.get(k, escape_quotes=False))
+				_alternate_k = getattr(_type._property_types[k], "_name", None)
+				# first check if an alternate serialized name is given
+				_val = _alternate_k and self._get.get(_alternate_k, escape_quotes=False)
+				# also try with basic name
+				_val = _val or self._get.get(k, escape_quotes=False)
+
+				setattr(ret, k, attr_validation(_val))
 			return ret
 
 		elif(issubclass(_type, Body)):
 			ret = _type()
 			for k, attr_validation in _type._validations.items():
-				setattr(ret, k, self._post.get(k, escape_quotes=False))
+				_alternate_k = getattr(_type._property_types[k], "_name", None)
+				# first check if an alternate serialized name is given
+				_val = _alternate_k and self._post.get(_alternate_k, escape_quotes=False)
+				# also try with basic name
+				_val = _val or (self._post and self._post.get(k, escape_quotes=False))
+
+				setattr(ret, k, attr_validation(_val))
 			return ret
 
 		ret = self.get(name)
 		return validator(ret) if validator else ret  # get or post
+
+	def make_obj(self, _Type):
+		return self.make_arg(None, _Type, None, None)
+
 
 	def to_dict(self):
 		return {"get": self._get, "post": self._post}
