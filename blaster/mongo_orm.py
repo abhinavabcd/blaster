@@ -10,7 +10,7 @@ from collections import OrderedDict
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 from pymongo import ReturnDocument, ReadPreference
-from .common_funcs_and_datastructures import all_subclasses, jump_hash,\
+from .common_funcs_and_datastructures import ExpiringCache, all_subclasses, jump_hash,\
 	cur_ms, list_diff2, batched_iter, get_by_key_list
 from .config import DEBUG_LEVEL as BLASTER_DEBUG_LEVEL, IS_DEV
 from gevent.threading import Thread
@@ -97,6 +97,10 @@ class Model(object):
 	def get_id(self):
 		return str(self._id)
 
+	# Usage:
+	# YourTable.get(a=c, b=d)
+	# YourTable.get({"p": "q", "r": "s"}) # this will kick in cache use
+	# YourTable.get(SOMEID) # this will kick in cache use
 	@classmethod
 	def get(cls, _pk=None, use_cache=True, **kwargs):
 		if(_pk != None):
@@ -119,7 +123,7 @@ class Model(object):
 			to_fetch_ids = []
 			for _pk in _pks:
 				_id = None  # string based id
-				_pk_tuple = None
+				_pk_tuple = None  # used to query in cache
 				if(not _pk):
 					continue
 				elif(isinstance(_pk, str)):
@@ -129,13 +133,16 @@ class Model(object):
 				else:  # dict
 					_pk_tuple = []
 					for _k in cls._pk_attrs:
-						_pk_tuple.append(_pk[_k])
+						_pk_tuple.append(_pk[_k])  # should present
 					_pk_tuple = tuple(_pk_tuple)
 
 				# check already in cache
 				_item_in_cache = None
-				if(use_cache and cls.__cache__):
+				if(use_cache is True and cls.__cache__):
 					_item_in_cache = cls.__cache__.get(_pk_tuple)
+				elif(use_cache):
+					# user supplied cache
+					_item_in_cache = use_cache.get(_pk_tuple)
 
 				if(not _item_in_cache):
 					if(is_already_fetching.get(_pk_tuple)):
@@ -154,7 +161,14 @@ class Model(object):
 			if(to_fetch_ids):
 				to_fetch_pks.append({"_id": {"$in": to_fetch_ids}})
 
+			# query all items
 			ret = list(chain(from_cache, cls.query(_query)))
+
+			# customer user give cache
+			if(use_cache and use_cache != True):
+				for _item in ret:
+					use_cache.set(_item.pk_tuple(), _item)
+
 			if(is_single_item):
 				if(ret):
 					return ret[0]
@@ -413,29 +427,19 @@ class Model(object):
 				setattr(self, attr_name, _default)
 
 	# when retrieving objects from db
+	# creates a new Model object
 	@classmethod
 	def get_instance_from_document(cls, doc):
 		ret = cls(False)  # not a new item
-
-		# set defaults
-		ret.__check_and_set_initial_defaults(doc)
-
-		for k, v in doc.items():
-			setattr(ret, k, v)
-
-		ret._original_doc = doc
-		# get and cache pk
-		ret.pk(renew=True)
-		# important flag to indicat initiazation finished
-		ret._initializing = False
-		if(cls.__cache__):
-			cls.__cache__.set(ret.pk_tuple(), ret)
+		ret.reinitialize_from_doc(doc)
 		return ret
 
 	def reinitialize_from_doc(self, doc):
 		cls = self.__class__
 		# remove existing pk_tuple in cache
-		cls.remove_from_cache(self)
+		if(cls.__cache__):
+			cls.__cache__.delete(self.pk_tuple())
+
 		self.__is_new = False  # this is not a new object
 		self._initializing = True
 
@@ -543,7 +547,7 @@ class Model(object):
 			# but sharded by their shard_key
 			_secondary_pk = {"_id": _before_id}
 			_secondary_values_to_set = {}
-			
+
 			# secondary collection which this doc to
 			_secondary_collection \
 				= (_before_shard_key != None) and secondary_Model.get_collection(_before_shard_key)
@@ -1202,13 +1206,6 @@ class Model(object):
 
 		_Model._trigger_event(EVENT_AFTER_DELETE, self)
 
-	@classmethod
-	def remove_from_cache(cls, *_objs):
-		if(not cls.__cache__):
-			return
-		for _obj in _objs:
-			cls.__cache__.delete(_obj.pk_tuple())
-
 
 class SecondaryShard:
 	attrs = None
@@ -1406,10 +1403,10 @@ def initialize_model(_Model):
 	_Model._secondary_shards_ = {}
 	_Model._indexes_ = getattr(_Model, "_indexes_", [("_id",)])
 	# create a default cache
-	_Model.__cache__ = getattr(_Model, "_cache_", None)
+	_Model.__cache__ = getattr(_Model, "_cache_", ExpiringCache(10000))
 
 	# temp usage _id_attr
-	_id_attr = Attribute(ObjectId) # default is of type objectId
+	_id_attr = Attribute(ObjectId)  # default is of type objectId
 	_Model._attrs = _model_attrs = {"_id": _id_attr}
 	_Model._pk_attrs = None
 	'''it's used for translating attr objects/name to string names'''
