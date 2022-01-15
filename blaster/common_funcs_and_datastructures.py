@@ -1158,7 +1158,10 @@ class BufferedSocket():
 		return ret
 
 
-# milli seconds
+# this variable indicated the TCP_USER_TIMEOUT
+# parameter that indicated after how long without an
+# ack packet we should close
+__tcp_user_timeout = 30 * 1000
 
 
 def set_socket_fast_close_options(sock):
@@ -1232,7 +1235,7 @@ class WebsocketConnection(WebSocket):
 				if(add_to_assumend_sent):
 					while(
 						len(self.msg_assumed_sent) > 0
-						and self.msg_assumed_sent[0][0] < current_timestamp - _tcp_user_timeout
+						and self.msg_assumed_sent[0][0] < current_timestamp - __tcp_user_timeout
 					):
 						# keep inly 20 seconds of previous data
 						self.msg_assumed_sent.popleft()

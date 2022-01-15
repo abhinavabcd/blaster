@@ -1,9 +1,10 @@
+import time
 import heapq
 import types
 import traceback
 import pymongo
-from pymongo.read_concern import ReadConcern
-from pymongo.write_concern import WriteConcern
+# from pymongo.read_concern import ReadConcern
+# from pymongo.write_concern import WriteConcern
 from bson.objectid import ObjectId
 from itertools import chain
 from collections import OrderedDict
@@ -588,7 +589,7 @@ class Model(object):
 							model=secondary_Model.__name__,
 							collection=COLLECTION_NAME(_secondary_collection)
 						)
-				
+
 			else:
 
 				# check for any attrs to backfill, for these values we don't do
@@ -612,7 +613,7 @@ class Model(object):
 							# means it exists and changed, add this to consistency checks
 							if(attrs_to_backfill and attr in attrs_to_backfill):
 								# can be non existing, null or old_value,
-								# there is an issue where we might miss consistency 
+								# there is an issue where we might miss consistency
 								# when original doc has non-null, but seconday shard has null value,
 								# Any way this is way better
 								_secondary_pk[attr] = {"$in": [None, old_value]}
@@ -634,45 +635,41 @@ class Model(object):
 							secondary_updates=str(_secondary_updates)
 						)
 					# find that doc and update
-					secondary_shard_update_return_value \
-						= _secondary_collection.find_one_and_update(
-							_secondary_pk,
-							_secondary_updates
-						)
+					secondary_shard_updated = False
+					for i in range(1, 4):
+						secondary_shard_updated \
+							= _secondary_collection.find_one_and_update(
+								_secondary_pk,
+								_secondary_updates
+							)
+						if(secondary_shard_updated):
+							break
 
-					if(not secondary_shard_update_return_value):
 						LOG_WARN(
 							"MONGO",
-							description="secondary couldn't be propagated, probably due to another concurrent update",
+							description="secondary couldn't be propagated, retrying..",
 							model=cls.__name__, collection=COLLECTION_NAME(_secondary_collection),
-							secondary_model=str(secondary_Model), secondary_pk=str(_secondary_pk),
+							secondary_pk=str(_secondary_pk),
 							secondary_updates=str(_secondary_updates)
 						)
 
-	# _add_query is more query other than pk
-	# for example, you can say update only when someother field > 0
+						time.sleep(0.03 * i)
 
-	def update(self, _update_query, more_conditions=None, session=None, **kwargs):
+					if(not secondary_shard_updated):
+						LOG_ERROR(
+							"MONGO",
+							description="secondary couldn't be propagated, probably due to another concurrent update",
+							model=cls.__name__, collection=COLLECTION_NAME(_secondary_collection),
+							secondary_pk=str(_secondary_pk),
+							secondary_updates=str(_secondary_updates)
+						)
+
+	# for example, you can say update only when someother field > 0
+	def update(self, _update_query, conditions=None, **kwargs):
 		cls = self.__class__
 
 		if(not _update_query):
 			return
-
-		if(self._secondary_shards_ and not session):
-			# we need a session to do this as a transaction
-			# as there are secondary shards to propagate
-
-			_mongo_client = cls.get_db_node(self._original_doc[cls._shard_key_]).mongo_connection
-			with _mongo_client.start_session() as session:
-				return session.with_transaction(
-					lambda session: self.update(
-						_update_query, more_conditions=more_conditions,
-						session=session, **kwargs
-					),
-					read_concern=ReadConcern('local'),
-					write_concern=WriteConcern("majority", wtimeout=5000),
-					read_preference=ReadPreference.PRIMARY
-				)
 
 		cls._trigger_event(EVENT_BEFORE_UPDATE, self)
 
@@ -706,8 +703,8 @@ class Model(object):
 			# update with more given conditions, 
 			# but don't update _local_vs_remote_consistency_checks
 			# (it's only for local<->remote comparision)
-			if(more_conditions):
-				_query.update(more_conditions)
+			if(conditions):
+				_query.update(conditions)
 
 			# get the shard where current object is
 			primary_shard_key = self._original_doc[cls._shard_key_]
@@ -761,7 +758,7 @@ class Model(object):
 				# reset all values
 				self.reinitialize_from_doc(updated_doc)
 				# waint on threads
-				
+
 				# triggered after update event
 				cls._trigger_event(EVENT_AFTER_UPDATE, self)
 				return True
@@ -782,7 +779,7 @@ class Model(object):
 				if(_v != remote_db_val):
 					can_retry = True  # local copy consistency check has failed, retry again
 					LOG_WARN(
-						"MONGO", description="concurrent update", model=cls.__name__,
+						"MONGO", description="remote was modified retrying", model=cls.__name__,
 						collection=COLLECTION_NAME(primary_collection_shard),
 						_query=str(_query), remote_value=remote_db_val, local_value=_v, _key=_k
 					)
@@ -904,21 +901,21 @@ class Model(object):
 		# does local sorting on results from multiple query iterators using a heap
 		class MultiCollectionQueryResult:
 			query_result_iters = None
-			query_count_iters = None
+			query_count_funcs = None
 			buffer = None
 
 			def __init__(self):
 				self.query_result_iters = []
-				self.query_count_iters = []
+				self.query_count_funcs = []
 
-			def add(self, query_result_iter, query_count_iter=None):
+			def add(self, query_result_iter, query_count_func=None):
 				self.query_result_iters.append(query_result_iter)
-				if(query_count_iter):
-					self.query_count_iters.append(query_count_iter)
+				if(query_count_func):
+					self.query_count_funcs.append(query_count_func)
 
 			def count(self):
 				ret = 0
-				for count_func in self.query_count_iters:
+				for count_func in self.query_count_funcs:
 					ret += count_func()
 				return ret
 
@@ -1013,7 +1010,10 @@ class Model(object):
 			else:
 				ret = map(cls.get_instance_from_document, ret)
 
-			multi_collection_query_result.add(ret, lambda: count_documents(_collection, _query, offset, limit))
+			multi_collection_query_result.add(
+				ret,
+				lambda: count_documents(_collection, _query, offset, limit) # query count func
+			)
 
 		threads = []
 		for _collection_shard_id, shard_and_queries in collections_to_query.items():
@@ -1039,7 +1039,7 @@ class Model(object):
 			)
 			thread.start()
 			threads.append(thread)
-							
+
 		# wait on sub queries to finish
 		for thread in threads:
 			thread.join()
@@ -1083,7 +1083,7 @@ class Model(object):
 	def before_update(self):
 		pass
 
-	def commit(self, force=False, ignore_exceptions=None, more_conditions=None):
+	def commit(self, force=False, ignore_exceptions=None, conditions=None):
 		cls = self.__class__
 		committed = False
 
@@ -1164,7 +1164,7 @@ class Model(object):
 			if(not _update_query and not force):
 				return self  # nothing to update
 
-			is_committed = self.update(_update_query, more_conditions=more_conditions)
+			is_committed = self.update(_update_query, conditions=conditions)
 			if(not is_committed):
 				# if it's used for creating a new object, but we couldn't update it
 				raise Exception(
@@ -1765,13 +1765,45 @@ def initialize_mongo(init_db_nodes, default_db_name=None):
 		initialize_model(cls)
 
 
-# Initially intended to be < 500 line and crazy scalable like
-# add more nodes and it automatically shards
-# - Complete client side sharding, control database,
-# - You can Configure mongo as a sharded cluster.
-# 	Just pass the configuration server to
-# - init_mongo_cluster({"uri": "mongodb://localhost:27017", "db_name": "yourdb"})
+# Initially intended to be < 500 line and more for educating
+# about sharding
+# How this works:
+# - Create Collection by giving it a set of nodes to start with
+#   and a primary shard key and secondary shard keys
+# - Primary shards contain full document
+# - Secondary shard contain subset of attributes(that are used for querying) of the document
+#   all those attributes are indexed
+# - When you query(primary shard), it looks if we can narrow down to specific nodes
+#   and run query on them
+# - We return a combined cusor from all nodes we queried
+# - We analyse the query and sometimes we decide the query
+#   can run on a secondary shard, we query, get the cursor              
+#   and batch fetch original docs from the primary when returning
+# - When you update document, we identify shard it belongs to
+#   and update that doc, then get the diff that has changed
+#   and apply that diff on all secondary shards
 
-# reshard-restart-reshard
 
+# Optionally:
+# - when you apply a sort param, and query spans multiple nodes
+# we create a small heap ( = number of nodes queries) and advance cusors accordingly
+# Limitations:
+# - when query spans multiple nodes, you can apply offset on the query
+# - You can't run update query that spans multiple documents
+# - if you corrupt data                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
 # when we say collection it it's actual pymongo collection on db server
+# DbNode -> mongo server which contains collections
+
+
+# Internal Notes:
+# ############## Using a transaction
+# _mongo_client = cls.get_db_node(self._original_doc[cls._shard_key_]).mongo_connection
+# with _mongo_client.start_session() as session:
+# 	#
+# 	return session.with_transaction(
+# 		lambda session: some_func, # transaction updates inside this func
+# 		read_concern=ReadConcern('local'),
+# 		write_concern=WriteConcern("majority", wtimeout=5000),
+# 		read_preference=ReadPreference.PRIMARY
+# 	)
+# ##############
