@@ -138,14 +138,14 @@ class Model(object):
 					_pk_tuple = tuple(_pk_tuple)
 
 				# check already in cache
-				_item_in_cache = None
+				_doc_in_cache = None
 				if(use_cache is True and cls.__cache__):
-					_item_in_cache = cls.__cache__.get(_pk_tuple)
+					_doc_in_cache = cls.__cache__.get(_pk_tuple)
 				elif(use_cache):
 					# user supplied cache
-					_item_in_cache = use_cache.get(_pk_tuple)
+					_doc_in_cache = use_cache.get(_pk_tuple)
 
-				if(not _item_in_cache):
+				if(not _doc_in_cache):
 					if(is_already_fetching.get(_pk_tuple)):
 						continue
 					is_already_fetching[_pk_tuple] = True
@@ -156,7 +156,7 @@ class Model(object):
 						to_fetch_ids.append(_id)
 
 				else:
-					from_cache.append(_item_in_cache)
+					from_cache.append(cls(False)._reset(_doc_in_cache))
 
 			_query = {"$or": to_fetch_pks}
 			if(to_fetch_ids):
@@ -168,7 +168,7 @@ class Model(object):
 			# customer user give cache
 			if(use_cache and use_cache != True):
 				for _item in ret:
-					use_cache.set(_item.pk_tuple(), _item)
+					use_cache.set(_item.pk_tuple(), _item._original_doc)
 
 			if(is_single_item):
 				if(ret):
@@ -432,15 +432,10 @@ class Model(object):
 	@classmethod
 	def get_instance_from_document(cls, doc):
 		ret = cls(False)  # not a new item
-		ret.reinitialize_from_doc(doc)
+		ret.reset_and_update_cache(doc)
 		return ret
 
-	def reinitialize_from_doc(self, doc):
-		cls = self.__class__
-		# remove existing pk_tuple in cache
-		if(cls.__cache__):
-			cls.__cache__.delete(self.pk_tuple())
-
+	def _reset(self, doc):
 		self.__is_new = False  # this is not a new object
 		self._initializing = True
 
@@ -452,8 +447,19 @@ class Model(object):
 		self._original_doc = doc
 		# renew the pk!
 		self.pk(True)
+		return self
+
+	def reset_and_update_cache(self, doc):
+		cls = self.__class__
+		# remove old pk_tuple in cache
 		if(cls.__cache__):
-			cls.__cache__.set(self.pk_tuple(), self)
+			cls.__cache__.delete(self.pk_tuple())
+
+		self._reset(doc)
+
+		# update in cache
+		if(cls.__cache__):
+			cls.__cache__.set(self.pk_tuple(), doc)
 
 	'''given a shard key, says which database it resides in'''
 	@classmethod
@@ -575,7 +581,7 @@ class Model(object):
 					# find new shard
 					_secondary_collection = secondary_Model.get_collection(
 						_secondary_values_to_set[shard_key]  # same as after_shard_key
-					)					
+					)				
 					_secondary_collection.insert_one(_secondary_values_to_set)
 
 					# debug log
@@ -756,7 +762,7 @@ class Model(object):
 				cls._trigger_event(EVENT_MONGO_AFTER_UPDATE, self._original_doc, updated_doc)
 
 				# reset all values
-				self.reinitialize_from_doc(updated_doc)
+				self.reset_and_update_cache(updated_doc)
 				# waint on threads
 
 				# triggered after update event
@@ -771,7 +777,7 @@ class Model(object):
 			if(not _doc_in_db):  # moved out of shard or pk changed
 				return False
 			# 2. update our local copy
-			self.reinitialize_from_doc(_doc_in_db)
+			self.reset_and_update_cache(_doc_in_db)
 			can_retry = False
 			# 3. check if basic consistency between local and remote
 			for _k, _v in _local_vs_remote_consistency_checks.items():
@@ -1120,7 +1126,7 @@ class Model(object):
 				committed = True
 				# set original doc and custom dict and set fields
 				# copy the dict to another
-				self.reinitialize_from_doc(dict(self._set_query_updates))
+				self.reset_and_update_cache(dict(self._set_query_updates))
 				# hook to do something for newly created db entries
 				cls._trigger_event(EVENT_AFTER_CREATE, self)
 
@@ -1134,7 +1140,7 @@ class Model(object):
 
 				# get original doc from mongo shard
 				# and update any other fields
-				self.reinitialize_from_doc(
+				self.reset_and_update_cache(
 					_collection_shard.find_one(self.pk())
 				)
 				IS_DEV \
