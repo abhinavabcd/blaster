@@ -184,11 +184,14 @@ def from_kwargs(cls, **kwargs):
 	return ret
 
 
-def get_by_key_list(d, *keyList):
+def get_by_key_list(d, keyList, default=None):
 	for key in keyList:
 		if(not d):
-			return None
-		d = d.get(key, None)
+			return default
+		if(isinstance(d, list)):
+			d = d[int(key)]
+		else:
+			d = d.get(key, None)
 	return d
 
 
