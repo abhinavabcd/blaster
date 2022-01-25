@@ -32,7 +32,7 @@ from requests_toolbelt.multipart import decoder
 from . import config as blaster_config
 from .config import IS_DEV
 from .common_funcs_and_datastructures import SanitizedDict, get_mime_type_from_filename, DummyObject,\
-	set_socket_fast_close_options, start_background_thread, BufferedSocket
+	set_socket_fast_close_options, start_background_thread, BufferedSocket, ltrim
 from .utils import events
 from .logging import LOG_ERROR, LOG_SERVER
 from .schema import Object, schema as schema_func
@@ -836,7 +836,9 @@ class App:
 			if(cookie_header):
 				_temp = cookie_header.strip().split(";")
 				for i in _temp:
-					decoded_cookies.update(parse_qs_modified(i.strip()))
+					_kv = i.strip().split("=", 1)
+					if(len(_kv) > 1):
+						decoded_cookies[_kv[0]] = _kv[1]
 			request_params._cookies = decoded_cookies
 			# process cookies end
 			request_params.parse_request_body(post_data, headers)
@@ -1065,61 +1067,78 @@ def is_server_running():
 
 # File handler for blaster server
 def static_file_handler(
+	url_path,
 	_base_folder_path_,
-	default_file_path="index.html",
-	file_not_found_page_cb=None
+	default_file="index.html",
+	file_not_found_page_cb=None,
+	preload=True  # works only in prod and doesn't server anything outside already cached files
 ):
-	cached_file_data = {}
+	# both paths should start with /
+	if(url_path[-1] != "/"):
+		url_path += "/"  # it must be a folder
+
+	if(_base_folder_path_[-1] != "/"):
+		_base_folder_path_ += "/"  # it must be a folder
+
+	cached_file_resp = {}
 	gevent_lock = Lock()
+
+	def get_file_resp(path):
+		file_path = os.path.abspath(_base_folder_path_ + str(path))
+
+		if(not file_path.startswith(_base_folder_path_)):
+			return "404 Not Found", [], "Invalid path submitted"
+		data = open(file_path, "rb").read()
+		mime_type_headers = get_mime_type_from_filename(file_path)
+		resp_headers = None
+		if(mime_type_headers):
+			resp_headers = {
+				'Content-Type': mime_type_headers.mime_type,
+				'Cache-Control': 'max-age=31536000'
+			}
+		return (data, resp_headers, time.time() * 1000)
 
 	def file_handler(path, request_params: Request):
 		if(not path):
-			path = default_file_path
-		# from given base_path
-		path = os.path.abspath(_base_folder_path_ + str(path))
-		if(not path.startswith(_base_folder_path_)):
-			return "404 Not Found", [], "Invalid path submitted"
-		file_data = cached_file_data.get(path, None)
-		resp_headers = None
+			path = default_file
 
-		if(
-			not file_data
-			or time.time() * 1000 - file_data[2] > 1000 if IS_DEV else 2 * 60 * 1000
-		):
+		file_resp = cached_file_resp.get(path, None)
+		if(not file_resp and not IS_DEV and preload):
+			return "404 Not Found", [], "-NO-FILE-"
+
+		if(not file_resp or IS_DEV):
 			gevent_lock.acquire()
-			file_hash_key = path + urlencode(request_params._get)[:400]
-			file_data = cached_file_data.get(file_hash_key, None)
-			if(not file_data or time.time() * 1000 - file_data[2] > 1000):  # 1 sec
-				# put a lock here
-				try:
-					data = open(path, "rb").read()
-					mime_type_headers = get_mime_type_from_filename(path)
-					if(mime_type_headers):
-						resp_headers = {
-							'Content-Type': mime_type_headers.mime_type,
-							'Cache-Control': 'max-age=31536000'
-						}
+			# put a lock here
+			try:
+				file_resp = get_file_resp(path)
+			except Exception:
+				if(file_not_found_page_cb):
+					file_resp = (
+						file_not_found_page_cb(
+							path, request_params=None, headers=None, post_data=None
+						),
+						None,
+						time.time() * 1000
+					)
+			finally:
+				gevent_lock.release()
 
-					file_data = (data, resp_headers, time.time() * 1000)
-					cached_file_data[file_hash_key] = file_data
-				except Exception:
-					if(file_not_found_page_cb):
-						file_data = (
-							file_not_found_page_cb(
-								path, request_params=None, headers=None, post_data=None
-							),
-							None,
-							time.time() * 1000
-						)
-					else:
-						file_data = ("--NO-FILE--", None, time.time() * 1000)
+			if(not file_resp):
+				file_resp = ("--NO-FILE--", None, time.time() * 1000)
 
-			gevent_lock.release()
+			cached_file_resp[path] = file_resp
 
-		data, resp_headers, last_updated = file_data
-		return resp_headers, data
+		return file_resp[1], file_resp[0]  # headers , data
 
-	return file_handler
+	if(not IS_DEV and preload):
+		file_names = [os.path.join(dp, f) for dp, dn, filenames in os.walk(_base_folder_path_) for f in filenames]
+		for file_name in file_names:
+			file_name_without_folder = ltrim(file_name, _base_folder_path_)
+			_file_path = "/" + file_name_without_folder
+			_url_file_path = url_path + file_name_without_folder
+			cached_file_resp[_url_file_path] = get_file_resp(_file_path)
+
+	return url_path + "{*path}", file_handler
 
 
 # Auto api response utilities

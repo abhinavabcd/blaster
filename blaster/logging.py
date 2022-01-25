@@ -167,12 +167,7 @@ def LOG(level, log_type, **kwargs):
 	log_level_name = log_level_to_names.get(level, "SERVER")
 	# print to stdout
 
-	print(
-		"{:s}{:s} [{:s}]".format(
-			log_level_colors.get(level, PrintColors.OKGREEN),
-			datetime.now(),
-			log_level_name
-		),
+	print("%s%s [%s]"%(log_level_colors.get(level, PrintColors.OKGREEN), datetime.now(), log_level_name),
 		log_type, json.dumps(kwargs),
 		PrintColors.ENDC
 	)

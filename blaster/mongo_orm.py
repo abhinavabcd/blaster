@@ -139,8 +139,9 @@ class Model(object):
 
 				# check already in cache
 				_doc_in_cache = None
-				if(use_cache is True and cls.__cache__):
-					_doc_in_cache = cls.__cache__.get(_pk_tuple)
+				if(use_cache is True):
+					if(cls.__cache__):
+						_doc_in_cache = cls.__cache__.get(_pk_tuple)
 				elif(use_cache):
 					# user supplied cache
 					_doc_in_cache = use_cache.get(_pk_tuple)
@@ -165,7 +166,7 @@ class Model(object):
 			# query all items
 			ret = list(chain(from_cache, cls.query(_query)))
 
-			# customer user give cache
+			# user supplied cache
 			if(use_cache and use_cache != True):
 				for _item in ret:
 					use_cache.set(_item.pk_tuple(), _item._original_doc)
@@ -627,7 +628,7 @@ class Model(object):
 								_v = updated_doc.get(_k, _OBJ_END_)
 								if(_v != _OBJ_END_):
 									_to_insert[_k] = _v
-							
+
 							_seconday_inserted = None
 							_secondary_collection = _SecondayModel\
 								.get_collection(_new_shard_key_val)
@@ -651,8 +652,8 @@ class Model(object):
 								)
 								raise Exception("couldn't insert to secondary")
 
-							
-					# 3. if shard hasn't changed and exists patch
+
+					#  3. if shard hasn't changed and exists patch
 					elif(_new_shard_key_val != _OBJ_END_ and _new_shard_key_val):
 						_set = {}
 						_unset = {}
@@ -1387,8 +1388,10 @@ def initialize_model(_Model):
 	_Model._shard_key_ = getattr(_Model, "_shard_key_", "_id")
 	_Model._secondary_shards_ = {}
 	_Model._indexes_ = getattr(_Model, "_indexes_", [("_id",)])
-	# create a default cache
-	_Model.__cache__ = getattr(_Model, "_cache_", ExpiringCache(10000))
+	# create a default cache if nothing specified
+	_Model_cache = getattr(_Model, "_cache_", _OBJ_END_)
+	if(_Model_cache == _OBJ_END_):
+		_Model.__cache__ = ExpiringCache(10000)  # default cache
 
 	# temp usage _id_attr
 	_id_attr = Attribute(ObjectId)  # default is of type objectId

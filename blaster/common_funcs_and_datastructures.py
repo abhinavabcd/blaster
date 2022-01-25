@@ -189,7 +189,10 @@ def get_by_key_list(d, keyList, default=None):
 		if(not d):
 			return default
 		if(isinstance(d, list)):
-			d = d[int(key)]
+			key = int(key)
+			if(key >= len(d) or key < 0):
+				return default  # dead end
+			d = d[key]
 		else:
 			d = d.get(key, None)
 	return d
@@ -1284,8 +1287,8 @@ MIME_TYPE_MAP = dict(
 	flac=TypeDescriptor(mime_type='audio/flac'),
 
 	css=TypeDescriptor(mime_type='text/css'),
-	js=TypeDescriptor(mime_type='text/javascript')
-
+	js=TypeDescriptor(mime_type='text/javascript'),
+	wasm=TypeDescriptor(mime_type='application/wasm'),
 )
 # mime_type -> file extension map
 MIME_TYPE_TO_EXTENSION = {v.mime_type: k for k, v in MIME_TYPE_MAP.items()}
