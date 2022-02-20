@@ -1066,6 +1066,9 @@ def is_server_running():
 
 
 # File handler for blaster server
+static_file_cache = {}
+
+
 def static_file_handler(
 	url_path,
 	_base_folder_path_,
@@ -1080,7 +1083,6 @@ def static_file_handler(
 	if(_base_folder_path_[-1] != "/"):
 		_base_folder_path_ += "/"  # it must be a folder
 
-	cached_file_resp = {}
 	gevent_lock = Lock()
 
 	def get_file_resp(path):
@@ -1096,13 +1098,13 @@ def static_file_handler(
 				'Content-Type': mime_type_headers.mime_type,
 				'Cache-Control': 'max-age=31536000'
 			}
-		return (data, resp_headers, time.time() * 1000)
+		return (data, resp_headers)
 
-	def file_handler(path, request_params: Request):
+	def file_handler(request_params: Request, path):
 		if(not path):
 			path = default_file
 
-		file_resp = cached_file_resp.get(path, None)
+		file_resp = static_file_cache.get(path, None)
 		if(not file_resp and not IS_DEV and preload):
 			return "404 Not Found", [], "-NO-FILE-"
 
@@ -1113,20 +1115,18 @@ def static_file_handler(
 				file_resp = get_file_resp(path)
 			except Exception:
 				if(file_not_found_page_cb):
-					file_resp = (
-						file_not_found_page_cb(
-							path, request_params=None, headers=None, post_data=None
-						),
-						None,
-						time.time() * 1000
+					file_resp = file_not_found_page_cb(
+						path, request_params=None, headers=None, post_data=None
 					)
+					if(len(file_resp) == 1):
+						file_resp = (file_resp, None)
 			finally:
 				gevent_lock.release()
 
 			if(not file_resp):
-				file_resp = ("--NO-FILE--", None, time.time() * 1000)
+				file_resp = ("--NO-FILE--", None)
 
-			cached_file_resp[path] = file_resp
+			static_file_cache[path] = file_resp
 
 		return file_resp[1], file_resp[0]  # headers , data
 
@@ -1136,7 +1136,10 @@ def static_file_handler(
 			file_name_without_folder = ltrim(file_name, _base_folder_path_)
 			_file_path = "/" + file_name_without_folder
 			_url_file_path = url_path + file_name_without_folder
-			cached_file_resp[_url_file_path] = get_file_resp(_file_path)
+			# strip / at the begininning in the cache
+			# as we search matching path without leading slash in the cache 
+			# in the file handler
+			static_file_cache[_url_file_path[1:]] = get_file_resp(_file_path)
 
 	return url_path + "{*path}", file_handler
 
