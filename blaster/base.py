@@ -1098,13 +1098,13 @@ def static_file_handler(
 				'Content-Type': mime_type_headers.mime_type,
 				'Cache-Control': 'max-age=31536000'
 			}
-		return (data, resp_headers)
+		return ("200 OK", resp_headers, data)
 
 	def file_handler(request_params: Request, path):
 		if(not path):
 			path = default_file
 
-		file_resp = static_file_cache.get(path, None)
+		file_resp = static_file_cache.get(url_path + path, None)
 		if(not file_resp and not IS_DEV and preload):
 			return "404 Not Found", [], "-NO-FILE-"
 
@@ -1118,28 +1118,22 @@ def static_file_handler(
 					file_resp = file_not_found_page_cb(
 						path, request_params=None, headers=None, post_data=None
 					)
-					if(len(file_resp) == 1):
-						file_resp = (file_resp, None)
 			finally:
 				gevent_lock.release()
 
-			if(not file_resp):
-				file_resp = ("--NO-FILE--", None)
-
 			static_file_cache[path] = file_resp
 
-		return file_resp[1], file_resp[0]  # headers , data
+		return file_resp  # headers , data
 
-	if(not IS_DEV and preload):
+	if(not IS_DEV and preload):  # only in prod
 		file_names = [os.path.join(dp, f) for dp, dn, filenames in os.walk(_base_folder_path_) for f in filenames]
 		for file_name in file_names:
-			file_name_without_folder = ltrim(file_name, _base_folder_path_)
-			_file_path = "/" + file_name_without_folder
-			_url_file_path = url_path + file_name_without_folder
+			relative_file_path = ltrim(file_name, _base_folder_path_)
+			_url_file_path = url_path + relative_file_path
 			# strip / at the begininning in the cache
 			# as we search matching path without leading slash in the cache 
 			# in the file handler
-			static_file_cache[_url_file_path[1:]] = get_file_resp(_file_path)
+			static_file_cache[_url_file_path] = get_file_resp(relative_file_path)
 
 	return url_path + "{*path}", file_handler
 

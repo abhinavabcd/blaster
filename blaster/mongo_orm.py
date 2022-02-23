@@ -1045,11 +1045,11 @@ class Model(object):
 			if(
 				self._id == None
 				and (
-					shard_key_name == "_id"
+					(cls._is_sharding_enabled_ and shard_key_name == "_id")
 					or cls._attrs_["_id"]._type != ObjectId
 				)
 			):
-				raise Exception("Need to sepcify _id")
+				raise Exception("Need to specify _id")
 
 			_collection_shard = cls.get_collection(
 				str(getattr(self, shard_key_name))
@@ -1525,6 +1525,8 @@ def initialize_model(_Model):
 	# or primary and sharding enabled
 	if(_Model._is_secondary_shard or is_sharding_enabled):
 		_Model._collection_name_with_shard_ += "_shard_" + _Model._shard_key_
+
+	Model._is_sharding_enabled_ = is_sharding_enabled
 
 	# find tracking nodes
 	_Model._collection_tracker_key_ = "{:s}__{:s}".format(
