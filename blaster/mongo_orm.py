@@ -527,7 +527,7 @@ class Model(object):
 		return None
 
 	# for example, you can say update only when someother field > 0
-	def update(self, _update_query, conditions=None, **kwargs):
+	def update(self, _update_query, conditions=None, cb=None, **kwargs):
 		cls = self.__class__
 
 		if(not _update_query):
@@ -652,7 +652,6 @@ class Model(object):
 								)
 								raise Exception("couldn't insert to secondary")
 
-
 					#  3. if shard hasn't changed and exists patch
 					elif(_new_shard_key_val != _OBJ_END_ and _new_shard_key_val):
 						_set = {}
@@ -698,6 +697,8 @@ class Model(object):
 									secondary_updates=str(_to_patch)
 								)
 
+				cb and cb(self, self._original_doc, updated_doc)
+				
 				cls._trigger_event(EVENT_MONGO_AFTER_UPDATE, self._original_doc, updated_doc)
 
 				# reset all values
