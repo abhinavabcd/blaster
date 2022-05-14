@@ -952,7 +952,7 @@ class Model(object):
 								IS_DEV\
 									and MONGO_DEBUG_LEVEL > 1\
 									and LOG_SERVER(
-										"MONGO", description="missing from primary", 
+										"MONGO", description="missing from primary",
 										model=cls.__name__, _id=str(_id)
 									)
 								continue
@@ -963,7 +963,7 @@ class Model(object):
 
 			multi_collection_query_result.add(
 				ret,
-				lambda: count_documents(_collection, _query, offset, limit) # query count func
+				lambda: count_documents(_collection, _query, offset, limit)  # query count func
 			)
 
 		threads = []

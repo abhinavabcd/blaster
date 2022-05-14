@@ -21,9 +21,9 @@ import time
 import functools
 import traceback
 import inspect
-from urllib.parse import urlencode
 import socket
 import pickle
+from gevent import local
 from gevent.socket import socket as GeventSocket
 from gevent.threading import Lock
 from gevent.server import StreamServer
@@ -38,6 +38,8 @@ from .logging import LOG_ERROR, LOG_SERVER
 from .schema import Object, schema as schema_func
 from .websocket.server import WebSocketServerHandler
 
+# gevent local
+req_ctx = local.local()
 
 _is_server_running = True
 default_stream_headers = {
@@ -730,7 +732,7 @@ class App:
 			return
 		post_data = None
 		request_params = Request(buffered_socket)
-		cur_millis = int(1000 * time.time())
+		cur_millis = req_ctx.timestamp = int(1000 * time.time())
 		request_type = None
 		request_path = None
 		headers = None
