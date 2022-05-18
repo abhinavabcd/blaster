@@ -351,11 +351,13 @@ class Request:
 				# also try with basic name
 				_val = _val or self._get.get(k, escape_quotes=False)
 
-				setattr(ret, k, attr_validation(_val))
+				setattr(ret, k, _val)
+			Query.validate(ret)
 			return ret
 
 		elif(issubclass(_type, Body)):
 			ret = _type()
+			# set the attributes from the request
 			for k, attr_validation in _type._validations.items():
 				_alternate_k = getattr(_type._property_types[k], "_name", None)
 				# first check if an alternate serialized name is given
@@ -363,7 +365,8 @@ class Request:
 				# also try with basic name
 				_val = _val or (self._post and self._post.get(k, escape_quotes=False))
 
-				setattr(ret, k, attr_validation(_val))
+				setattr(ret, k, _val)
+			Body.validate(ret)
 			return ret
 
 		ret = self.get(name)
@@ -371,7 +374,6 @@ class Request:
 
 	def make_obj(self, _Type):
 		return self.make_arg(None, _Type, None, None)
-
 
 	def to_dict(self):
 		return {"get": self._get, "post": self._post}
@@ -935,10 +937,9 @@ class App:
 
 			else:
 				# just a variable to track api type responses
-				response_data = None
 				if(isinstance(body, (dict, list))):
-					response_data = body
 					body = json.dumps(body)
+					buffered_socket.send(b'Content-Type: application/json\r\n')
 
 				# encode body
 				if(isinstance(body, str)):
@@ -961,7 +962,13 @@ class App:
 		except Exception as ex:
 			stacktrace_string = traceback.format_exc()
 			body = None
-			if(blaster_config.server_error_page):
+			resp_headers = []
+			# if it's a type error, send it
+			if(isinstance(ex, TypeError)):
+				body = ex.args and ex.args[0]
+
+			# if given as error page handler
+			if(not body and blaster_config.server_error_page):
 				body = blaster_config.server_error_page(
 					request_type,
 					request_path,
@@ -969,10 +976,16 @@ class App:
 					headers,
 					stacktrace_string=stacktrace_string
 				)
-			if(not body):
-				body = b'Internal server error'
+
+			if(isinstance(body, (dict, list))):
+				body = json.dumps(body)
+				resp_headers.append("Content-Type: application/json\r\n")
+
+			body = body or b'Internal server error'
+			# send the error response
 			buffered_socket.send(
 				b'HTTP/1.1 ', b'502 Server error', b'\r\n',
+				*resp_headers,
 				b'Connection: close', b'\r\n',
 				b'Content-Length: ', str(len(body)), b'\r\n\r\n',
 				body

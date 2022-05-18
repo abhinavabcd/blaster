@@ -3,6 +3,8 @@ import heapq
 import types
 import traceback
 import pymongo
+import hashlib
+from typing import TypeVar
 # from pymongo.read_concern import ReadConcern
 # from pymongo.write_concern import WriteConcern
 from bson.objectid import ObjectId
@@ -16,6 +18,8 @@ from .common_funcs_and_datastructures import ExpiringCache, all_subclasses, jump
 from .config import DEBUG_LEVEL as BLASTER_DEBUG_LEVEL, IS_DEV
 from gevent.threading import Thread
 from .logging import LOG_WARN, LOG_SERVER, LOG_ERROR
+
+T = TypeVar("T")
 
 _VERSION_ = 101
 MONGO_DEBUG_LEVEL = BLASTER_DEBUG_LEVEL
@@ -380,12 +384,22 @@ class Model(object):
 					self._set_query_updates[k] = v
 		self.__dict__[k] = v
 
-	def to_dict(self):
+	def to_dict(self, r=None):
 		_json = {}
-		for k in self.__class__._attrs_:
+		if(isinstance(r, str)):
+			r = [r]
+
+		for k, _attr in self.__class__._attrs_.items():
 			v = getattr(self, k, _OBJ_END_)
 			if(v != _OBJ_END_):
-				_json[k] = v
+				attr_read_auth = getattr(_attr, "r", None)
+				if(r and attr_read_auth):
+					for i in r:
+						if(i in attr_read_auth):
+							_json[k] = v
+							break
+				else:
+					_json[k] = v
 
 		_id = getattr(self, '_id', _OBJ_END_)
 		if(_id != _OBJ_END_):
@@ -462,12 +476,25 @@ class Model(object):
 		if(cls.__cache__):
 			cls.__cache__.set(self.pk_tuple(), doc)
 
-	'''given a shard key, says which database it resides in'''
+	'''given a shard key, says which database node it resides in'''
 	@classmethod
 	def get_db_node(_Model, shard_key):
 		shard_key = str(shard_key) if shard_key != None else ""
-		node_with_data_index = jump_hash(shard_key.encode(), len(_Model._db_nodes_))
-		return _Model._db_nodes_[node_with_data_index]
+		# get 16 bit int
+		shard_key = int(hashlib.md5(shard_key.encode()).hexdigest(), 16) >> 64   # 64 bit value
+		# do a bin search to find (i, j] segment
+		# unfortunately if j == len(nodes) shouldn't happen, because the ring
+		# should cover full region
+		_db_nodes = _Model._db_nodes_
+		i = 0
+		j = n = len(_db_nodes)
+		while(j - i > 1):
+			mid = i + (j - i) // 2
+			if(shard_key > _db_nodes[mid].at):
+				i = mid
+			else:
+				j = mid
+		return _db_nodes[j] if j < n else _db_nodes[i]
 
 	# basically finds the node where the shard_key resides
 	# and returns a actual pymongo collection, shard_key must be a string
@@ -1331,12 +1358,13 @@ class DatabaseNode:
 	password = None
 	# default db name
 	db_name = None
+	at = None
 
 	# this initializes the tables in all nodes
 	def __init__(
 		self, host=None, replica_set=None,
 		username=None, password=None, db_name=None,
-		hosts=None
+		hosts=None, at=((1 << 64) - 1)
 	):
 		if(isinstance(host, str)):
 			hosts = [host]
@@ -1345,6 +1373,7 @@ class DatabaseNode:
 		self.replica_set = replica_set
 		self.username = username
 		self.db_name = db_name
+		self.at = at
 		# use list of hosts, replicaset and username as cache key
 		# so as not to create multiple clients
 		_mongo_clients_cache_key = (",".join(sorted(hosts)), replica_set or "", username or "")
@@ -1403,6 +1432,12 @@ def initialize_model(_Model):
 	is_sharding_enabled = False
 	for k, v in _Model.__dict__.items():
 		if(isinstance(v, Attribute)):
+			# preprocess any attribute arguments
+			if(getattr(v, "r", None)):  # auth levels needed to read this attr
+				if(isinstance(v.r, str)):
+					v.r = [v.r]
+				v.r = set(v.r)
+
 			_model_attrs[k] = v
 			attrs_to_name[v] = k
 			# dumb , but it's one time thing
@@ -1527,7 +1562,7 @@ def initialize_model(_Model):
 	if(_Model._is_secondary_shard or is_sharding_enabled):
 		_Model._collection_name_with_shard_ += "_shard_" + _Model._shard_key_
 
-	Model._is_sharding_enabled_ = is_sharding_enabled
+	_Model._is_sharding_enabled_ = is_sharding_enabled
 
 	# find tracking nodes
 	_Model._collection_tracker_key_ = "{:s}__{:s}".format(
@@ -1562,20 +1597,19 @@ def initialize_model(_Model):
 			)
 
 			# check if the _Model already has _db_nodes_
-			db_nodes \
-				= getattr(_Model, "_db_nodes_", None) \
-				or [
-					{
-						"hosts": init_db_nodes.hosts,
-						"replica_set": init_db_nodes.replica_set,
-						"username": init_db_nodes.username,
-						"db_name": _Model._db_name_
-					} for init_db_nodes in CollectionTracker._db_nodes_
-				]
+			_collection_tracker_node = CollectionTracker._db_nodes_[0]
+			db_node = {
+				"hosts": _collection_tracker_node.hosts,
+				"replica_set": _collection_tracker_node.replica_set,
+				"at": (1 << 64) - 1,  # max 64 bit +ve
+				"username": _collection_tracker_node.username,
+				"password": _collection_tracker_node.password,
+				"db_name": _Model._db_name_
+			}
 
 			collection_tracker = CollectionTracker(
 				_id=_Model._collection_tracker_key_,
-				db_nodes=db_nodes,
+				db_nodes=[db_node],
 				is_primary_shard=1 if not _Model._is_secondary_shard else 0,
 				primary_shard_key=_Model._shard_key_,
 				secondary_shard_keys=list(_Model._secondary_shards_.keys()),
@@ -1588,7 +1622,10 @@ def initialize_model(_Model):
 			collection_tracker.attrs = list(_Model._attrs_.keys())
 			collection_tracker.commit()
 
-		_Model._db_nodes_ = tuple(DatabaseNode(**_db_node) for _db_node in collection_tracker.db_nodes)
+		_Model._db_nodes_ = tuple(
+			DatabaseNode(**_db_node)
+			for _db_node in collection_tracker.db_nodes
+		)
 		# TODO: find new secondary shards by comparing 
 		# collection_tracker.secondary_shard_keys, _Model._secondary_shards_.keys()
 		# and create a job to create and reindex all data to secondary index
