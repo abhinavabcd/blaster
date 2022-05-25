@@ -3,8 +3,8 @@ import heapq
 import types
 import traceback
 import pymongo
-import hashlib
 from typing import TypeVar
+import metrohash
 # from pymongo.read_concern import ReadConcern
 # from pymongo.write_concern import WriteConcern
 from bson.objectid import ObjectId
@@ -481,7 +481,7 @@ class Model(object):
 	def get_db_node(_Model, shard_key):
 		shard_key = str(shard_key) if shard_key != None else ""
 		# get 16 bit int
-		shard_key = int(hashlib.md5(shard_key.encode()).hexdigest(), 16) >> 64   # 64 bit value
+		shard_key = int.from_bytes(metrohash.metrohash64(shard_key.encode()), 'big')
 		# do a bin search to find (i, j] segment
 		# unfortunately if j == len(nodes) shouldn't happen, because the ring
 		# should cover full region
@@ -494,7 +494,7 @@ class Model(object):
 				i = mid
 			else:
 				j = mid
-		return _db_nodes[j] if j < n else _db_nodes[i]
+		return _db_nodes[j] if j < n else _db_nodes[0]
 
 	# basically finds the node where the shard_key resides
 	# and returns a actual pymongo collection, shard_key must be a string
@@ -1233,6 +1233,7 @@ class CollectionTracker(Model):
 	secondary_shard_keys = Attribute(list)
 	pk_attrs = Attribute(list)
 	attrs = Attribute(list)
+	created_at = Attribute(int, default=cur_ms)
 
 
 # tags shard keys to the attributes and use it when intializing the model
@@ -1364,7 +1365,7 @@ class DatabaseNode:
 	def __init__(
 		self, host=None, replica_set=None,
 		username=None, password=None, db_name=None,
-		hosts=None, at=((1 << 64) - 1)
+		hosts=None, at=0
 	):
 		if(isinstance(host, str)):
 			hosts = [host]
@@ -1429,7 +1430,8 @@ def initialize_model(_Model):
 	_Model._pk_attrs = None
 	'''it's used for translating attr objects/name to string names'''
 	_Model._attrs_to_name = attrs_to_name = {_id_attr: '_id', '_id': '_id'}
-	is_sharding_enabled = False
+	is_primary_sharding_enabled = False
+	# parse all attributes
 	for k, v in _Model.__dict__.items():
 		if(isinstance(v, Attribute)):
 			# preprocess any attribute arguments
@@ -1461,13 +1463,12 @@ def initialize_model(_Model):
 					# because we don't need it again after first time
 					#  and won't rewrite secondary shard keys
 					delattr(v, "is_primary_shard_key")
+					is_primary_sharding_enabled = True
 				elif(is_secondary_shard_key is True):
 					_Model._secondary_shards_[k] = SecondaryShard()
 					# because we don't need it again after first time
 					delattr(v, "is_secondary_shard_key")
 
-				is_sharding_enabled \
-					= is_sharding_enabled or (is_primary_shard_key or is_secondary_shard_key)
 
 	IS_DEV \
 		and MONGO_DEBUG_LEVEL > 1 \
@@ -1557,12 +1558,12 @@ def initialize_model(_Model):
 	# set collection name to include shard_keys
 
 	_Model._collection_name_with_shard_ = _Model._collection_name_
-	# append shard id to table name if it's secondary shard
-	# or primary and sharding enabled
-	if(_Model._is_secondary_shard or is_sharding_enabled):
-		_Model._collection_name_with_shard_ += "_shard_" + _Model._shard_key_
 
-	_Model._is_sharding_enabled_ = is_sharding_enabled
+	_Model._is_sharding_enabled_ = False  # default
+	# append shard id to table name as an indicator that table is sharded
+	if(_Model._is_secondary_shard or is_primary_sharding_enabled):
+		_Model._collection_name_with_shard_ += "_shard_" + _Model._shard_key_
+		_Model._is_sharding_enabled_ = True
 
 	# find tracking nodes
 	_Model._collection_tracker_key_ = "{:s}__{:s}".format(
@@ -1601,7 +1602,7 @@ def initialize_model(_Model):
 			db_node = {
 				"hosts": _collection_tracker_node.hosts,
 				"replica_set": _collection_tracker_node.replica_set,
-				"at": (1 << 64) - 1,  # max 64 bit +ve
+				"at": 0,
 				"username": _collection_tracker_node.username,
 				"password": _collection_tracker_node.password,
 				"db_name": _Model._db_name_
