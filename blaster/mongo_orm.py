@@ -13,7 +13,7 @@ from collections import OrderedDict
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 from pymongo import ReturnDocument, ReadPreference
-from .common_funcs_and_datastructures import ExpiringCache, all_subclasses, jump_hash,\
+from .common_funcs_and_datastructures import ExpiringCache, all_subclasses,\
 	cur_ms, list_diff2, batched_iter, get_by_key_list
 from .config import DEBUG_LEVEL as BLASTER_DEBUG_LEVEL, IS_DEV
 from gevent.threading import Thread

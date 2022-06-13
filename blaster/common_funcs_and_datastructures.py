@@ -5,19 +5,20 @@ Created on 04-Nov-2017
 '''
 
 import gevent
+from gevent.threading import Thread
+from gevent.queue import Queue
 import os
 import sys
 import subprocess
 import shlex
 import collections
-import signal
 import random
 import string
 import socket
 import struct
 import fcntl
 import html
-import pickle
+import heapq
 from gevent import sleep
 from functools import reduce as _reduce
 from gevent.lock import BoundedSemaphore
@@ -30,8 +31,6 @@ import time
 import hmac
 import base64
 import hashlib
-from gevent.threading import Thread
-from gevent.queue import Queue
 import re
 import six
 
@@ -228,10 +227,10 @@ def zlfill(tup, n):
 	return tuple(0 for x in range(n - len(tup))) + tup
 
 
-DATE_REGEX = re.compile("(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})")
-TIME_REGEX = re.compile("(?:(0?[1-9]|1[012])(?::([0-5]\d))?(?::([0-5]\d))?\s*([AP]\.?M\.?))|([01]\d|2[0-3])(:[0-5]\d){1,2}", re.IGNORECASE)
+DATE_REGEX = re.compile(r"(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})")
+TIME_REGEX = re.compile(r"(?:(0?[1-9]|1[012])(?::([0-5]\d))?(?::([0-5]\d))?\s*([AP]\.?M\.?))|([01]\d|2[0-3])(:[0-5]\d){1,2}", re.IGNORECASE)
 DAY_REGEX = re.compile(
-	"(mon|tues|wed(nes)?|thur(s)?|fri|sat(ur)?|sun)(day)?",
+	r"(mon|tues|wed(nes)?|thur(s)?|fri|sat(ur)?|sun)(day)?",
 	re.IGNORECASE
 )
 DAYS_OF_WEEK = [
@@ -240,14 +239,25 @@ DAYS_OF_WEEK = [
 ]
 
 
-def get_time_overlaps(a, b, x: str, limit=10, partial=True):
+def _bound_time(start, end, a, b, partial, params):
+	if(partial):
+		if(start >= a and start <= b):
+			return (start, (end if end < b else b), params)
+		elif(start <= a and a <= end):
+			return ((a, (end if end < b else b)), params)
+	else:
+		if(start >= a and end <= b):
+			return (start, end, params)
+
+
+def iter_time_overlaps(a, b, x: str, partial=False):
+	x, *params = x.split("|")
 	if(isinstance(a, int)):
 		a = timestamp2date(a)
 
 	if(isinstance(b, int)):
 		b = timestamp2date(b)
 
-	time_ranges = []
 	date_matches = [m for m in DATE_REGEX.findall(x)]
 	time_matches = [
 		list(filter(
@@ -301,56 +311,98 @@ def get_time_overlaps(a, b, x: str, limit=10, partial=True):
 
 			offset_check_y = timedelta(hours=hours, minutes=mins, seconds=secs)
 		else:
-			offset_check_y = offset_check_y + timedelta(hours=1)
+			offset_check_y = offset_check_x + timedelta(hours=1)  # default 1 hour
 
 	if(date_matches):
 		day, month, year, *_ = map(lambda x: int(x) if x else 0, date_matches[0])
-		if(year < 2000):
+		if(year < 100):
 			year = 2000 + year
 		time_range_start = datetime(year=year, month=month, day=day) + offset_check_x
 		time_range_end = datetime(year=year, month=month, day=day) + offset_check_y
 		if(len(date_matches) > 1):
 			day, month, year, *_ = map(lambda x: int(x) if x else 0, date_matches[1])
-			if(year < 2000):
+			if(year < 100):
 				year = 2000 + year
 			time_range_end = datetime(year=year, month=month, day=day) + offset_check_y
-		time_ranges.append((time_range_start, time_range_end))
+
+		_ret = _bound_time(time_range_start, time_range_end, a, b, partial, params)
+		if(_ret):
+			yield _ret
 
 	elif(day_matches):
 		start_day = DAYS_OF_WEEK.index(day_matches[0].lower())
 		if(start_day == -1):
 			return None
 		t = a
-		while(t < b and len(time_ranges) < limit):
+		while(t < b):
 			if(t.weekday() == start_day):
 				t_start_of_day = datetime(year=t.year, month=t.month, day=t.day)
-				time_ranges.append((
-					t_start_of_day + offset_check_x,
-					t_start_of_day + offset_check_y
-				))
-			t += timedelta(days=1)  # increment by 1 day and keep on checking
 
+				_ret = _bound_time(
+					t_start_of_day + offset_check_x,
+					t_start_of_day + offset_check_y,
+					a, b, partial, params
+				)
+				if(_ret):
+					yield _ret
+			t += timedelta(days=1)  # increment by 1 day and keep on checking
 	else:
+		if(offset_check_y < offset_check_x):
+			offset_check_y += timedelta(days=1)
 		t = a
-		while(t < b and len(time_ranges) < limit):
-			t_start_of_day = datetime(a.year, a.month, a.day)
-			time_ranges.append((
+		while(t < b):
+			t_start_of_day = datetime(t.year, t.month, t.day)
+			_ret = _bound_time(
 				t_start_of_day + offset_check_x,
-				t_start_of_day + offset_check_y	
-			))
+				t_start_of_day + offset_check_y,
+				a, b, partial, params
+			)
+			if(_ret):
+				yield _ret
 			t += timedelta(days=1)
 
-	ret = []
-	for start, end in time_ranges:
-		if(not partial):
-			if(start >= a and end <= b):
-				ret.append((start, end))
-		else:
-			if(start >= a and start <= b):
-				ret.append((start, (end if end < b else b)))
-			elif(start <= a and a <= end):
-				ret.append((a, (end if end < b else b)))
+	return
 
+
+def get_time_overlaps(
+	a, b, include: list, exclude=None,
+	limit=10, partial=False, milliseconds=False
+):
+	if(isinstance(include, str)):
+		include = include.split(",")
+	if(isinstance(exclude, str)):
+		include = include.split(",")
+
+	buffer = []
+	heapq.heapify(buffer)
+	for x in include:
+		try:
+			it = iter_time_overlaps(a, b, x, partial=partial)
+			heapq.heappush(buffer, (next(it), it))
+		except StopIteration:
+			pass
+
+	ret = []
+	while(len(ret) < limit and len(buffer) > 0):
+		time_range, it = heapq.heappop(buffer)
+		try:
+			heapq.heappush(buffer, (next(it), it))
+		except StopIteration:
+			pass
+		if(
+			not exclude
+			or not get_time_overlaps(time_range[0], time_range[1], exclude, limit=1, partial=True)
+		):
+			if(milliseconds):
+				ret.append(
+					(
+						int(time_range[0].timestamp() * 1000),
+						int(time_range[1].timestamp() * 1000),
+						*time_range[2:]
+					)
+				)
+			else:
+				ret.append(time_range)
 	return ret
 
 
