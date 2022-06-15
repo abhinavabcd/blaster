@@ -56,7 +56,7 @@ __all_models__ = {}
 
 
 class Model(object):
-	# class level
+	# ###class level###
 	_attrs = None
 	_pk_attrs = None
 
@@ -64,7 +64,7 @@ class Model(object):
 	# used to identify if it's a primary or secondary shard
 	_is_secondary_shard = False
 
-	# instance level
+	# ###instance level###
 	__is_new = True
 	# this means the object is being initialized by this orm,
 	# and not available to user yet
@@ -1208,6 +1208,67 @@ class Model(object):
 			_Model.__cache__.delete(self.pk_tuple())
 
 		_Model._trigger_event(EVENT_AFTER_DELETE, self)
+
+	# utility to lock
+	__lock_acquired = None
+
+	def lock(self, timeout=1000, silent=False, assume_failed_after=2 * 60 * 1000):
+		# return true for objects not yet in db too
+		if(self.__lock_acquired or not self._original_doc):
+			return True
+
+		start_timestamp = cur_ms()
+		count = 0
+		while((cur_timestamp := cur_ms()) - start_timestamp < timeout):
+			count += 1
+			if(
+				self.update(
+					{"$set": {"locked": cur_timestamp}},
+					conditions={
+						"$or": [
+							{"locked": None},
+							{"locked": {"$lt": cur_timestamp - assume_failed_after}}  # locked before 2 minutes
+						]
+					}
+				)
+			):
+				self.__lock_acquired = cur_timestamp
+				break
+			time.sleep(0.1 * count)  # wait
+
+		if(not self.__lock_acquired):
+			if(not silent):
+				raise TimeoutError("locking timedout {}:{}".format(
+					self.warehouse_id, self.product_id)
+				)
+			return False
+
+		return True
+
+	def unlock(self, force=False):
+		if(not self.__lock_acquired and not force):
+			# not acqurired by us and no force
+			return
+
+		self.update(
+			{"$unset": {"locked": ""}},
+			conditions=(
+				None if force 
+				else {"locked": self.__lock_acquired}
+			)
+		)
+
+
+def with_lock(func):
+	def wrapper(self, *args, **kwargs):
+		try:
+			self.lock()
+			return func(self, *args, **kwargs)
+		except TimeoutError:
+			return None
+		finally:
+			self.unlock()
+	return wrapper
 
 
 class SecondaryShard:
