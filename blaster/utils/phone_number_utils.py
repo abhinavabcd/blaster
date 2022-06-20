@@ -1,6 +1,6 @@
 import re
 from . import data_utils
-from ..common_funcs_and_datastructures import ltrim
+from ..tools import ltrim
 
 PHONE_NUMBER_REGEX = re.compile("^\+?[0-9]+")
 

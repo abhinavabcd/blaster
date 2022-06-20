@@ -5,7 +5,7 @@ Created on 29-Dec-2017
 '''
 from .model import Model
 from .fields import CharField, IntegerField
-from ..common_funcs_and_datastructures import cur_ms
+from ..tools import cur_ms
 
 
 class InboxMessage(Model):

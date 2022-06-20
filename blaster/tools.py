@@ -9,7 +9,7 @@ from gevent.threading import Thread
 from gevent.queue import Queue
 import os
 import sys
-import subprocess
+import subprocess 
 import shlex
 import collections
 import random
@@ -26,7 +26,6 @@ from collections import namedtuple
 from datetime import timezone
 from datetime import datetime
 from datetime import timedelta
-import logging
 import time
 import hmac
 import base64
@@ -40,7 +39,7 @@ from .websocket._core import WebSocket
 from .config import IS_DEV
 from .utils.xss_html import XssHtml
 from .utils import events
-from .logging import LOG_APP_INFO, LOG_WARN, LOG_DEBUG, LOG_ERROR
+from .logging import LOG_APP_INFO, LOG_WARN, LOG_ERROR
 
 
 _this_ = sys.modules[__name__]
@@ -257,12 +256,15 @@ def iter_time_overlaps(a, b, x: str, partial=False):
 
 	if(isinstance(b, int)):
 		b = timestamp2date(b)
-
+	x = x.strip()
 	date_matches = [m for m in DATE_REGEX.findall(x)]
 	time_matches = [
-		list(filter(
-			lambda x:x, map(lambda x: x.strip(": ").lower(), m)
-		)) for m in TIME_REGEX.findall(x)
+		list(
+			filter(
+				lambda x:x,
+				map(lambda x: x.strip(": ").lower(), m)
+			)
+		) for m in TIME_REGEX.findall(x)
 	]
 	day_matches = list(
 		filter(
@@ -650,7 +652,7 @@ def decode_signed_value(name, value, secret, max_age_days=-1):
 			)
 			return None
 	if parts[1].startswith(b"0"):
-		logging.warning("Tampered cookie %r", value)
+		LOG_WARN("cookie", msg="Tampered cookie %r", value=value)
 		return None
 	try:
 		return base64.b64decode(parts[0])
@@ -1655,7 +1657,7 @@ def background_task(func):
 
 
 # Blaster exit functions
-@events.register_as_listener(["blaster_exit0"])
+@events.register_listener(["blaster_exit0"])
 def exit_0():
 	# start of exit - background threads cannot run
 	if(not start_background_thread.can_run):
@@ -1668,7 +1670,7 @@ def exit_0():
 		_partitioned_task_queue.put((empty_func, [], {}))
 
 
-@events.register_as_listener(["blaster_exit5"])
+@events.register_listener(["blaster_exit5"])
 def exit_5():
 	# reap all joinables of background threads,
 	# everything should be done by this point

@@ -31,7 +31,7 @@ from requests_toolbelt.multipart import decoder
 
 from . import config as blaster_config
 from .config import IS_DEV
-from .common_funcs_and_datastructures import SanitizedDict, get_mime_type_from_filename, DummyObject,\
+from .tools import SanitizedDict, get_mime_type_from_filename, DummyObject,\
 	set_socket_fast_close_options, start_background_thread, BufferedSocket, ltrim
 from .utils import events
 from .logging import LOG_ERROR, LOG_SERVER
@@ -1023,7 +1023,7 @@ class App:
 			buffered_socket.close()
 
 
-@events.register_as_listener(signal.SIGINT)
+@events.register_listener(signal.SIGINT)
 def stop_all_apps():
 	LOG_SERVER("server_info", data="exiting all servers")
 	global _is_server_running
@@ -1324,7 +1324,7 @@ def set_num_procs(num_procs=min(3, os.cpu_count())):
 
 	events.broadcast_event_multiproc = broadcast_event_multiproc
 
-	@events.register_as_listener("blaster_exit1")
+	@events.register_listener("blaster_exit1")
 	def stop_broadcaster():
 		# send empty messages to break connections
 		if(os.getpid() == BROADCASTER_PID):

@@ -12,7 +12,7 @@ import ujson as json
 import gevent
 from .. import config
 from ..base import is_server_running
-from ..common_funcs_and_datastructures import get_random_id
+from ..tools import get_random_id
 from ..connection_pool import use_connection_pool
 from ..utils import events
 from ..logging import LOG_WARN, LOG_SERVER
@@ -125,7 +125,7 @@ def post_a_task(func, *args, **kwargs):
     return response
 
 
-@events.register_as_listener("blaster_exit0")
+@events.register_listener("blaster_exit0")
 def wait_for_push_tasks_processing():
     if(sqs_reader_greenlets):
         LOG_WARN("server_info", data="finishing pending push tasks via SQS")

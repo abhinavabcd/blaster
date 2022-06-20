@@ -1,4 +1,4 @@
-from blaster.common_funcs_and_datastructures import get_random_id, cur_ms
+from blaster.tools import get_random_id, cur_ms
 from blaster.config import IS_DEV
 from blaster.mongo_orm import Connection, Model, Attribute, init_mongo_cluster
 

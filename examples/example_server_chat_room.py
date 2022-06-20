@@ -11,10 +11,10 @@ from blaster.base import start_server, parse_qs_modified
 import argparse
 import ujson as json
 import collections
-from blaster.common_funcs_and_datastructures import LRUCache, create_signed_value,\
+from blaster.tools import LRUCache, create_signed_value,\
 	get_random_id, decode_signed_value,\
 	set_socket_options,\
-	WebsocketConnection
+	WebsocketConnection, cur_ms
 from blaster.urllib_utils import get_data
 import random
 from blaster.websocket.server import WebSocketServerHandler
@@ -22,7 +22,6 @@ import time
 from blaster.constants import TYPE_ERROR, TYPE_OK, LOG_TYPE_EXCEPTION
 from blaster.base import route_handler, is_server_running, LOG_WARN
 import socket
-from blaster.common_funcs_and_datastructures import cur_ms
 import gevent
 from gevent.time import sleep
 import urllib

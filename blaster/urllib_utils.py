@@ -21,16 +21,18 @@ http.client._is_legal_header_name = re.compile(rb'[^\s][^:\r\n]*').fullmatch
 
 url_loaders_queue = Queue()
 
+
 class OpenerDirector2(urllib.request.OpenerDirector):
     def __init__(self):
         super().__init__()
-        self.addheaders = [] # remove default python-urllib-header
+        self.addheaders = []  # remove default python-urllib-header
 
 
-urllib.request.OpenerDirector = OpenerDirector2 # override for everyone
+urllib.request.OpenerDirector = OpenerDirector2  # override for everyone
+
 
 def get_url_loader(actual_func):
-    
+
     def ret_func(*args, **kwargs):
         url_loader = None
         try:
@@ -40,15 +42,15 @@ def get_url_loader(actual_func):
             https_logger = urllib.request.HTTPSHandler(debuglevel=(1 if IS_DEV else 0))
             url_loader = urllib.request.build_opener(http_logger, urllib.request.HTTPCookieProcessor(), urllib.request.ProxyHandler(), https_logger, urllib.request.HTTPRedirectHandler())
             urllib.request.install_opener(url_loader)
-        
+
         if(kwargs == None):
             kwargs = {}
         kwargs["url_loader"] = url_loader
         ret = actual_func(*args, **kwargs)
         url_loaders_queue.put(url_loader)
-        
+
         return ret
-        
+
     return ret_func
 
 

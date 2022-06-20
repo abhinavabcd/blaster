@@ -5,7 +5,7 @@ Created on 05-Jun-2019
 '''
 from ..connection_pool import use_connection_pool
 from ..logging import LOG_WARN
-from ..common_funcs_and_datastructures import retry, background_task
+from ..tools import retry, background_task
 
 @background_task
 @retry(3)

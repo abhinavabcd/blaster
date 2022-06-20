@@ -1,4 +1,3 @@
-import time
 import heapq
 import types
 import traceback
@@ -13,10 +12,11 @@ from collections import OrderedDict
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 from pymongo import ReturnDocument, ReadPreference
-from .common_funcs_and_datastructures import ExpiringCache, all_subclasses,\
+from .tools import ExpiringCache, all_subclasses,\
 	cur_ms, list_diff2, batched_iter, get_by_key_list
 from .config import DEBUG_LEVEL as BLASTER_DEBUG_LEVEL, IS_DEV
 from gevent.threading import Thread
+from gevent import time
 from .logging import LOG_WARN, LOG_SERVER, LOG_ERROR
 
 T = TypeVar("T")
@@ -392,7 +392,7 @@ class Model(object):
 		for k, _attr in self.__class__._attrs_.items():
 			v = getattr(self, k, _OBJ_END_)
 			if(v != _OBJ_END_):
-				attr_read_auth = getattr(_attr, "r", None)
+				attr_read_auth: set = getattr(_attr, "r", None)
 				if(r and attr_read_auth):
 					for i in r:
 						if(i in attr_read_auth):
@@ -1210,53 +1210,61 @@ class Model(object):
 		_Model._trigger_event(EVENT_AFTER_DELETE, self)
 
 	# utility to lock
-	__lock_acquired = None
+	__locked_until = None
 
-	def lock(self, timeout=1000, silent=False, assume_failed_after=2 * 60 * 1000):
+	# timeout -> can try to get lock until
+	# can_hold_until -> after acquired, how long we can hold it,
+	# - beyong that time, we know other can interfere
+	def lock(self, timeout=5000, silent=False, can_hold_until=2 * 60 * 1000):
 		# return true for objects not yet in db too
-		if(self.__lock_acquired or not self._original_doc):
+		start_timestamp = cur_ms()
+		if(
+			(self.__locked_until and self.__locked_until >= start_timestamp)
+			or not self._original_doc
+		):
 			return True
 
-		start_timestamp = cur_ms()
 		count = 0
 		while((cur_timestamp := cur_ms()) - start_timestamp < timeout):
 			count += 1
+			locked_until = cur_timestamp + can_hold_until
 			if(
 				self.update(
-					{"$set": {"locked": cur_timestamp}},
+					{"$set": {"locked": locked_until}},
 					conditions={
 						"$or": [
 							{"locked": None},
-							{"locked": {"$lt": cur_timestamp - assume_failed_after}}  # locked before 2 minutes
+							{"locked": {"$lt": cur_timestamp}}  # locked before 2 minutes
 						]
 					}
 				)
 			):
-				self.__lock_acquired = cur_timestamp
+				self.__locked_until = locked_until
 				break
-			time.sleep(0.1 * count)  # wait
+			time.sleep(0.2 * count)  # wait
 
-		if(not self.__lock_acquired):
+		if(not self.__locked_until):
 			if(not silent):
-				raise TimeoutError("locking timedout {}:{}".format(
-					self.warehouse_id, self.product_id)
+				raise TimeoutError(
+					"locking timedout {}:{}".format(
+						self.__class__,
+						self.pk_tuple()
+					)
 				)
 			return False
 
 		return True
 
 	def unlock(self, force=False):
-		if(not self.__lock_acquired and not force):
+		if(not self.__locked_until and not force):
 			# not acqurired by us and no force
 			return
 
 		self.update(
 			{"$unset": {"locked": ""}},
-			conditions=(
-				None if force 
-				else {"locked": self.__lock_acquired}
-			)
+			conditions=None if force else {"locked": self.__locked_until}
 		)
+		self.__locked_until = None
 
 
 def with_lock(func):

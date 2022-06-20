@@ -5,7 +5,7 @@ Created on 05-Jun-2019
 '''
 import os
 from ..connection_pool import get_from_pool, release_to_pool
-from ..common_funcs_and_datastructures import MIME_TYPE_MAP
+from ..tools import MIME_TYPE_MAP
 
 
 def generate_upload_url(file_name, base_folder, s3_connection_pool_name="s3" , bucket=None, redirect_url=None, mime_type=None):
