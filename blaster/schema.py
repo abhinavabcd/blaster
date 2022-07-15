@@ -9,6 +9,10 @@ from functools import partial
 _OBJ_END_ = object()
 
 
+def TYPE_ERR(msg):
+	raise TypeError(msg)
+
+
 class _Optional:
 	def __init__(self, *types):
 		self._types = types
@@ -330,9 +334,18 @@ def array_validation(_type, arr, simple_types=(), complex_validations=(), mix=Fa
 
 # given any instance/class, returns schema, _validation function
 def schema(x):
-	if(isinstance(x, type) and issubclass(x, Object) and x != Object):
-		# thi is the main proceduce that defines and 
-		# initialized new types, but for single object(a=Int..)
+	if(isinstance(x, _Optional)):
+		_schema, _validator = schema(x._types[0])
+		return _schema, _validator
+	if(isinstance(x, _Required)):
+		_schema, _validator = schema(x._types[0])
+		_schema["required"] = True
+		return _schema, (
+			lambda x: _validator(x) if x else TYPE_ERR("field is required")
+		)
+
+	elif(isinstance(x, type) and issubclass(x, Object) and x != Object):
+		# Object types
 		ret = schema.defs.get(x.__name__)
 		if(ret):
 			return {"schema": {"$ref": "#/definitions/" + x.__name__}}, x.validate
@@ -348,22 +361,26 @@ def schema(x):
 				and getattr(_type, "__origin__", None) == typing.Union
 				and getattr(_type, "__args__", None)
 			):
+				# union
 				_type = _type.__args__[0]
 				is_required = False
 			if(isinstance(_type, _Optional)):
+				# optional
 				_type = _type._types[0]
 				is_required = False
 
 			elif(isinstance(_type, _Required)):
+				# required
 				_type = _type._types[0]
 
 			_schema_and_validation = schema(_type)
 			if(_schema_and_validation):
 				_properties[k], _validations[k] = _schema_and_validation
-				is_required and _required.add(k)
 				_default = x.__dict__.get(k, _OBJ_END_)  # declaration default
-				if(_default != _OBJ_END_ and not isinstance(_type, type)):
+				if(_default != _OBJ_END_):  # ? and not isinstance(_type, type)):
 					_type._default = _default
+					is_required = False
+				is_required and _required.add(k)
 				# keep track of propeties
 				x._property_types[k] = _type
 		# create schema
@@ -386,7 +403,7 @@ def schema(x):
 		return x._schema_, x.validate
 
 	# special for tuples and list
-	elif(isinstance(x, (list, tuple))):  # x = [int, str]->oneof, (int, str)->anyof
+	elif(isinstance(x, (list, tuple))):  # x = [int, str]->oneof, (int, str)->anyof/mixed
 		is_nullable = False
 		if(None in x):
 			x.pop(x.index(None))

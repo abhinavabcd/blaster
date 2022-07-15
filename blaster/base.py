@@ -35,7 +35,7 @@ from .tools import SanitizedDict, get_mime_type_from_filename, DummyObject,\
 	set_socket_fast_close_options, start_background_thread, BufferedSocket, ltrim
 from .utils import events
 from .logging import LOG_ERROR, LOG_SERVER
-from .schema import Object, schema as schema_func
+from .schema import Int, Object, Str, schema as schema_func
 from .websocket.server import WebSocketServerHandler
 
 # gevent local
@@ -296,7 +296,13 @@ class Request:
 	# create the value of the argument based on type, default
 	def make_arg(self, name, _type, default, validator):
 		if(not _type):
-			return self.get(name, default)
+			ret = self.get(name, default=_OBJ_END_)
+			if(ret == _OBJ_END_):
+				if(default == _OBJ_END_):
+					# error
+					raise TypeError("{:s} field is required".format(name))
+				return default
+			return ret
 		if(_type == Request):  # request_params: Request
 			return self
 		elif(_type == Query):  # query: Query
@@ -369,8 +375,13 @@ class Request:
 			Body.validate(ret)
 			return ret
 
-		ret = self.get(name)
-		return validator(ret) if validator else ret  # get or post
+		# get or post
+		ret = self.get(name, default=_OBJ_END_)
+		if(ret == _OBJ_END_):
+			if(default == _OBJ_END_):  # no default provided, raise error
+				raise TypeError("{:s} field is required".format(name))
+			return default
+		return validator(ret) if validator else ret
 
 	def make_obj(self, _Type):
 		return self.make_arg(None, _Type, None, None)
@@ -531,13 +542,15 @@ class App:
 
 				_type = _def.annotation if _def.annotation != inspect._empty else None
 				if(_def.default == inspect._empty):
+					_default = _OBJ_END_
 					if(not _type):
 						if(arg_name not in _path_params):  # check if it's a path param
 							continue
 						else:
 							_type = str  # default type for path params
+							_default = ""
 					# name, type, default, validator
-					args.append((arg_name, _type, None, schema_func(_type)[1]))
+					args.append((arg_name, _type, _default, schema_func(_type)[1]))
 				else:
 					# name, type, default, validator
 					kwargs.append((arg_name, _type, _def.default, schema_func(_type)[1]))
@@ -609,9 +622,11 @@ class App:
 				"description": handler.get("description", "")
 			}
 			# add header, query, cookie params
+			may_be_params = []
 			for arg in (args + kwargs):
 				_type = arg[1]
 				if(_type and isinstance(_type, type)):
+					# type
 					if(issubclass(_type, Query)):
 						for _key, _schema in _type._schema_["properties"].items():
 							_param = {
@@ -624,10 +639,14 @@ class App:
 
 							_parameters.append(_param)
 
-					if(issubclass(_type, Body)):
+					elif(issubclass(_type, Body)):
 						_body_classes.append(_type)
 
-				if(isinstance(_type, (Headers, Query, Cookie))):
+					else:
+						may_be_params.append(arg)
+
+				elif(isinstance(_type, (Headers, Query, Cookie))):
+					# instnce
 					_in = "header" \
 						if isinstance(_type, Headers)\
 						else ("query" if isinstance(_type, Query) else "cookie")
@@ -642,9 +661,12 @@ class App:
 							_param["required"] = True
 
 						_parameters.append(_param)
+				else:
+					may_be_params.append(arg)
 
 			# add path params
-			for _name, _required in handler.get("path_params", {}).items():
+			_path_params = handler.get("path_params", {})
+			for _name, _required in _path_params.items():
 				_param = {
 					"in": "path",
 					"name": _name,
@@ -654,6 +676,18 @@ class App:
 				_param["required"] = True
 
 				_parameters.append(_param)
+
+			for _arg in may_be_params:
+				_name, _type, *_ = _arg
+				if(_name in _path_params):
+					continue  # this is a path param
+				_schema, _ = schema_func(_type)
+				if(_schema):
+					_parameters.append({
+						"in": "query",
+						"name": _name,
+						"schema": _schema
+					})
 
 			if(_parameters):
 				_method_def["parameters"] = _parameters
@@ -670,8 +704,9 @@ class App:
 						)
 					)
 					_properties = {}
-					for _key, _schema in _type._schema_["properties"].items():
-						_properties[_key] = _schema
+					for _type in _body_classes:
+						for _key, _schema in _type._schema_["properties"].items():
+							_properties[_key] = _schema
 
 					# add schemas
 					self.openapi["components"]["schemas"][_schema_name] = {
