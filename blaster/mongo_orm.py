@@ -345,30 +345,38 @@ class Model(object):
 		return ret
 
 	def __setattr__(self, k, v):
-		_attr_type_obj = self.__class__._attrs_.get(k)
-		if(_attr_type_obj):
+		_attr_obj = self.__class__._attrs_.get(k)
+		if(_attr_obj):
 			# change type of objects when setting them
-			if(v and not isinstance(v, _attr_type_obj._type)):
-				if(_attr_type_obj._type in (int, float)):  # force cast between int/float
-					v = _attr_type_obj._type(v)
-				elif(_attr_type_obj._type == str):  # force cast to string
+			_attr_obj_type = _attr_obj._type
+			if(v != None and not isinstance(v, _attr_obj_type)):
+				if(not v):
+					v = None  # wrong type but empty -> "" '' [] {}, null then out
+				elif(_attr_obj_type in (int, float)):  # force cast between int/float
+					v = _attr_obj_type(v)
+				elif(_attr_obj_type == str):  # force cast to string
 					v = str(v)
-				elif(_attr_type_obj._type == ObjectId and k == "_id"):
+				elif(_attr_obj_type == ObjectId and k == "_id"):
 					pass  # could be anything don't try to cast
-				elif(not self._initializing):
-					raise Exception(
-						"Type mismatch in {}, {}: should be {} but got {}".format(
-							type(self), k, _attr_type_obj._type, str(type(v))
+				else:
+					if(not self._initializing):
+						# we are setting it wrong on a new/initialized object
+						# raise
+						raise TypeError(
+							"Type mismatch in {}, {}: should be {} but got {}".format(
+								type(self), k, _attr_obj_type, str(type(v))
+							)
 						)
-					)
+					# else:
+						# already in db, so let's wait for application to crash
 
 			if(self._initializing):
 				if(not self.__is_new):
-					if(_attr_type_obj._type == dict):
+					if(_attr_obj_type == dict):
 						if(isinstance(v, dict)):
 							v = self.get_custom_dict(k, v)
 
-					elif(_attr_type_obj._type == list):
+					elif(_attr_obj_type == list):
 						if(isinstance(v, list)):
 							v = self.get_custom_list(k, v)
 			else:
