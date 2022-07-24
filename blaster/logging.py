@@ -31,7 +31,7 @@ deployment_config = json.loads(open(".deploy").read()) if os.path.isfile(".deplo
 
 # some constants
 _app_name = deployment_config.get("app", "BlasterApp")
-_app_version = deployment_config.get("version", "unknown")
+_app_version = deployment_config.get("version", "0")
 
 
 log_streaming_thread = None
@@ -39,67 +39,60 @@ log_queue = Queue()
 
 
 # Specific configs
-es_config = None
-udp_config = None
-custom_log_handlers = None
+log_handlers = []
 
 
 # starts a loop to stream logs to sinks
 def stream_logs_loop():
-
-	timestamp = -24 * 60 * 60
-
-	# elasticsearch specific
-	es_conn = None
-	es_index_name = None
-	es_base_index_name = None
-	if(es_config):
-		from elasticsearch import Elasticsearch
-		es_conn = Elasticsearch(
-			hosts=es_config.get("hosts") or [es_config["host"]]
-		)
-
-		es_base_index_name = es_config.get("index", "blaster_app_logs") + "_"
-
 	# create index if not exist
 	while stream_logs_loop.can_run or not log_queue.empty():
 		log_item = log_queue.get()
 
-		# check and stream to elasticsearch
-		if(es_conn):
-			try:
-				# if time elapsed since last new index creation
-				if(time.time() > timestamp + 24 * 60 * 60):
-					_d = datetime.now()
-					start_of_today = datetime(year=_d.year, month=_d.month, day=_d.day)
-					timestamp = start_of_today.timestamp()
-					es_index_name = es_base_index_name + start_of_today.strftime("%d-%m-%Y")
-					# try creating index if not already
-					es_conn.indices.create(
-						index=es_index_name,
-						body={
-							"mappings": {
-								"dynamic": False,
-								"properties": {
-									"log_type": {"type": "keyword"},
-									"log_level": {"type": "keyword"},
-									"app": {"type": "keyword"},
-									"version": {"type": "keyword"},
-									"timestamp": {"type": "date", "format": "epoch_millis||yyyy-MM-dd HH:mm:ss"},
-									"payload": {"dynamic": True, "properties": {}}
-								}
-							}
-						},
-						ignore=400
-					)
+		for _handler in log_handlers:
+			_handler(log_item)
 
-				es_conn.index(es_index_name, log_item)
-			except Exception as ex:
-				print("Exception streaming logs to elasticsearch:", str(ex), es_index_name)
 
-		if(custom_log_handlers):
-			for _handler in custom_log_handlers:
-				_handler(log_item)
+def create_es_log_handler(es_config):
+	from elasticsearch import Elasticsearch
+	es_conn = Elasticsearch(
+		hosts=es_config.get("hosts") or [es_config["host"]]
+	)
+	es_index_name = es_config.get("index", "blaster_app_logs")
+	if(not es_index_name.endswith("_logs")):
+		es_index_name += "_logs"
+	# _d = datetime.now()
+	# start_of_today = datetime(year=_d.year, month=_d.month, day=_d.day)
+	# timestamp = start_of_today.timestamp()
+	# es_index_name = es_base_index_name + start_of_today.strftime("%d-%m-%Y")
+	# try creating index if not already
+	es_conn.indices.create(
+		index="<%s_{now/d}>"%(es_index_name),
+		body={
+			"aliases": {
+				es_index_name: {}
+			},
+			"mappings": {
+				"dynamic": False,
+				"properties": {
+					"log_type": {"type": "keyword"},
+					"log_level": {"type": "keyword"},
+					"app": {"type": "keyword"},
+					"version": {"type": "keyword"},
+					"timestamp": {"type": "date", "format": "epoch_millis||yyyy-MM-dd HH:mm:ss"},
+					"payload": {"dynamic": True, "properties": {}}
+				}
+			}
+		},
+		ignore=400
+	)
+
+	def log_handler(log_item):
+		try:
+			es_conn.index(es_index_name, log_item)
+		except Exception as ex:
+			print("Exception streaming logs to elasticsearch:", str(ex), es_index_name)
+
+	return log_handler
 
 
 stream_logs_loop.can_run = False
@@ -110,9 +103,10 @@ def start_log_streaming(es_config=None, udp_config=None, log_handlers=None):
 		# already started
 		raise Exception("Already started log streaming")
 
-	_this_.es_config = es_config
-	_this_.udp_config = udp_config
-	_this_.custom_log_handlers = log_handlers
+	_this_.log_handlers = log_handlers or []
+
+	if(es_config):
+		_this_.log_handlers.append(create_es_log_handler(es_config))
 
 	# start the thread
 	_this_.log_streaming_thread = Thread(
@@ -166,7 +160,8 @@ def LOG(level, log_type, **kwargs):
 	log_level_name = log_level_to_names.get(level, "SERVER")
 	# print to stdout
 
-	print("%s%s [%s]"%(log_level_colors.get(level, PrintColors.OKGREEN), datetime.now(), log_level_name),
+	print(
+		"%s%s [%s]"%(log_level_colors.get(level, PrintColors.OKGREEN), datetime.now(), log_level_name),
 		log_type, json.dumps(kwargs),
 		PrintColors.ENDC
 	)

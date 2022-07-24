@@ -349,11 +349,10 @@ class Model(object):
 		if(_attr_obj):
 			# change type of objects when setting them
 			_attr_obj_type = _attr_obj._type
+			# impllicit type corrections for v
 			if(v != None and not isinstance(v, _attr_obj_type)):
-				if(not v):
-					v = None  # wrong type but empty -> "" '' [] {}, null then out
-				elif(_attr_obj_type in (int, float)):  # force cast between int/float
-					v = _attr_obj_type(v)
+				if(_attr_obj_type == int or _attr_obj_type == float):  # force cast between int/float
+					v = _attr_obj_type(v or 0)
 				elif(_attr_obj_type == str):  # force cast to string
 					v = str(v)
 				elif(_attr_obj_type == ObjectId and k == "_id"):

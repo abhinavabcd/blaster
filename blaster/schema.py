@@ -144,7 +144,7 @@ class Array:
 		return Array(keys)
 
 
-''' 
+'''
 Type definitions:
 - Object 
  {"a": b, 1: 2...}
