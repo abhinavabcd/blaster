@@ -79,7 +79,7 @@ def push_task(func):
 
         return decorator
     else:
-        #grab original function
+        # grab original function
         push_tasks[func.__name__] = func
         return func
 

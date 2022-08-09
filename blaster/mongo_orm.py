@@ -1,3 +1,4 @@
+import json
 import heapq
 import types
 import traceback
@@ -17,7 +18,7 @@ from .tools import ExpiringCache, all_subclasses,\
 from .config import DEBUG_LEVEL as BLASTER_DEBUG_LEVEL, IS_DEV
 from gevent.threading import Thread
 from gevent import time
-from .logging import LOG_WARN, LOG_SERVER, LOG_ERROR
+from .logging import LOG_APP_INFO, LOG_WARN, LOG_SERVER, LOG_ERROR
 
 T = TypeVar("T")
 
@@ -34,6 +35,9 @@ EVENT_MONGO_AFTER_UPDATE = 5
 # just a random constant object to check for non existent keys without catching KeyNotExist exception
 _OBJ_END_ = object()
 # given a list of [(filter, iter), ....] , flattens them
+
+_NOT_EXISTS_QUERY = {"$exists": False}  # just a constant	
+
 
 
 # utility to print collection name + node for logging
@@ -53,6 +57,146 @@ class Attribute(object):
 
 
 __all_models__ = {}
+
+
+class MongoList(list):
+	_initializing = True
+	_model_obj = None
+	path = None
+
+	def __init__(self, _model_obj, path, initial_value):
+		self._initializing = True
+		self._model_obj = _model_obj
+		self.path = path
+		if(initial_value):
+			for item in initial_value:
+				self.append(item)
+		self._initializing = False
+
+	def __setitem__(self, k, v):
+		if(not self._initializing):
+			self._model_obj._set_query_updates[self.path + "." + str(k)] = v
+		if(self._initializing):
+			# recursively create custom dicts/list when
+			# loading object from db
+			if(isinstance(v, dict)):
+				v = MongoDict(self._model_obj, self.path + "." + str(k), v)
+			elif(isinstance(v, list)):
+				v = MongoList(self._model_obj, self.path + "." + str(k), v)
+		super(MongoList, self).__setitem__(k, v)
+
+	def remove(self, item):  # can raise value exception
+		super(MongoList, self).remove(item)
+		_pull = self._model_obj._other_query_updates.get("$pull")
+		if(_pull == None):
+			self._model_obj._other_query_updates["$pull"] = _pull = {}
+		already_pulled_values = _pull.get(self.path, _OBJ_END_)
+		if(already_pulled_values == _OBJ_END_):
+			_pull[self.path] = item
+		else:
+			if(
+				isinstance(already_pulled_values, dict)
+				and "$in" in already_pulled_values
+			):
+				_pull[self.path]["$in"].append(item)
+			else:
+				_pull[self.path]["$in"] = [already_pulled_values, item]
+
+	def pop(self, i=None):
+		if(i == None):
+			i = 1
+			ret = super(MongoList, self).pop()
+		elif(i == 0):
+			ret = super(MongoList, self).pop(0)  # remove first item
+			i = -1
+		else:
+			raise Exception(
+				"can only remove first or last elements, supported arg is 0 or None"
+			)
+
+		if(not self._initializing):
+			_pop = self._model_obj._other_query_updates.get("$pop")
+			if(_pop == None):
+				self._model_obj._other_query_updates["$pop"] = _pop = {}
+			_pop[self.path] = i
+		# convert them to original object types
+		if(isinstance(ret, list)):
+			return list(ret)
+		if(isinstance(ret, dict)):
+			return dict(ret)
+		return ret
+
+	def append(self, item):
+		if(self._initializing):
+			if(isinstance(item, dict)):
+				item = MongoDict(self._model_obj, self.path + "." + str(len(self)), item)
+			elif(isinstance(item, list)):
+				item = MongoList(self._model_obj, self.path + "." + str(len(self)), item)
+
+		super(MongoList, self).append(item)
+
+		if(not self._initializing):
+			_push = self._model_obj._other_query_updates.get("$push")
+			if(_push == None):
+				_push = self._model_obj._other_query_updates["$push"] = {}
+			_push[self.path] = item
+
+	def extend(this, items):
+		for i in items:
+			this.append(i)
+
+
+class MongoDict(dict):
+	_initializing = True
+	_model_obj = None
+	path = None
+
+	def __init__(self, _model_obj, path, initial_value):
+		self._initializing = True
+		self._model_obj = _model_obj
+		self.path = path
+		if(initial_value):
+			self.update(initial_value)
+		self._initializing = False
+
+	def __setitem__(self, k, v):
+		if(not self._initializing):
+			self._model_obj._set_query_updates[self.path + "." + str(k)] = v
+		if(self._initializing):
+			# recursively create custom dicts/list when
+			# loading object from db
+			if(isinstance(v, dict)):
+				v = MongoDict(self._model_obj, self.path + "." + str(k), v)
+			elif(isinstance(v, list)):
+				v = MongoList(self._model_obj, self.path + "." + str(k), v)
+
+		super(MongoDict, self).__setitem__(k, v)
+
+	def pop(self, k, default=None):
+		# not in initializing mode
+		popped_val = super(MongoDict, self).pop(k, _OBJ_END_)
+		if(popped_val == _OBJ_END_):
+			return default
+		# if not initializing and has value set remove it form mongo
+		elif(not self._initializing):
+			new_path = self.path + "." + str(k)
+			_unset = self._model_obj._other_query_updates.get("$unset")
+			if(not _unset):
+				_unset = self._model_obj._other_query_updates["$unset"] = {}
+			_unset[new_path] = ""
+		# convert them to original object types
+		if(isinstance(popped_val, list)):
+			return list(popped_val)
+		if(isinstance(popped_val, dict)):
+			return dict(popped_val)
+		return popped_val
+
+	def update(self, another):
+		for k, v in another.items():
+			# calls __setitem__ again
+			self[k] = v
+		# allow chaining
+		return self
 
 
 class Model(object):
@@ -215,135 +359,6 @@ class Model(object):
 
 		return None
 
-	'''Create a custom dict object, when you set an item on this dict,
-		we basically mark pending_updates to mongo
-	'''
-	def get_custom_dict(self, path, _obj):
-
-		_initializing = True
-
-		class DictObj(dict):
-			def __setitem__(this, k, v):
-				if(not _initializing):
-					self._set_query_updates[path + "." + str(k)] = v
-				if(_initializing):
-					if(isinstance(v, dict)):
-						v = self.get_custom_dict(path + "." + str(k), v)
-					elif(isinstance(v, list)):
-						v = self.get_custom_list(path + "." + str(k), v)
-
-				super(DictObj, this).__setitem__(k, v)
-
-			def pop(this, k, default=None):
-				# not in initializing mode
-				popped_val = super(DictObj, this).pop(k, _OBJ_END_)
-				if(popped_val == _OBJ_END_):
-					return default
-				# if not initializing and has value set remove it form mongo
-				elif(not _initializing):
-					new_path = path + "." + str(k)
-					_unset = self._other_query_updates.get("$unset")
-					if(not _unset):
-						_unset = self._other_query_updates["$unset"] = {}
-					_unset[new_path] = ""
-				# convert them to original object types
-				if(isinstance(popped_val, list)):
-					return list(popped_val)
-				if(isinstance(popped_val, dict)):
-					return dict(popped_val)
-				return popped_val
-
-			def update(self, another):
-				for k, v in another.items():
-					# calls __setitem__ again
-					self[k] = v
-				# allow chaining
-				return self
-
-		ret = DictObj().update(_obj)
-		_initializing = False
-		return ret
-
-	def get_custom_list(self, path, _list_obj):
-		_initializing = True
-
-		class ListObj(list):
-			def __setitem__(this, k, v):
-				if(not _initializing):
-					self._set_query_updates[path + "." + str(k)] = v
-				if(_initializing):
-					if(isinstance(v, dict)):
-						v = self.get_custom_dict(path + "." + str(k), v)
-					elif(isinstance(v, list)):
-						v = self.get_custom_list(path + "." + str(k), v)
-				super(ListObj, this).__setitem__(k, v)
-
-			def remove(this, item):  # can raise value exception
-				super(ListObj, this).remove(item)
-				_pull = self._other_query_updates.get("$pull")
-				if(_pull == None):
-					self._other_query_updates["$pull"] = _pull = {}
-				already_pulled_values = _pull.get(path, _OBJ_END_)
-				if(already_pulled_values == _OBJ_END_):
-					_pull[path] = item
-				else:
-					if(
-						isinstance(already_pulled_values, dict) 
-						and "$in" in already_pulled_values
-					):
-						_pull[path]["$in"].append(item)
-					else:
-						_pull[path]["$in"] = [already_pulled_values, item]
-
-			def pop(this, i=None):
-				if(i == None):
-					i = 1
-					ret = super(ListObj, this).pop()
-				elif(i == 0):
-					ret = super(ListObj, this).pop(0)  # remove first item
-					i = -1
-				else:
-					raise Exception(
-						"can only remove first or last elements, supported arg is 0 or None"
-					)
-
-				if(not _initializing):
-					_pop = self._other_query_updates.get("$pop")
-					if(_pop == None):
-						self._other_query_updates["$pop"] = _pop = {}
-					_pop[path] = i
-				# convert them to original object types
-				if(isinstance(ret, list)):
-					return list(ret)
-				if(isinstance(ret, dict)):
-					return dict(ret)
-				return ret
-
-			def append(this, item):
-				if(_initializing):
-					if(isinstance(item, dict)):
-						item = self.get_custom_dict(path + "." + str(len(this)), item)
-					elif(isinstance(item, list)):
-						item = self.get_custom_list(path + "." + str(len(this)), item)
-
-				super(ListObj, this).append(item)
-
-				if(not _initializing):
-					_push = self._other_query_updates.get("$push")
-					if(_push == None):
-						_push = self._other_query_updates["$push"] = {}
-					_push[path] = item
-
-			def extend(this, items):
-				for i in items:
-					this.append(i)
-
-		ret = ListObj()
-		for item in _list_obj:
-			ret.append(item)
-		_initializing = False
-		return ret
-
 	def __setattr__(self, k, v):
 		_attr_obj = self.__class__._attrs_.get(k)
 		if(_attr_obj):
@@ -351,7 +366,8 @@ class Model(object):
 			_attr_obj_type = _attr_obj._type
 			# impllicit type corrections for v
 			if(v != None and not isinstance(v, _attr_obj_type)):
-				if(_attr_obj_type == int or _attr_obj_type == float):  # force cast between int/float
+				if(_attr_obj_type == int or _attr_obj_type == float):
+					# force cast between int/float
 					v = _attr_obj_type(v or 0)
 				elif(_attr_obj_type == str):  # force cast to string
 					v = str(v)
@@ -373,11 +389,11 @@ class Model(object):
 				if(not self.__is_new):
 					if(_attr_obj_type == dict):
 						if(isinstance(v, dict)):
-							v = self.get_custom_dict(k, v)
+							v = MongoDict(self, k, v)
 
 					elif(_attr_obj_type == list):
 						if(isinstance(v, list)):
-							v = self.get_custom_list(k, v)
+							v = MongoList(self, k, v)
 			else:
 				cur_value = None
 				if(not self.__is_new):
@@ -436,18 +452,27 @@ class Model(object):
 		for attr_name, attr_obj in self.__class__._attrs_.items():
 			_default = getattr(attr_obj, "default", _OBJ_END_)
 			# if the value is not the document and have a default do the $set
-			if(_default != _OBJ_END_ and attr_name not in doc):
-				if(isinstance(_default, types.FunctionType)):
-					_default = _default()
+			if(attr_name not in doc):
 				# if there is a default value
-				if(attr_obj._type == dict):
-					self._set_query_updates[attr_name] = _default = dict(_default)  # copy
-				elif(attr_obj._type == list):
-					self._set_query_updates[attr_name] = _default = list(_default)  # copy
+				if(_default != _OBJ_END_):
+					if(isinstance(_default, types.FunctionType)):
+						_default = _default()
+					if(attr_obj._type == dict):
+						self._set_query_updates[attr_name] = _default = dict(_default)  # copy
+					elif(attr_obj._type == list):
+						self._set_query_updates[attr_name] = _default = list(_default)  # copy
+					else:
+						self._set_query_updates[attr_name] = _default  # copy
 				else:
-					self._set_query_updates[attr_name] = _default  # copy
+					# default isn't given
+					# we create 'save on write defaults
+					if(attr_obj._type == dict):
+						_default = MongoDict(self, attr_name, {})  # copy
+					elif(attr_obj._type == list):
+						_default = MongoList(self, attr_name, [])  # copy
 
-				setattr(self, attr_name, _default)
+				if(_default != _OBJ_END_):
+					setattr(self, attr_name, _default)
 
 	# when retrieving objects from db
 	# creates a new Model object
@@ -561,14 +586,25 @@ class Model(object):
 		return None
 
 	# for example, you can say update only when someother field > 0
-	def update(self, _update_query, conditions=None, cb=None, **kwargs):
+	def update(self, _update_query, conditions=None, after_mongo_update=None, **kwargs):
 		cls = self.__class__
 
-		if(not _update_query):
-			return
-
-		_NOT_EXISTS_QUERY = {"$exists": False}  # just a constant	
 		cls._trigger_event(EVENT_BEFORE_UPDATE, self)
+
+		if(self._set_query_updates):
+			_in_query = _update_query.get("$set") or {}
+			_to_set = dict(self._set_query_updates)
+			_to_set.update(_in_query)  # overwrite from query
+			_update_query["$set"] = _to_set
+		if(self._other_query_updates):
+			for _ukey, _uval in self._other_query_updates.items():
+				_to_update = dict(_uval)
+				_in_query = _update_query.get(_ukey) or {}  # from update query
+				_to_update.update(_in_query)  # overwrite
+				_update_query[_ukey] = _to_update
+
+		if(not _update_query):
+			return True  # nothing to update, hence true
 
 		# this is the dict of local value to compare to remote db before updating
 		_local_vs_remote_consistency_checks = None
@@ -590,7 +626,10 @@ class Model(object):
 						# consistency checks of the current document
 						# to that exists in db
 						_local_vs_remote_consistency_checks[p] \
-							= get_by_key_list(self._original_doc, p.split("."), default=_NOT_EXISTS_QUERY)
+							= get_by_key_list(
+								self._original_doc, p.split("."),
+								default=_NOT_EXISTS_QUERY
+							)
 
 			# override with any given conditions
 			_query.update(_local_vs_remote_consistency_checks)
@@ -678,7 +717,7 @@ class Model(object):
 									)
 									time.sleep(_secondary_insert_retries * 0.02)
 
-							if(not _secondary_shard_key):
+							if(not _seconday_inserted):
 								LOG_ERROR(
 									"MONGO", description="couldn't insert to secondary",
 									collection=COLLECTION_NAME(_secondary_collection),
@@ -686,11 +725,11 @@ class Model(object):
 								)
 								raise Exception("couldn't insert to secondary")
 
-					#  3. if shard hasn't changed and exists patch
+					#  3. if shard hasn't changed and exists, patch
 					elif(_new_shard_key_val != _OBJ_END_ and _new_shard_key_val):
 						_set = {}
 						_unset = {}
-						_conditions = {"_id": updated_doc["_id"]}
+						_consistency_checks = {"_id": updated_doc["_id"]}
 						_to_patch = {}
 						attrs_to_backfill = getattr(_shard, "_attrs_to_backfill_", None)
 						# 3.1. update only those values that have been checked on primary
@@ -705,7 +744,7 @@ class Model(object):
 
 								# if not in migrating/backfilling, use it for consistency check
 								if(not (attrs_to_backfill and _k in attrs_to_backfill)):
-									_conditions[_k] = _old_val
+									_consistency_checks[_k] = _old_val
 
 						if(_set):
 							_to_patch["$set"] = _set
@@ -717,23 +756,29 @@ class Model(object):
 								.get_collection(_new_shard_key_val)
 							for _retry_count in range(1, 4):
 								is_secondary_shard_updated = _secondary_collection\
-									.find_one_and_update(_conditions, _to_patch)
+									.find_one_and_update(_consistency_checks, _to_patch)
 								if(is_secondary_shard_updated):
 									break
-								time.sleep(_retry_count * 0.03)
+								time.sleep(_retry_count * 0.03)  # 30 ms
 
 							if(not is_secondary_shard_updated):
 								LOG_ERROR(
 									"MONGO",
 									description="secondary couldn't be propagated",
 									model=cls.__name__, collection=COLLECTION_NAME(_secondary_collection),
-									secondary_pk=str(_conditions),
+									secondary_pk=str(_consistency_checks),
 									secondary_updates=str(_to_patch)
 								)
 
-				cb and cb(self, self._original_doc, updated_doc)
-				
-				cls._trigger_event(EVENT_MONGO_AFTER_UPDATE, self._original_doc, updated_doc)
+				# call any explicit callback
+				after_mongo_update and after_mongo_update(
+					self, self._original_doc, updated_doc
+				)
+				# publish update event
+				cls._trigger_event(
+					EVENT_MONGO_AFTER_UPDATE,
+					self._original_doc, updated_doc
+				)
 
 				# reset all values
 				self.reset_and_update_cache(updated_doc)
@@ -741,6 +786,9 @@ class Model(object):
 
 				# triggered after update event
 				cls._trigger_event(EVENT_AFTER_UPDATE, self)
+				# cleanup
+				self._set_query_updates.clear()
+				self._other_query_updates.clear()
 				return True
 
 			# update was unsuccessful
@@ -849,7 +897,10 @@ class Model(object):
 		# we query all primary shards and assemble queries using chain
 		# which will be dead slow and possibly fucked up!
 		if(not collections_to_query):
-			collections_to_query = {id(x): (x, queries, cls) for x in cls.get_collection_on_all_db_nodes()}
+			collections_to_query = {
+				id(x): (x, queries, cls)
+				for x in cls.get_collection_on_all_db_nodes()
+			}
 
 		def count_documents(_collection, _query, offset, limit):
 			kwargs = {}
@@ -1159,20 +1210,13 @@ class Model(object):
 						del self._set_query_updates[k]
 
 		if(not self.__is_new and not committed):  # try updating
-			_update_query = {}
-			if(self._set_query_updates):
-				_update_query["$set"] = self._set_query_updates
-			if(self._other_query_updates):
-				_update_query.update(self._other_query_updates)
-			if(not _update_query and not force):
-				return self  # nothing to update
-
-			is_committed = self.update(_update_query, conditions=conditions)
+			# automatically picks up _set_query_updates inside .update function
+			is_committed = self.update({}, conditions=conditions)
 			if(not is_committed):
 				# if it's used for creating a new object, but we couldn't update it
 				raise Exception(
 					"MONGO: Couldn't commit, either a concurrent update modified this or query has issues",
-					self.pk(), _update_query
+					self.pk(), self._set_query_updates, self._other_query_updates
 				)
 
 		# clear and reset pk to new
@@ -1497,7 +1541,7 @@ def initialize_model(_Model):
 	_Model._indexes_ = getattr(_Model, "_indexes_", [("_id",)])
 	# create a default cache if nothing specified
 	_Model_cache = getattr(_Model, "_cache_", _OBJ_END_)
-	if(_Model_cache == _OBJ_END_):
+	if(_Model_cache == _OBJ_END_ and not _Model._is_secondary_shard):
 		_Model.__cache__ = ExpiringCache(10000)  # default cache
 
 	# temp usage _id_attr
@@ -1557,7 +1601,7 @@ def initialize_model(_Model):
 	# some default event
 	_Model.on(EVENT_BEFORE_UPDATE, lambda obj: obj.before_update())
 
-	_pymongo_indexes_to_create = []
+	_pymongo_indexes_to_create = {}
 	_Model._pk_is_unique_index = False
 
 	_indexes_list = []
@@ -1589,6 +1633,8 @@ def initialize_model(_Model):
 	# sort shortest first and grouped by keys first
 	_indexes_list.sort(key=lambda x: tuple(k[0] for k in x[0]))
 	for _index_keys, _index_properties in _indexes_list:
+		# mix with defaults
+		_index_properties = {"unique": True, **_index_properties}
 		# convert to tuple again
 		is_unique_index = _index_properties.get("unique", True) is not False
 		_index_shard_key = _index_keys[0][0]  # shard key is the first mentioned in index
@@ -1626,7 +1672,7 @@ def initialize_model(_Model):
 			and _index_shard_key != "_id"
 		):
 			# this indes should go to to the primary index
-			_pymongo_indexes_to_create.append((_index_keys, _index_properties))
+			_pymongo_indexes_to_create[_index_keys] = _index_properties
 
 	if(not _Model._pk_attrs):  # create default _pk_attrs
 		_Model._pk_attrs = OrderedDict(_id=True)
@@ -1770,8 +1816,13 @@ def initialize_model(_Model):
 							_Model, to_add_attrs, to_remove_attrs
 						)
 					raise Exception(
-						"Attributes have been changed on the Secondary shard, "
-						"you need to fill the attribute in the shard "
+						(
+							"Attributes have been changed add: {} remove: {} on the {} shard, "
+							"you need to fill the attribute in the shard "
+						).format(
+							to_add_attrs, to_remove_attrs, 
+							_Model._collection_name_with_shard_
+						)
 					)
 				except DuplicateKeyError:
 					LOG_ERROR(
@@ -1796,9 +1847,54 @@ def initialize_model(_Model):
 		# check if new attribute added to secondary shard
 
 	# TODO: create or delete index using control jobs
-	for pymongo_index, additional_mongo_index_args in _pymongo_indexes_to_create:
-		mongo_index_args = {"unique": True}
-		mongo_index_args.update(**additional_mongo_index_args)
+	# list existing indexes
+	existing_indexes = {}
+	# check if indexes on each node are same
+	for i in range(len(_Model._db_nodes_)):
+		current_node_collection = _Model._db_nodes_[i].get_collection(_Model)
+		indexesA = existing_indexes \
+			= current_node_collection.index_information()
+		if(i > 0):
+			# compare with previous node
+			previous_node_collection = _Model._db_nodes_[i - 1].get_collection(_Model)
+			indexesB \
+				= previous_node_collection.index_information()
+			if(indexesA != indexesB):
+				LOG_ERROR(
+					"mongo_indexes_error", desc="Indexes are different on nodes",
+					collection_a=COLLECTION_NAME(current_node_collection),
+					collection_b=COLLECTION_NAME(previous_node_collection),
+					index_a=json.dump(indexesA),
+					index_b=json.dumps(indexesB)
+				)
+
+	# check unused indexes
+	existing_indexes = {
+		tuple(_index["key"]): _index
+		for _, _index in existing_indexes.items()
+	}  # key: ((_id, 1)).., value: {uqniue: False} or None
+
+	# remove default for comparision
+	existing_indexes.pop((('_id', 1),), None)
+
+	_new_indexes, _delete_indexes = list_diff2(
+		list(_pymongo_indexes_to_create.keys()),
+		list(existing_indexes.keys())
+	)
+	for _index_keys in _delete_indexes:
+		LOG_WARN(
+			"mongo_indexes", desc="index not declared in orm, delete it on db?",
+			collection=_Model._collection_name_with_shard_,
+			index=str(_index_keys),
+		)
+	for _index_keys in _new_indexes:
+		LOG_APP_INFO(
+			"mongo_indexes", desc="creating a new index",
+			collection=_Model._collection_name_with_shard_,
+			index=str(_index_keys)
+		)
+
+	for pymongo_index, mongo_index_args in _pymongo_indexes_to_create.items():
 
 		IS_DEV \
 			and MONGO_DEBUG_LEVEL > 1 \

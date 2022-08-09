@@ -1265,11 +1265,12 @@ Request.set_arg_type_hook(WebSocketServerHandler, _get_web_socket_handler)
 # creates a connection between process using local unix socket
 # can broadcast events to all process
 # can call top level functions on master process
-def set_num_procs(num_procs=min(3, os.cpu_count())):
+def blaster_fork(num_procs):
+	num_procs = min(num_procs, os.cpu_count())
 
-	if(set_num_procs._has_cloned):
-		raise Exception("Cannot set_num_procs again")
-	set_num_procs._has_cloned = True
+	if(blaster_fork._has_forked):
+		raise Exception("Cannot blaster_fork again")
+	blaster_fork._has_forked = True
 
 	BROADCASTER_PID = os.getpid()
 	multiproc_broadcaster_sock_address = "/tmp/blaster-" + str(BROADCASTER_PID) + ".s"
@@ -1370,16 +1371,19 @@ def set_num_procs(num_procs=min(3, os.cpu_count())):
 			sock.connect(multiproc_broadcaster_sock_address)
 			sock.close()
 
-	# start cloning
-	while(num_procs > 1):
-		num_procs -= 1
+	# start forking
+	blaster_fork.ID = 0
+	for i in range(1, num_procs):
 		pid = os.fork()
 		if(pid == 0):
+			# cloned process
+			blaster_fork.ID = i
 			break
+		# main process, contuing forking more
 		print("Forked/Cloned...", pid)
 
 	if(os.getpid() == BROADCASTER_PID):
-		# create a multi process broadcaster
+		# create a socket and listen for events to broadcast
 		sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 		sock.bind(multiproc_broadcaster_sock_address)
 		sock.listen(2)
@@ -1399,7 +1403,7 @@ def set_num_procs(num_procs=min(3, os.cpu_count())):
 				time.sleep(0.1 * (i + 1))
 
 
-set_num_procs._has_cloned = False
+blaster_fork._has_forked = False
 # sigint event broadcast
 gevent.signal_handler(
 	signal.SIGINT,

@@ -11,6 +11,7 @@ from .utils import events
 from .config import LOG_LEVEL
 # CRITICAL-50 ERROR-40  WARNING-30  INFO-20  DEBUG-10  NOTSET-0
 
+_1_DAY_MILLIS = 24 * 60 * 60 * 1000
 _this_ = sys.modules[__name__]
 
 # more levels
@@ -47,7 +48,6 @@ def stream_logs_loop():
 	# create index if not exist
 	while stream_logs_loop.can_run or not log_queue.empty():
 		log_item = log_queue.get()
-
 		for _handler in log_handlers:
 			_handler(log_item)
 
@@ -57,37 +57,51 @@ def create_es_log_handler(es_config):
 	es_conn = Elasticsearch(
 		hosts=es_config.get("hosts") or [es_config["host"]]
 	)
-	es_index_name = es_config.get("index", "blaster_app_logs")
-	if(not es_index_name.endswith("_logs")):
-		es_index_name += "_logs"
-	# _d = datetime.now()
-	# start_of_today = datetime(year=_d.year, month=_d.month, day=_d.day)
-	# timestamp = start_of_today.timestamp()
-	# es_index_name = es_base_index_name + start_of_today.strftime("%d-%m-%Y")
+	es_base_index_name = es_config.get("index", "blaster_app_logs")
+	if(not es_base_index_name.endswith("_logs")):
+		es_base_index_name += "_logs"
+
 	# try creating index if not already
-	es_conn.indices.create(
-		index="<%s_{now/d}>"%(es_index_name),
-		body={
-			"aliases": {
-				es_index_name: {}
-			},
-			"mappings": {
-				"dynamic": False,
-				"properties": {
-					"log_type": {"type": "keyword"},
-					"log_level": {"type": "keyword"},
-					"app": {"type": "keyword"},
-					"version": {"type": "keyword"},
-					"timestamp": {"type": "date", "format": "epoch_millis||yyyy-MM-dd HH:mm:ss"},
-					"payload": {"dynamic": True, "properties": {}}
-				}
-			}
-		},
-		ignore=400
-	)
+	es_index_name = None
+	start_of_today_timestamp = 0
 
 	def log_handler(log_item):
+		nonlocal es_index_name
+		nonlocal start_of_today_timestamp
 		try:
+			log_timestamp = log_item.get("timestamp") or int(time.time() * 1000)
+			# create a new index if the log belongs to next day
+			if(log_timestamp > start_of_today_timestamp + _1_DAY_MILLIS):  # next day
+				_d = datetime.now()
+				start_of_today \
+					= datetime(year=_d.year, month=_d.month, day=_d.day)
+
+				start_of_today_timestamp = start_of_today.timestamp()
+
+				es_index_name = "{}_{}".format(
+					es_base_index_name, start_of_today.strftime("%d-%m-%Y")
+				)
+				es_conn.indices.create(
+					index=es_index_name,
+					body={
+						"aliases": {
+							es_base_index_name: {}
+						},
+						"mappings": {
+							"dynamic": False,
+							"properties": {
+								"log_type": {"type": "keyword"},
+								"log_level": {"type": "keyword"},
+								"app": {"type": "keyword"},
+								"version": {"type": "keyword"},
+								"timestamp": {"type": "date", "format": "epoch_millis||yyyy-MM-dd HH:mm:ss"},
+								"payload": {"dynamic": True, "properties": {}}
+							}
+						}
+					},
+					ignore=400
+				)
+
 			es_conn.index(es_index_name, log_item)
 		except Exception as ex:
 			print("Exception streaming logs to elasticsearch:", str(ex), es_index_name)
@@ -103,10 +117,10 @@ def start_log_streaming(es_config=None, udp_config=None, log_handlers=None):
 		# already started
 		raise Exception("Already started log streaming")
 
-	_this_.log_handlers = log_handlers or []
-
 	if(es_config):
 		_this_.log_handlers.append(create_es_log_handler(es_config))
+
+	log_handlers and _this_.log_handlers.extend(log_handlers)
 
 	# start the thread
 	_this_.log_streaming_thread = Thread(
@@ -114,8 +128,8 @@ def start_log_streaming(es_config=None, udp_config=None, log_handlers=None):
 		args=(),
 		name="log_streamer"
 	)
-	_this_.log_streaming_thread.start()
 	stream_logs_loop.can_run = True
+	_this_.log_streaming_thread.start()
 
 
 @events.register_listener(["blaster_exit0"])

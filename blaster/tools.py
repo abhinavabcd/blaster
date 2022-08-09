@@ -227,7 +227,7 @@ def zlfill(tup, n):
 
 
 DATE_REGEX = re.compile(r"(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})")
-TIME_REGEX = re.compile(r"(?:(0?[1-9]|1[012])(?::([0-5]\d))?(?::([0-5]\d))?\s*([AP]\.?M\.?))|([01]\d|2[0-3])(:[0-5]\d){1,2}", re.IGNORECASE)
+TIME_REGEX = re.compile(r"(\d{1,2}):(\d{0,2})?[:]*(\d{0,2})?(?:\s?((?:A|P).?M))?", re.IGNORECASE)
 DAY_REGEX = re.compile(
 	r"(mon|tues|wed(nes)?|thur(s)?|fri|sat(ur)?|sun)(day)?",
 	re.IGNORECASE
@@ -243,7 +243,7 @@ def _bound_time(start, end, a, b, partial, params):
 		if(start >= a and start <= b):
 			return (start, (end if end < b else b), params)
 		elif(start <= a and a <= end):
-			return ((a, (end if end < b else b)), params)
+			return (a, (end if end < b else b), params)
 	else:
 		if(start >= a and end <= b):
 			return (start, end, params)
@@ -257,14 +257,10 @@ def iter_time_overlaps(a, b, x: str, partial=False):
 	if(isinstance(b, int)):
 		b = timestamp2date(b)
 	x = x.strip()
-	date_matches = [m for m in DATE_REGEX.findall(x)]
+	date_matches = DATE_REGEX.findall(x)
 	time_matches = [
-		list(
-			filter(
-				lambda x:x,
-				map(lambda x: x.strip(": ").lower(), m)
-			)
-		) for m in TIME_REGEX.findall(x)
+		[int(h or 0), int(m or 0), int(s or 0), am_pm.lower()]
+		for h, m, s, am_pm in TIME_REGEX.findall(x)
 	]
 	day_matches = list(
 		filter(
@@ -283,15 +279,14 @@ def iter_time_overlaps(a, b, x: str, partial=False):
 		for i in range(3):
 			time_match[i] = int(time_match[i])
 
-	offset_check_x = timedelta(seconds=0)
-	offset_check_y = timedelta(seconds=0)
+	offset_check_x = timedelta()
+	offset_check_y = timedelta()
 	if(time_matches):
-		_start_time_is_pm = False
 		hours, mins, secs, am_pm = time_matches[0]
 		if(am_pm):
+			# convert to 24 hour format
 			if(am_pm.lower()[0] == "p"):
 				hours = (hours % 12) + 12
-				_start_time_is_pm = True
 			if(am_pm.lower()[0] == "a"):
 				if(hours == 12):
 					hours = 0
@@ -302,15 +297,12 @@ def iter_time_overlaps(a, b, x: str, partial=False):
 			hours, mins, secs, am_pm = time_matches[1]
 
 			if(am_pm):
+				# convert to 24 hour format
 				if(am_pm.lower()[0] == "p"):
 					hours = (hours % 12) + 12
 				if(am_pm.lower()[0] == "a"):
 					if(hours == 12):
 						hours = 0
-					if(_start_time_is_pm):
-						# 9:30 PM - 12:00 AM -> next day
-						hours += 24
-
 			offset_check_y = timedelta(hours=hours, minutes=mins, seconds=secs)
 		else:
 			offset_check_y = offset_check_x + timedelta(hours=1)  # default 1 hour
@@ -335,14 +327,30 @@ def iter_time_overlaps(a, b, x: str, partial=False):
 		start_day = DAYS_OF_WEEK.index(day_matches[0].lower())
 		if(start_day == -1):
 			return None
+		extra_offset_y = timedelta()
+		if(len(day_matches) > 1):
+			end_day = DAYS_OF_WEEK.index(day_matches[1].lower())
+			if(end_day == -1):
+				return None
+			if(end_day != start_day):
+				extra_offset_y = (
+					timedelta(hours=24) - offset_check_x  # next day
+					+ timedelta(
+						days=(
+							end_day - start_day
+							+ (7 if start_day > end_day else 0)
+							- (1 if offset_check_y != timedelta(0) else 0)
+						)
+					)
+				)
+
 		t = a
 		while(t < b):
 			if(t.weekday() == start_day):
 				t_start_of_day = datetime(year=t.year, month=t.month, day=t.day)
-
 				_ret = _bound_time(
 					t_start_of_day + offset_check_x,
-					t_start_of_day + offset_check_y,
+					t_start_of_day + extra_offset_y + offset_check_y,
 					a, b, partial, params
 				)
 				if(_ret):
@@ -351,9 +359,8 @@ def iter_time_overlaps(a, b, x: str, partial=False):
 	else:
 		if(offset_check_y < offset_check_x):
 			offset_check_y += timedelta(days=1)
-		t = a
-		while(t < b):
-			t_start_of_day = datetime(t.year, t.month, t.day)
+		t_start_of_day = datetime(a.year, a.month, a.day)
+		while(t_start_of_day < b):
 			_ret = _bound_time(
 				t_start_of_day + offset_check_x,
 				t_start_of_day + offset_check_y,
@@ -361,7 +368,7 @@ def iter_time_overlaps(a, b, x: str, partial=False):
 			)
 			if(_ret):
 				yield _ret
-			t += timedelta(days=1)
+			t_start_of_day += timedelta(days=1)
 
 	return
 
@@ -1710,3 +1717,50 @@ def all_subclasses(cls):
 	return set(cls.__subclasses__()).union(
 		[s for c in cls.__subclasses__() for s in all_subclasses(c)]
 	)
+
+
+'''
+@Test
+def func():
+	return xyz
+
+@Test("name")
+def func2():
+	assert(True==True)
+
+Test.run(__name__)
+Test.run(__name__, ["name"])
+
+'''
+# _all_test_funcs_ = {}
+
+
+# def Test(func):
+# 	if(callable(func)):
+# 		if(func.__module__ not in _all_test_funcs_):
+# 			_all_test_funcs_[func.__module__] = {}
+# 		_all_test_funcs_[func.__module__][func.__name__] = func
+# 		return func
+# 	else:
+# 		# func -> string/name
+# 		def wrapper(func2):
+# 			if(func.__module__ not in _all_test_funcs_):
+# 				_all_test_funcs_[func2.__module__] = {}
+# 			_all_test_funcs_[func2.__module__][func] = func2
+# 			return func2
+# 		return wrapper
+
+# def _run_tests_(module, names=None):
+# 	for _name, _func in _all_test_funcs_[module].items():
+# 		if(names and _name not in names):
+# 			continue
+# 		print("Running {} {}".format(module, _name))
+# 		try:
+# 			_func()
+# 		except Exception as ex:
+# 			traceback.print_exc()
+# 			print("Exception {}".format(str(ex)))
+# 			continue
+# 		print("OK")
+
+# Test.run = _run_tests_
