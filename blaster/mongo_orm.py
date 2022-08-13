@@ -90,17 +90,17 @@ class MongoList(list):
 		_pull = self._model_obj._other_query_updates.get("$pull")
 		if(_pull == None):
 			self._model_obj._other_query_updates["$pull"] = _pull = {}
-		already_pulled_values = _pull.get(self.path, _OBJ_END_)
-		if(already_pulled_values == _OBJ_END_):
-			_pull[self.path] = item
+		value_to_remove = _pull.get(self.path, _OBJ_END_)
+		if(value_to_remove == _OBJ_END_):
+			_pull[self.path] = item  # first item to remove
 		else:
 			if(
-				isinstance(already_pulled_values, dict)
-				and "$in" in already_pulled_values
+				isinstance(value_to_remove, dict)
+				and "$in" in value_to_remove
 			):
 				_pull[self.path]["$in"].append(item)
 			else:
-				_pull[self.path]["$in"] = [already_pulled_values, item]
+				_pull[self.path] = {"$in": [value_to_remove, item]}
 
 	def pop(self, i=None):
 		if(i == None):

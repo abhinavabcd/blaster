@@ -6,10 +6,10 @@ Created on 04-Nov-2017
 from os import environ
 import logging
 
-DEBUG_LEVEL = int(environ.get("DEBUG_LEVEL") or 1) # higher implies more debug information
+DEBUG_LEVEL = int(environ.get("DEBUG_LEVEL") or 1)  # higher implies more debug information
 
 IS_PROD = environ.get("IS_PROD") == "1"
-#staging is for production test instances
+# staging is for production test instances
 IS_STAGING = IS_PROD and environ.get("IS_STAGING") == "1"
 #
 IS_DEV = 1 if not (IS_PROD or IS_STAGING) else 0
