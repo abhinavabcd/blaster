@@ -126,6 +126,18 @@ class MongoList(list):
 			return dict(ret)
 		return ret
 
+	def insert(self, pos, arr):
+		if(not isinstance(arr, list)):
+			arr = [arr]
+		for i in reversed(arr):
+			super().insert(pos, i)
+
+		if(not self._initializing):
+			_push = self._model_obj._other_query_updates.get("$push")
+			if(_push == None):
+				self._model_obj._other_query_updates["$push"] = _push = {}
+			_push[self.path] = {"$position": pos, "$each": arr}
+
 	def append(self, item):
 		if(self._initializing):
 			if(isinstance(item, dict)):
@@ -1864,8 +1876,8 @@ def initialize_model(_Model):
 					"mongo_indexes_error", desc="Indexes are different on nodes",
 					collection_a=COLLECTION_NAME(current_node_collection),
 					collection_b=COLLECTION_NAME(previous_node_collection),
-					index_a=json.dump(indexesA),
-					index_b=json.dumps(indexesB)
+					index_a=json.dumps(indexesA) if indexesA != None else None,
+					index_b=json.dumps(indexesB) if indexesB != None else None
 				)
 
 	# check unused indexes

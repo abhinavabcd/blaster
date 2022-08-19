@@ -1155,7 +1155,8 @@ def static_file_handler(
 			path = default_file
 
 		file_resp = static_file_cache.get(url_path + path, None)
-		if(not file_resp and not IS_DEV and preload):
+		if(not file_resp and preload):
+			# show only preloaded files
 			return "404 Not Found", [], "-NO-FILE-"
 
 		if(not file_resp or IS_DEV):
@@ -1175,8 +1176,11 @@ def static_file_handler(
 
 		return file_resp  # headers , data
 
-	if(not IS_DEV and preload):  # only in prod
-		file_names = [os.path.join(dp, f) for dp, dn, filenames in os.walk(_base_folder_path_) for f in filenames]
+	if(preload):
+		file_names = [
+			os.path.join(dp, f)
+			for dp, dn, filenames in os.walk(_base_folder_path_) for f in filenames
+		]
 		for file_name in file_names:
 			relative_file_path = ltrim(file_name, _base_folder_path_)
 			_url_file_path = url_path + relative_file_path
