@@ -7,18 +7,22 @@ from ..connection_pool import use_connection_pool
 from ..logging import LOG_WARN
 from ..tools import retry, background_task
 
+
 @background_task
 @retry(3)
 @use_connection_pool(ses_client="ses")
-def send_email(sender, to_list, subject, body_text=None, body_html=None, ses_client=None):
+def send_email(
+    sender, to_list, subject,
+    body_text=None, body_html=None, ses_client=None
+):
     """
-    Send email.
-    Note: The emails of sender and receiver should be verified.
-    PARAMS
-    @sender: sender's email, string
-    @to: list of receipient emails eg ['a@b.com', 'c@d.com']
-    @subject: subject of the email
-    @body: body of the email
+        Send email.
+        Note: The emails of sender and receiver should be verified.
+        PARAMS
+        @sender: sender's email, string
+        @to: list of receipient emails eg ['a@b.com', 'c@d.com']
+        @subject: subject of the email
+        @body: body of the email
     """
     try:
         body_data = {}
@@ -32,7 +36,6 @@ def send_email(sender, to_list, subject, body_text=None, body_html=None, ses_cli
                 'Data': body_html,
                 'Charset': 'UTF-8'
             }
-        
         response = ses_client.send_email(
             Source=sender,
             Destination={

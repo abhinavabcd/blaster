@@ -37,10 +37,14 @@ def get_url_loader(actual_func):
         url_loader = None
         try:
             url_loader = url_loaders_queue.get(block=False)
-        except Exception as ex:
+        except Exception:
             http_logger = urllib.request.HTTPHandler(debuglevel=(1 if IS_DEV else 0))
             https_logger = urllib.request.HTTPSHandler(debuglevel=(1 if IS_DEV else 0))
-            url_loader = urllib.request.build_opener(http_logger, urllib.request.HTTPCookieProcessor(), urllib.request.ProxyHandler(), https_logger, urllib.request.HTTPRedirectHandler())
+            url_loader = urllib.request.build_opener(
+                http_logger, urllib.request.HTTPCookieProcessor(),
+                urllib.request.ProxyHandler(), https_logger,
+                urllib.request.HTTPRedirectHandler()
+            )
             urllib.request.install_opener(url_loader)
 
         if(kwargs == None):
@@ -54,9 +58,12 @@ def get_url_loader(actual_func):
     return ret_func
 
 
-'''returns Io'''
+# returns Io
 @get_url_loader
-def get_data(url, post=None, headers=None, method=None, url_loader=None, as_string_buffer=True):
+def get_data(
+    url, post=None, headers=None, method=None,
+    url_loader=None, as_string_buffer=True
+):
     headers = headers or {}
     headers['Accept-encoding'] = 'gzip'
     ret = None
@@ -78,28 +85,44 @@ def get_data(url, post=None, headers=None, method=None, url_loader=None, as_stri
                 decompressor = zlib.decompressobj()
                 ret = BytesIO(decompressor.decompress(ret2.read()))
             ret2.close()
-        #return as string
+        # return as string
         if(as_string_buffer):
             return StringIO(ret.read().decode())
-            
+
     except urllib.error.HTTPError as e:
         ret = None
         err_body = e.read()
-        print("error_http_fetch", int(time.time() * 1000), json.dumps({"err": str(e), "url": url, "body": err_body.decode() if err_body else ""}))
+        print(
+            "error_http_fetch", int(time.time() * 1000),
+            json.dumps({
+                "err": str(e),
+                "url": url,
+                "body": err_body.decode() if err_body else ""
+            })
+        )
     except Exception as e:
         ret = None
-        print("error_http_fetch_error" , int(time.time() * 1000), json.dumps({"err": str(e), "url": url}))
+        print(
+            "error_http_fetch_error",
+            int(time.time() * 1000),
+            json.dumps({"err": str(e), "url": url})
+        )
     return ret
 
 
-def get_data_cached(url, post=None, headers={}, method=None, cache=True, ignore_cache_read=False, cache_folder="/tmp/", as_string_buffer=True):
+def get_data_cached(
+    url, post=None, headers={},
+    method=None, cache=True,
+    ignore_cache_read=False, cache_folder="/tmp/",
+    as_string_buffer=True
+):
     cache_hash = url
     if(post):
         cache_hash += json.dumps(post)
     cache_hash = hashlib.md5(cache_hash.encode("utf-8")).hexdigest()
     if(cache and not ignore_cache_read):
         if(os.path.isfile(cache_folder + cache_hash)):
-            #print "reading from cache"
+            # print "reading from cache"
             bytes_buffer = BytesIO(open(cache_folder + cache_hash, "rb").read())
             if(as_string_buffer):
                 return StringIO(bytes_buffer.read().decode())
@@ -115,8 +138,7 @@ def get_data_cached(url, post=None, headers={}, method=None, cache=True, ignore_
             return StringIO(_data.decode())
         return BytesIO(_data)
     return None
-        
-            
+
 
 if __name__ == "__main__":
     for i in range(10):

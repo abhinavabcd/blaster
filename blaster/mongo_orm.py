@@ -20,8 +20,6 @@ from gevent.threading import Thread
 from gevent import time
 from .logging import LOG_APP_INFO, LOG_WARN, LOG_SERVER, LOG_ERROR
 
-T = TypeVar("T")
-
 _VERSION_ = 101
 MONGO_DEBUG_LEVEL = BLASTER_DEBUG_LEVEL
 EVENT_BEFORE_DELETE = -2
@@ -32,12 +30,12 @@ EVENT_BEFORE_CREATE = 3
 EVENT_AFTER_CREATE = 4
 EVENT_MONGO_AFTER_UPDATE = 5
 
-# just a random constant object to check for non existent keys without catching KeyNotExist exception
+# just a random constant object to check for non existent
+# keys without catching KeyNotExist exception
 _OBJ_END_ = object()
 # given a list of [(filter, iter), ....] , flattens them
 
-_NOT_EXISTS_QUERY = {"$exists": False}  # just a constant	
-
+_NOT_EXISTS_QUERY = {"$exists": False}  # just a constant
 
 
 # utility to print collection name + node for logging
@@ -47,12 +45,22 @@ def COLLECTION_NAME(collection):
 		return "{:s}.{:s}.{:d}".format(collection.full_name, _node[0], _node[1])
 	return collection.full_name
 
+def str_validator(_attr, val, obj):
+	max_len = getattr(_attr, "max_len", 2048)
+	if(val and len(val) > max_len):
+		val = val[:max_len]
+	return val
+
+DEFAULT_VALIDATORS = {
+	str: str_validator
+}
 
 class Attribute(object):
 	_type = None
-
-	def __init__(self, _type, **kwargs):
+	_validator = None
+	def __init__(self, _type, validator=None, **kwargs):
 		self._type = _type
+		self._validator = validator or DEFAULT_VALIDATORS.get(_type)
 		self.__dict__.update(kwargs)
 
 
@@ -387,7 +395,7 @@ class Model(object):
 					pass  # could be anything don't try to cast
 				else:
 					if(not self._initializing):
-						# we are setting it wrong on a new/initialized object
+						# we are setting it wrong on a new object
 						# raise
 						raise TypeError(
 							"Type mismatch in {}, {}: should be {} but got {}".format(
@@ -396,7 +404,6 @@ class Model(object):
 						)
 					# else:
 						# already in db, so let's wait for application to crash
-
 			if(self._initializing):
 				if(not self.__is_new):
 					if(_attr_obj_type == dict):
@@ -406,17 +413,13 @@ class Model(object):
 					elif(_attr_obj_type == list):
 						if(isinstance(v, list)):
 							v = MongoList(self, k, v)
-			else:
-				cur_value = None
-				if(not self.__is_new):
-					cur_value = self._original_doc.get(k, _OBJ_END_)
-				else:
-					cur_value = getattr(self, k, _OBJ_END_)  # existing value
+			else: # initialized object
+				# check with validator					
+				_attr_validator = _attr_obj._validator
+				if(_attr_validator):
+					v = _attr_validator(_attr_obj, v, self)
+				self._set_query_updates[k] = v
 
-				# bug fix when cur_value = [] and setting to []
-				# we should set it as query update
-				if(cur_value != v or not cur_value):
-					self._set_query_updates[k] = v
 		self.__dict__[k] = v
 
 	def to_dict(self, r=None):
@@ -617,55 +620,40 @@ class Model(object):
 
 		if(not _update_query):
 			return True  # nothing to update, hence true
+		# this is most important
+		_update_inc_query = _update_query.get("$inc", _OBJ_END_)
+		if(_update_inc_query == _OBJ_END_):
+			_update_query["$inc"] = _update_inc_query = {}
+		_update_inc_query["_"] = 1
 
-		# this is the dict of local value to compare to remote db before updating
-		_local_vs_remote_consistency_checks = None
 		for _update_retry_count in range(3):
-
+			original_doc = self._original_doc
 			updated_doc = None
-			_query = {"_id": self._id}
-			# no additional conditions, retries ensure the state of
-			# current object in memory matches remote before updating
+			_query = {
+				"_id": self._id,
+				"_": original_doc.get("_", _NOT_EXISTS_QUERY) # IMP to check
+			}
 
-			# consistency between local copy and that on the db,
-			# to check concurrent updates
-			_local_vs_remote_consistency_checks = {}
-			# check all the fields that we are about to update
-			# to match with remote
-			for _k, _v in _update_query.items():
-				if(_k[0] == "$"):  # it should start with $
-					for p, q in _v.items():
-						# consistency checks of the current document
-						# to that exists in db
-						_local_vs_remote_consistency_checks[p] \
-							= get_by_key_list(
-								self._original_doc, p.split("."),
-								default=_NOT_EXISTS_QUERY
-							)
-
-			# override with any given conditions
-			_query.update(_local_vs_remote_consistency_checks)
 			# update with more given conditions,
-			# but don't update _local_vs_remote_consistency_checks
 			# (it's only for local<->remote comparision)
 			if(conditions):
 				_query.update(conditions)
 
 			# get the shard where current object is
-			primary_shard_key = self._original_doc[cls._shard_key_]
-			primary_collection_shard = cls.get_collection(primary_shard_key)
+			primary_shard_key = original_doc[cls._shard_key_]
+			primary_collection = cls.get_collection(primary_shard_key)
 			# query and update the document
 			IS_DEV \
 				and MONGO_DEBUG_LEVEL > 1 \
 				and LOG_SERVER(
 					"MONGO", description="update before and query",
-					model=cls.__name__, collection=COLLECTION_NAME(primary_collection_shard),
-					query="_query", original_doc=str(self._original_doc),
+					model=cls.__name__, collection=COLLECTION_NAME(primary_collection),
+					query="_query", original_doc=str(original_doc),
 					update_query=str(_update_query)
 				)
 
 			# 1: try updating
-			updated_doc = primary_collection_shard.find_one_and_update(
+			updated_doc = primary_collection.find_one_and_update(
 				_query,
 				_update_query,
 				return_document=ReturnDocument.AFTER,
@@ -676,161 +664,127 @@ class Model(object):
 				and MONGO_DEBUG_LEVEL > 1\
 				and LOG_SERVER(
 					"MONGO", description="after update",
-					model=cls.__name__, collection=COLLECTION_NAME(primary_collection_shard),
+					model=cls.__name__, collection=COLLECTION_NAME(primary_collection),
 					updated_doc=str(updated_doc)
 				)
 
-			if(updated_doc):
-				# check if need to migrate to another shard
-				_new_primary_shard_key = updated_doc.get(cls._shard_key_)
-				if(_new_primary_shard_key != primary_shard_key):
-					# primary shard key has changed
-					new_primary_collection_shard = cls.get_collection(_new_primary_shard_key)
-					if(new_primary_collection_shard != primary_collection_shard):
-						# migrate to new shard
-						# will crash if duplicate _id key
-						new_primary_collection_shard.insert_one(updated_doc)
-						primary_collection_shard.delete_one({"_id": self._id})
+			if(not updated_doc):
+				# update was unsuccessful
+				# is this concurrent update by someone else?
+				# is this because of more conditions given by user?
+				_update_retry_count and time.sleep(0.03 * _update_retry_count)
+				# 1. fetch from db again
+				_doc_in_db = primary_collection.find_one({"_id": self._id})
+				if(not _doc_in_db):  # moved out of shard or pk changed
+					return False
+				# 2. update our local copy
+				self.reset_and_update_cache(_doc_in_db)
+				can_retry = False
+				# 3. check if basic consistency between local and remote
+				if(_doc_in_db.get("_", _OBJ_END_) != original_doc.get("_", _OBJ_END_)):
+					can_retry = True
 
-				# 1. propagate the updates to secondary shards
-				for _secondary_shard_key, _shard in cls._secondary_shards_.items():
-					_SecondayModel = _shard._Model_
-
-					_old_shard_key_val = self._original_doc.get(_secondary_shard_key, _OBJ_END_)
-					_new_shard_key_val = updated_doc.get(_secondary_shard_key, _OBJ_END_)
-					# 2. check if shard key has been changed
-					if(_secondary_shard_key != _new_shard_key_val):
-						# 2.1. If old shard exists, delete that secondary doc
-						if(_old_shard_key_val != _OBJ_END_):
-							_SecondayModel\
-								.get_collection(_old_shard_key_val)\
-								.delete_one({"_id": self._id})
-
-						# 2.2.  if new shard key exists insert into appropriate node
-						if(_new_shard_key_val != _OBJ_END_ and _new_shard_key_val):
-							_to_insert = {}
-							for _k in _shard.attrs:
-								_v = updated_doc.get(_k, _OBJ_END_)
-								if(_v != _OBJ_END_):
-									_to_insert[_k] = _v
-
-							_seconday_inserted = None
-							_secondary_collection = _SecondayModel\
-								.get_collection(_new_shard_key_val)
-							_id_key = {"_id": self._id}
-							for _secondary_insert_retries in range(3):
-								try:
-									_seconday_inserted = _secondary_collection\
-										.replace_one(_id_key, _to_insert, upsert=True)
-								except DuplicateKeyError:
-									LOG_WARN(
-										"MONGO", description="secondary upsert failed.. retrying",
-										model=cls.__name__,
-									)
-									time.sleep(_secondary_insert_retries * 0.02)
-
-							if(not _seconday_inserted):
-								LOG_ERROR(
-									"MONGO", description="couldn't insert to secondary",
-									collection=COLLECTION_NAME(_secondary_collection),
-									key=str(_id_key)
-								)
-								raise Exception("couldn't insert to secondary")
-
-					#  3. if shard hasn't changed and exists, patch
-					elif(_new_shard_key_val != _OBJ_END_ and _new_shard_key_val):
-						_set = {}
-						_unset = {}
-						_consistency_checks = {"_id": updated_doc["_id"]}
-						_to_patch = {}
-						attrs_to_backfill = getattr(_shard, "_attrs_to_backfill_", None)
-						# 3.1. update only those values that have been checked on primary
-						# and changed
-						for _k, _old_val in _local_vs_remote_consistency_checks.items():
-							if(_k in _shard.attrs):
-								_new_val = updated_doc.get(_k, _OBJ_END_)
-								if(_new_val != _OBJ_END_):
-									_set[_k] = _new_val
-								else:
-									_unset[_k] = True
-
-								# if not in migrating/backfilling, use it for consistency check
-								if(not (attrs_to_backfill and _k in attrs_to_backfill)):
-									_consistency_checks[_k] = _old_val
-
-						if(_set):
-							_to_patch["$set"] = _set
-						if(_unset):
-							_to_patch["$unset"] = _unset
-						if(_to_patch):
-							is_secondary_shard_updated = False
-							_secondary_collection = _SecondayModel\
-								.get_collection(_new_shard_key_val)
-							for _retry_count in range(1, 4):
-								is_secondary_shard_updated = _secondary_collection\
-									.find_one_and_update(_consistency_checks, _to_patch)
-								if(is_secondary_shard_updated):
-									break
-								time.sleep(_retry_count * 0.03)  # 30 ms
-
-							if(not is_secondary_shard_updated):
-								LOG_ERROR(
-									"MONGO",
-									description="secondary couldn't be propagated",
-									model=cls.__name__, collection=COLLECTION_NAME(_secondary_collection),
-									secondary_pk=str(_consistency_checks),
-									secondary_updates=str(_to_patch)
-								)
-
-				# call any explicit callback
-				after_mongo_update and after_mongo_update(
-					self, self._original_doc, updated_doc
-				)
-				# publish update event
-				cls._trigger_event(
-					EVENT_MONGO_AFTER_UPDATE,
-					self._original_doc, updated_doc
-				)
-
-				# reset all values
-				self.reset_and_update_cache(updated_doc)
-				# waint on threads
-
-				# triggered after update event
-				cls._trigger_event(EVENT_AFTER_UPDATE, self)
-				# cleanup
-				self._set_query_updates.clear()
-				self._other_query_updates.clear()
-				return True
-
-			# update was unsuccessful
-			# is this concurrent update by someone else?
-			# is this because of more conditions given by user?
-			# 1. fetch from db again
-			_update_retry_count and time.sleep(0.03 * _update_retry_count)
-			_doc_in_db = primary_collection_shard.find_one({"_id": self._id})
-			if(not _doc_in_db):  # moved out of shard or pk changed
+				if(can_retry):
+					continue  # retry again
+				# cannot retry
 				return False
-			# 2. update our local copy
-			self.reset_and_update_cache(_doc_in_db)
-			can_retry = False
-			# 3. check if basic consistency between local and remote
-			for _k, _v in _local_vs_remote_consistency_checks.items():
-				remote_db_val = get_by_key_list(
-					_doc_in_db, _k.split("."),
-					default=_NOT_EXISTS_QUERY
-				)
-				if(_v != remote_db_val):
-					LOG_WARN(
-						"MONGO", description="remote was modified retrying", model=cls.__name__,
-						collection=COLLECTION_NAME(primary_collection_shard), _query=str(_query),
-						remote_value=remote_db_val, local_value=str(_v), _key=_k
+
+			# doc successfully updated
+			# check if need to migrate to another shard
+			_new_primary_shard_key = updated_doc.get(cls._shard_key_)
+			if(_new_primary_shard_key != primary_shard_key):
+				# primary shard key has changed
+				new_primary_collection = cls.get_collection(_new_primary_shard_key)
+				if(new_primary_collection != primary_collection):
+					# migrate to new shard
+					# will crash if duplicate _id key
+					new_primary_collection.insert_one(updated_doc)
+					primary_collection.delete_one({"_id": self._id})
+
+			# 1. propagate the updates to secondary shards
+			for _secondary_shard_key, _shard in cls._secondary_shards_.items():
+				_SecondayModel = _shard._Model_
+
+				_old_shard_key_val = original_doc.get(_secondary_shard_key, _OBJ_END_)
+				_new_shard_key_val = updated_doc.get(_secondary_shard_key, _OBJ_END_)
+				# 2. check if shard key has been changed
+				_old_secondary_collection = None
+				_new_secondary_collection = None
+
+				if(_old_shard_key_val != _OBJ_END_):
+					_old_secondary_collection = _SecondayModel\
+						.get_collection(_old_shard_key_val)
+				if(_new_shard_key_val != _OBJ_END_):
+					_new_secondary_collection = _SecondayModel\
+						.get_collection(_new_shard_key_val)
+
+				# 2.1. If old shard exists, delete that secondary doc
+				if(
+					_old_secondary_collection
+					and (
+						_old_secondary_collection != _new_secondary_collection
 					)
-					can_retry = True  # local copy consistency check has failed, retry again
-					break
+				):
+					_old_secondary_collection.delete_one({"_id": self._id})
 
-			if(not can_retry):
-				return False
+				# 2.2.  if new shard key exists insert into appropriate node
+				if(_new_secondary_collection):
+					_to_insert = {}
+					for _k in _shard.attrs:
+						_v = updated_doc.get(_k, _OBJ_END_)
+						if(_v != _OBJ_END_):
+							_to_insert[_k] = _v
+					_to_insert["_"] = updated_doc["_"]
+					# insert the doc in new collection
+					try:
+						_new_secondary_collection.replace_one(
+							{
+								"_id": self._id,
+								"_": {"$lt": updated_doc["_"]}
+							},
+							_to_insert,
+							upsert=True
+						)
+					except DuplicateKeyError as ex:
+						# exists, but upserting failed
+						IS_DEV and LOG_WARN(
+							"MONGO",
+							desc="upserting failed",
+							ex=str(ex)
+						)
+					except Exception as ex:
+						# updating to secondary failed
+						LOG_ERROR(
+							"MONGO",
+							desc="secondary not be propagated",
+							ex=str(ex),
+							model=cls.__name__,
+							collection=COLLECTION_NAME(_new_secondary_collection),
+							secondary_doc=str(_to_insert)
+						)
+
+			# call any explicit callback
+			after_mongo_update and after_mongo_update(
+				self, original_doc, updated_doc
+			)
+			# publish update event
+			cls._trigger_event(
+				EVENT_MONGO_AFTER_UPDATE,
+				original_doc, updated_doc
+			)
+
+			# reset all values
+			self.reset_and_update_cache(updated_doc)
+			# waint on threads
+
+			# cleanup
+			self._set_query_updates.clear()
+			self._other_query_updates.clear()
+
+			# triggered after update event
+			cls._trigger_event(EVENT_AFTER_UPDATE, self)
+			return True
+
 
 	@classmethod
 	def query(
@@ -1118,15 +1072,7 @@ class Model(object):
 		if(not handlers):
 			return
 		for handler in handlers:
-			try:
-				handler(*obj)
-			except Exception as ex:
-				LOG_ERROR(
-					"MONGO",
-					description="error processing trigger {}".format(event),
-					exception_str=str(ex),
-					stacktrace_string=traceback.format_exc()
-				)
+			handler(*obj)
 
 	def before_update(self):
 		pass
@@ -1150,7 +1096,7 @@ class Model(object):
 				raise Exception("Need to specify _id")
 
 			_collection_shard = cls.get_collection(
-				str(getattr(self, shard_key_name))
+				getattr(self, shard_key_name)
 			)
 			IS_DEV \
 				and MONGO_DEBUG_LEVEL > 1 \
@@ -1390,94 +1336,7 @@ def INDEX(*indexes):
 		first_key_of_index_key_set._indexes_to_create = getattr(first_key_of_index_key_set, "_indexes_to_create", [])
 		first_key_of_index_key_set._indexes_to_create.append(index_key_set)
 
-
-# Control Jobs
-# - every time a job is completed, check if it has parent,
-# - goto parent and check if all child jobs are finished and mark it complete
-class ControlJobs(Model):
-	_db_name_ = "control"
-	_collection_name_ = "jobs_v2"
-
-	# JOB TYPES
-	RESHARD = 0
-	CREATE_SECONDARY_SHARD = 1
-	ADD_NEW_ATTRIBUTES_TO_SECONDARY_SHARD = 2
-
-	# attributes
-	parent__id = Attribute(str)
-	num_child_jobs = Attribute(int, default=0)  # just for reconcillation
-	_type = Attribute(int)
-	db = Attribute(str)
-	collection = Attribute(str)
-	uid = Attribute(str)  # unique identifier not to duplicate jobs
-	status = Attribute(int, default=0)  # 0=>not started,1=>progress,2=>completed
-
-	worker_id = Attribute(str)  # worker id
-	# contract that worker should update every few millis
-	worker_should_update_within_ms = Attribute(int, default=60000)
-	# work data
-	data = Attribute(dict)
-	data1 = Attribute(dict)
-	created_at = Attribute(int, default=cur_ms)
-	updated_at = Attribute(int, default=cur_ms)
-
-	INDEX(
-		(db, collection, _type, uid, status),
-		(db, collection, _type, status, {"unique": False}),
-		(parent__id, {"unique": False})
-	)
-
-	def before_update(self):
-		self.updated_at = cur_ms()
-
-	def run(self):
-		if(self._type == ControlJobs.ADD_NEW_ATTRIBUTES_TO_SECONDARY_SHARD):
-			_SecondaryShardModel = __all_models__[self.collection]
-			_PrimaryShardModel = _SecondaryShardModel._primary_model_class_
-			# TODO: make this run on multiple nodes
-			# by running query on specific nodes
-			_secondary_shard_key = _SecondaryShardModel._shard_key_
-			for db_node in _PrimaryShardModel._db_nodes_:
-				print("querying", _PrimaryShardModel, "from", db_node.hosts, " to reindex")
-				i = 0
-				for _doc in db_node.get_collection(_PrimaryShardModel).find({}):
-					# delete and reinsert full doc in the shard
-					_shard_key_val = _doc.get(_secondary_shard_key)
-					if(_shard_key_val):
-						# 1. we have it linked in the
-						# secondary shard, delete there
-						_collection = _SecondaryShardModel\
-							.get_collection(_shard_key_val)
-						_collection.delete_one({"_id": _doc["_id"]})
-						# 2. Insert
-						_to_insert = {}
-						for attr in _SecondaryShardModel._attrs_:
-							_attr_val = _doc.get(attr, _OBJ_END_)
-							if(_attr_val != _OBJ_END_):
-								_to_insert[attr] = _attr_val
-							_collection.insert_one(_to_insert)
-					i += 1
-					if(i % 1000 == 0):
-						print("propagated", i, "records to secondary shard")
-				print("propagated", i, "records to secondary shard")
-			self.status = 1  # completed
-			# remove the attributes
-			collection_tracker_entry = CollectionTracker.get(
-				_SecondaryShardModel._collection_tracker_key_
-			)
-			for _attr in self.data["to_remove_attrs"]:
-				collection_tracker_entry.attrs.remove(_attr)
-			collection_tracker_entry.commit()
-			# add the new attributes
-			collection_tracker_entry.attrs.extend(self.data["to_add_attrs"])
-			collection_tracker_entry.commit()
-
-		if(self._type == ControlJobs.CREATE_SECONDARY_SHARD):
-			pass
-
-
 _cached_mongo_clients = {}
-
 
 # DatabaseNode is basically a server or a replicaset
 class DatabaseNode:
@@ -1715,7 +1574,7 @@ def initialize_model(_Model):
 			_Model._collection_tracker_key_
 		)
 
-	if(_Model not in [CollectionTracker, ControlJobs]):
+	if(_Model not in [CollectionTracker]):
 		collection_tracker = CollectionTracker.get(_Model._collection_tracker_key_)
 		if(
 			not collection_tracker
@@ -1775,86 +1634,6 @@ def initialize_model(_Model):
 				"It has secondary shards, that point to primary shard key. ",
 				"You will have to drop shard secondary shards and force reindex everything again. "
 			)
-
-		if(not _Model._is_secondary_shard):
-			# create diff jobs, check if new shard is indicated
-			to_create_secondary_shard_key, to_delete_secondary_shard_key = list_diff2(
-				list(_Model._secondary_shards_.keys()),
-				collection_tracker.secondary_shard_keys
-			)
-			for shard_key_name in to_create_secondary_shard_key:
-				try:
-					ControlJobs(
-						_id=str(cur_ms()),
-						db=_Model._db_name_,
-						collection=_Model._collection_name_with_shard_,
-						_type=ControlJobs.CREATE_SECONDARY_SHARD,
-						uid=shard_key_name
-					).commit()
-					IS_DEV \
-						and MONGO_DEBUG_LEVEL > 1 \
-						and print(
-							"\n\n#MONGO: create a control job to create secondary shard",
-							_Model, shard_key_name
-						)
-				except DuplicateKeyError:
-					print(
-						(
-							"Secondary shard not synced yet, queries on this shard won't "
-							"give results for previously created entries, please propagate all data to this shard. "
-							"Add mark this ControlJob as complete"
-						), _Model, shard_key_name
-					)
-
-		if(_Model._is_secondary_shard):
-			to_add_attrs, to_remove_attrs = list_diff2(
-				list(_Model._attrs_.keys()),
-				collection_tracker.attrs
-			)
-			if(to_add_attrs or to_remove_attrs):
-				try:
-					ControlJobs(
-						_id=str(cur_ms()),
-						db=_Model._db_name_,
-						collection=_Model._collection_name_with_shard_,
-						_type=ControlJobs.ADD_NEW_ATTRIBUTES_TO_SECONDARY_SHARD,
-						uid="",
-						data={"to_add_attrs": to_add_attrs, "to_remove_attrs": to_remove_attrs}
-					).commit()
-					IS_DEV \
-						and MONGO_DEBUG_LEVEL > 1 \
-						and print(
-							"\n\n#MONGO: created a control job to change attributes",
-							_Model, to_add_attrs, to_remove_attrs
-						)
-					raise Exception(
-						(
-							"Attributes have been changed add: {} remove: {} on the {} shard, "
-							"you need to fill the attribute in the shard "
-						).format(
-							to_add_attrs, to_remove_attrs, 
-							_Model._collection_name_with_shard_
-						)
-					)
-				except DuplicateKeyError:
-					LOG_ERROR(
-						"MONGO",
-						description=(
-							"There is already a pending job to add {}, remove {} attributes in {}"
-							"queries involving these attrs will not give correct results"
-							"perform this to correct ::-> "
-							"ControlJobs.get(db='{:s}', collection='{:s}', _type={:d}, uid='').run()"
-						).format(
-							to_add_attrs, to_remove_attrs, _Model,
-							# attrs
-							_Model._db_name_, _Model._collection_name_with_shard_,
-							ControlJobs.ADD_NEW_ATTRIBUTES_TO_SECONDARY_SHARD
-						)
-					)
-					# for now do not use it for consistency checks
-					_Model._attrs_to_backfill_ = {}
-					for _attr_name in to_add_attrs:
-						_Model._attrs_to_backfill_[_attr_name] = _Model._attrs_[_attr_name]
 
 		# check if new attribute added to secondary shard
 
@@ -1973,8 +1752,7 @@ def initialize_mongo(db_nodes, default_db_name=None):
 
 	# initialize control db
 	CollectionTracker._db_nodes_ = db_nodes
-	ControlJobs._db_nodes_ = db_nodes
-	initialize_model([CollectionTracker, ControlJobs])
+	initialize_model([CollectionTracker])
 
 	# set default db name for each class
 	for cls in all_subclasses(Model):
@@ -2000,15 +1778,15 @@ def initialize_mongo(db_nodes, default_db_name=None):
 # - When you update document, we identify shard it belongs to
 #   and update that doc, then get the diff that has changed
 #   and apply that diff on all secondary shards
+# - when you apply a sort param, and query spans multiple nodes
+# 	we create a small heap ( = number of nodes queried) and advance cusors accordingly
 
 
 # Optionally:
-# - when you apply a sort param, and query spans multiple nodes
-# we create a small heap ( = number of nodes queries) and advance cusors accordingly
 # Limitations:
-# - when query spans multiple nodes, you can apply offset on the query
-# - You can't run update query that spans multiple documents
-# - if you corrupt data                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
+# - when query spans multiple nodes, you cannot apply offset
+# - You can't update multiple documents at once
+
 # when we say collection it it's actual pymongo collection on db server
 # DbNode -> mongo server which contains collections
 

@@ -8,13 +8,20 @@ from ..connection_pool import get_from_pool, release_to_pool
 from ..tools import MIME_TYPE_MAP
 
 
-def generate_upload_url(file_name, base_folder, s3_connection_pool_name="s3" , bucket=None, redirect_url=None, mime_type=None):
+def generate_upload_url(
+    file_name, base_folder, s3_connection_pool_name="s3",
+    bucket=None, redirect_url=None, mime_type=None
+):
     if(not mime_type):
-        #just in case
+        # just in case
         extension = os.path.splitext(file_name)[1][1:]
         mime_type = MIME_TYPE_MAP.get(extension)
 
-    fields = {"acl": "public-read", "Content-Type": mime_type, "success_action_status": "200"}
+    fields = {
+        "acl": "public-read",
+        "Content-Type": mime_type,
+        "success_action_status": "200"
+    }
 
     conditions = [
         {"acl": "public-read"},
@@ -23,7 +30,6 @@ def generate_upload_url(file_name, base_folder, s3_connection_pool_name="s3" , b
     ]
     if(redirect_url):
         conditions.append({"redirect": redirect_url})
-
 
     # Generate the POST attributes
     s3_key = base_folder + "/" + file_name
