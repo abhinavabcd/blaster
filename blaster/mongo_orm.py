@@ -4,6 +4,7 @@ import types
 import traceback
 import pymongo
 from typing import TypeVar
+from contextlib import ExitStack
 import metrohash
 # from pymongo.read_concern import ReadConcern
 # from pymongo.write_concern import WriteConcern
@@ -218,6 +219,15 @@ class MongoDict(dict):
 		# allow chaining
 		return self
 
+# utility function to cache and return a session for transaction
+def with_session(collection, sessions, exit_stack):
+	mclient = collection._db_node_.mongo_client
+	session = sessions.get(mclient)
+	if(not session):
+		sessions[mclient] = session =  mclient.start_session()
+		exit_stack.enter_context(session)
+		exit_stack.enter_context(session.start_transaction())
+	return session
 
 class Model(object):
 	# ###class level###
@@ -730,10 +740,21 @@ class Model(object):
 				# 2.2.  if new shard key exists insert into appropriate node
 				if(_new_secondary_collection):
 					_to_insert = {}
+					is_shard_data_changed = False
 					for _k in _shard.attrs:
 						_v = updated_doc.get(_k, _OBJ_END_)
 						if(_v != _OBJ_END_):
 							_to_insert[_k] = _v
+						if(_v != original_doc.get(_k, _OBJ_END_)):
+							# changed during update
+							is_shard_data_changed = True
+
+
+					# nothing changed in the shard
+					# don't replace/update
+					if(not is_shard_data_changed):
+						continue
+
 					_to_insert["_"] = updated_doc["_"]
 					# insert the doc in new collection
 					try:
@@ -743,14 +764,6 @@ class Model(object):
 								"_": {"$lt": updated_doc["_"]}
 							},
 							_to_insert,
-							upsert=True
-						)
-					except DuplicateKeyError as ex:
-						# exists, but upserting failed
-						IS_DEV and LOG_WARN(
-							"MONGO",
-							desc="upserting failed",
-							ex=str(ex)
 						)
 					except Exception as ex:
 						# updating to secondary failed
@@ -1095,38 +1108,47 @@ class Model(object):
 			):
 				raise Exception("Need to specify _id")
 
-			_collection_shard = cls.get_collection(
+			primary_collection = cls.get_collection(
 				getattr(self, shard_key_name)
 			)
 			IS_DEV \
 				and MONGO_DEBUG_LEVEL > 1 \
 				and LOG_SERVER(
 					"MONGO", description="new object values",
-					model=cls.__name__, collection=COLLECTION_NAME(_collection_shard),
+					model=cls.__name__, collection=COLLECTION_NAME(primary_collection),
 					set_query=str(self._set_query_updates)
 				)
 			try:
 				# find which shard we should insert to and insert into that
-				self._insert_result = _collection_shard.insert_one(
-					self._set_query_updates
-				)
+				with ExitStack() as stack:
+					sessions = {}
 
-				self._id = self._set_query_updates["_id"] = self._insert_result.inserted_id
+					self._insert_result = primary_collection.insert_one(
+						self._set_query_updates,
+						session=(
+							cls._secondary_shards_ 
+							and with_session(primary_collection, sessions, stack)
+						)
+					)
 
-				# insert in secondary shards now
-				for _secondary_shard_key, _shard in cls._secondary_shards_.items():
-					_SecondaryModel = _shard._Model_
-					_shard_key_val = self._set_query_updates.get(_secondary_shard_key)
-					if(_shard_key_val != None):
-						_to_insert = {}
-						for attr in _shard.attrs:
-							_attr_val = self._set_query_updates.get(attr, _OBJ_END_)
-							if(_attr_val != _OBJ_END_):
-								_to_insert[attr] = _attr_val
+					self._id = self._set_query_updates["_id"] = self._insert_result.inserted_id
 
-						_to_insert and _SecondaryModel\
-							.get_collection(_shard_key_val)\
-							.insert_one(_to_insert)
+					# insert in secondary shards now
+					for _secondary_shard_key, _shard in cls._secondary_shards_.items():
+						_SecondaryModel = _shard._Model_
+						_shard_key_val = self._set_query_updates.get(_secondary_shard_key)
+						if(_shard_key_val != None):
+							_to_insert = {}
+							for attr in _shard.attrs:
+								_attr_val = self._set_query_updates.get(attr, _OBJ_END_)
+								if(_attr_val != _OBJ_END_):
+									_to_insert[attr] = _attr_val
+							secondary_collection = _SecondaryModel.get_collection(_shard_key_val)
+							if(_to_insert):
+								_SecondaryModel.insert_one(
+									_to_insert,
+									session=with_session(secondary_collection, sessions, stack)
+								)
 
 				# set _id updates
 				committed = True
@@ -1147,14 +1169,14 @@ class Model(object):
 				# get original doc from mongo shard
 				# and update any other fields
 				self.reset_and_update_cache(
-					_collection_shard.find_one(self.pk())
+					primary_collection.find_one(self.pk())
 				)
 				IS_DEV \
 					and MONGO_DEBUG_LEVEL > 1 \
 					and LOG_SERVER(
 						"MONGO", description="created a duplicate, refetching and updating",
 						model=cls.__name__,
-						collection=COLLECTION_NAME(_collection_shard),
+						collection=COLLECTION_NAME(primary_collection),
 						pk=str(self.pk())
 					)
 
@@ -1343,7 +1365,7 @@ class DatabaseNode:
 
 	_cached_pymongo_collections = None
 	# mongo connection
-	mongo_connection = None
+	mongo_client = None
 	hosts = None
 	replica_set = None
 	username = None
@@ -1369,9 +1391,9 @@ class DatabaseNode:
 		# use list of hosts, replicaset and username as cache key
 		# so as not to create multiple clients
 		_mongo_clients_cache_key = (",".join(sorted(hosts)), replica_set or "", username or "")
-		self.mongo_connection = _cached_mongo_clients.get(_mongo_clients_cache_key)
-		if(not self.mongo_connection):
-			self.mongo_connection \
+		self.mongo_client = _cached_mongo_clients.get(_mongo_clients_cache_key)
+		if(not self.mongo_client):
+			self.mongo_client \
 				= _cached_mongo_clients[_mongo_clients_cache_key] \
 				= MongoClient(
 					host=hosts, replicaSet=replica_set,
@@ -1395,7 +1417,8 @@ class DatabaseNode:
 		if(ret == None):
 			self._cached_pymongo_collections[_Model] \
 				= ret \
-				= self.mongo_connection[_Model._db_name_][_Model._collection_name_with_shard_]
+				= self.mongo_client[_Model._db_name_][_Model._collection_name_with_shard_]
+			ret._db_node_ = self
 		return ret
 
 
@@ -1748,7 +1771,7 @@ def initialize_mongo(db_nodes, default_db_name=None):
 	else:
 		raise Exception("argument must be a list of dicts, or a single dict")
 	# check connection to mongodb
-	[db_node.mongo_connection.server_info() for db_node in db_nodes]
+	[db_node.mongo_client.server_info() for db_node in db_nodes]
 
 	# initialize control db
 	CollectionTracker._db_nodes_ = db_nodes
@@ -1793,7 +1816,7 @@ def initialize_mongo(db_nodes, default_db_name=None):
 
 # Internal Notes:
 # ############## Using a transaction
-# _mongo_client = cls.get_db_node(self._original_doc[cls._shard_key_]).mongo_connection
+# _mongo_client = cls.get_db_node(self._original_doc[cls._shard_key_]).mongo_client
 # with _mongo_client.start_session() as session:
 # 	#
 # 	return session.with_transaction(
