@@ -79,7 +79,7 @@ def create_es_log_handler(es_config):
 				start_of_today_timestamp = start_of_today.timestamp()
 
 				es_index_name = "{}_{}".format(
-					es_base_index_name, start_of_today.strftime("%d-%m-%Y")
+					es_base_index_name, start_of_today.strftime("%Y-%m-%d")
 				)
 				es_conn.indices.create(
 					index=es_index_name,

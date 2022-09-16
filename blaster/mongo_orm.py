@@ -59,9 +59,11 @@ DEFAULT_VALIDATORS = {
 class Attribute(object):
 	_type = None
 	_validator = None
+	_models = None
 	def __init__(self, _type, validator=None, **kwargs):
 		self._type = _type
 		self._validator = validator or DEFAULT_VALIDATORS.get(_type)
+		self._models = set()
 		self.__dict__.update(kwargs)
 
 
@@ -220,12 +222,12 @@ class MongoDict(dict):
 		return self
 
 # utility function to cache and return a session for transaction
-def _with_transaction(collection, _transactions, exit_stack):
+def _with_transaction(collection, _transaction, exit_stack):
 	dbnode = collection._db_node_
 	mclient = dbnode.mongo_client
-	session = _transactions.get(mclient)
+	session = _transaction.get(mclient)
 	if(not session):
-		_transactions[mclient] = session =  mclient.start_session()
+		_transaction[mclient] = session =  mclient.start_session()
 		exit_stack.enter_context(session)
 		if(dbnode.replicaset): # TODO: do better to indentify replicaset
 			exit_stack.enter_context(session.start_transaction())
@@ -579,7 +581,6 @@ class Model(object):
 
 		# if it's a secondary shard check if we can perform the query on this Model
 		if(cls._is_secondary_shard):
-			# _attrs_to_backfill = getattr(cls, "_attrs_to_backfill_", None)
 			# check if we can construct a secondary shard query
 			for query_attr_name, query_attr_val in _query.items():
 				# if attr is not present in the secondary shard
@@ -612,10 +613,9 @@ class Model(object):
 
 		return None
 
-	# for example, you can say update only when someother field > 0
 	def update(
 		self, _update_query, conditions=None,
-		after_mongo_update=None, _transactions=None,
+		after_mongo_update=None, _transaction=None,
 		**kwargs
 	):
 		cls = self.__class__
@@ -636,13 +636,7 @@ class Model(object):
 
 		if(not _update_query):
 			return True  # nothing to update, hence true
-		# this is most important
-		_update_inc_query = _update_query.get("$inc", _OBJ_END_)
-		if(_update_inc_query == _OBJ_END_):
-			_update_query["$inc"] = _update_inc_query = {}
-		_update_inc_query["_"] = 1
 
-		sessions = {}
 		with ExitStack() as stack:
 			for _update_retry_count in range(3):
 				original_doc = self._original_doc
@@ -670,15 +664,27 @@ class Model(object):
 						update_query=str(_update_query)
 					)
 
+				if(
+					_transaction == True 
+					or (after_mongo_update and _transaction == None)
+				):
+					_transaction = {}  # use transaction
+
+				#: VVIMPORTANT: set `_` -> to current timestamp
+				_to_set = _update_query.get("$set", _OBJ_END_)
+				if(_to_set == _OBJ_END_):
+					_update_query["$set"] = _to_set = {}
+				_to_set["_"] = max(original_doc.get("_", 0) + 1, int(time.time()* 1000))
+
 				# 1: try updating
 				updated_doc = primary_collection.find_one_and_update(
 					_query,
 					_update_query,
 					return_document=ReturnDocument.AFTER,
 					session=(
-						_with_transaction(primary_collection, _transactions, stack)
-						if _transactions != None
-						else None 
+						_with_transaction(primary_collection, _transaction, stack)
+						if _transaction != None
+						else None
 					),
 					**kwargs
 				)
@@ -728,16 +734,16 @@ class Model(object):
 				for _secondary_shard_key, _shard in cls._secondary_shards_.items():
 					_SecondayModel = _shard._Model_
 
-					_old_shard_key_val = original_doc.get(_secondary_shard_key, _OBJ_END_)
-					_new_shard_key_val = updated_doc.get(_secondary_shard_key, _OBJ_END_)
+					_old_shard_key_val = original_doc.get(_secondary_shard_key)
+					_new_shard_key_val = updated_doc.get(_secondary_shard_key)
 					# 2. check if shard key has been changed
 					_old_secondary_collection = None
 					_new_secondary_collection = None
 
-					if(_old_shard_key_val != _OBJ_END_):
+					if(_old_shard_key_val != None):
 						_old_secondary_collection = _SecondayModel\
 							.get_collection(_old_shard_key_val)
-					if(_new_shard_key_val != _OBJ_END_):
+					if(_new_shard_key_val != None):
 						_new_secondary_collection = _SecondayModel\
 							.get_collection(_new_shard_key_val)
 
@@ -751,6 +757,7 @@ class Model(object):
 						_old_secondary_collection.delete_one({"_id": self._id})
 
 					# 2.2.  if new shard key exists insert into appropriate node
+					# insert only if non null
 					if(_new_secondary_collection):
 						_to_insert = {}
 						is_shard_data_changed = False
@@ -801,7 +808,7 @@ class Model(object):
 				# call any explicit callback
 				after_mongo_update and after_mongo_update(
 					self, original_doc, updated_doc,
-					_transactions=None
+					_transaction=_transaction
 				)
 				# publish update event
 				cls._trigger_event(
@@ -867,8 +874,8 @@ class Model(object):
 		# collection: [_query,...]
 		collections_to_query = {}
 		for _query in queries:
-			# try checking if we can query rimary
-			collection_shards = cls.get_collections_to_query(_query, sort) or []
+			# try checking if we can query primary
+			collection_shards = cls.get_collections_to_query(_query, sort)
 			if(collection_shards):
 				for collection_shard in collection_shards:
 					_key = id(collection_shard)
@@ -1009,6 +1016,7 @@ class Model(object):
 				ret = ret.limit(limit)
 
 			# we queried from the secondary shard, will not have all fields
+			# requery again
 			if(_Model._is_secondary_shard):
 				# do a requery to fetch full document
 				# TODO: make it batch wise fetch
@@ -1115,7 +1123,7 @@ class Model(object):
 
 	def commit(
 		self, force=False, ignore_exceptions=None,
-		conditions=None, _transactions=None
+		conditions=None, _transaction=None
 	):
 		cls = self.__class__
 		committed = False
@@ -1147,12 +1155,12 @@ class Model(object):
 			try:
 				# find which shard we should insert to and insert into that
 				with ExitStack() as stack:
-					_transactions = _transactions if _transactions != None else {}
+					_transaction = _transaction if _transaction != None else {}
 
 					self._insert_result = primary_collection.insert_one(
 						self._set_query_updates,
 						session=(
-							_with_transaction(primary_collection, _transactions, stack)
+							_with_transaction(primary_collection, _transaction, stack)
 							if cls._secondary_shards_ 
 							else None 
 						)
@@ -1174,7 +1182,7 @@ class Model(object):
 							if(_to_insert):
 								secondary_collection.insert_one(
 									_to_insert,
-									session=_with_transaction(secondary_collection, _transactions, stack)
+									session=_with_transaction(secondary_collection, _transaction, stack)
 								)
 
 				# set _id updates
@@ -1194,10 +1202,8 @@ class Model(object):
 					raise(ex)  # re reaise
 
 				# get original doc from mongo shard
-				# and update any other fields
-				self.reset_and_update_cache(
-					primary_collection.find_one(self.pk())
-				)
+				doc_in_db = primary_collection.find_one(self.pk())
+				self.reset_and_update_cache(doc_in_db)
 				IS_DEV \
 					and MONGO_DEBUG_LEVEL > 1 \
 					and LOG_SERVER(
@@ -1207,14 +1213,9 @@ class Model(object):
 						pk=str(self.pk())
 					)
 
-				# try removing all primary keys
-				# although this is unnecessary i feel it's better this way
+				# remove _id, not need to update it
 				if("_id" in self._set_query_updates):
 					del self._set_query_updates["_id"]
-
-				for k in list(self._set_query_updates.keys()):
-					if(k in cls._pk_attrs):
-						del self._set_query_updates[k]
 
 		if(not self.__is_new and not committed):  # try updating
 			# automatically picks up _set_query_updates inside .update function
@@ -1484,10 +1485,11 @@ def initialize_model(_Model):
 				v.r = set(v.r)
 
 			_model_attrs[k] = v
+			# helps convert string/attr to string
 			attrs_to_name[v] = k
-			# dumb , but it's one time thing
-			# and also helps converting if any given attributes as strings
 			attrs_to_name[k] = k
+			# track models this attr belongs to
+			v._models.add(_Model)
 
 			# check if it has any shard, then extract indexes,
 			# shard key tagged to attributes
@@ -1738,7 +1740,6 @@ def initialize_model(_Model):
 		)
 
 	for pymongo_index, mongo_index_args in _pymongo_indexes_to_create.items():
-
 		IS_DEV \
 			and MONGO_DEBUG_LEVEL > 1 \
 			and print(
