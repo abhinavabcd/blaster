@@ -1,16 +1,24 @@
+import os
 from gevent.queue import Queue, Empty
-import boto3
-from . import config
-from .config import IS_DEV
+from .utils import events
+from .config import IS_DEV, \
+    AWS_CREDENTIALS, GCLOUD_CREDENTIALS
 # import umysql
 
 conn_pools = {}
-boto_sessions = {
-    0: None  # 0 is the default boto session id
-}
+
+# AWS session/clients
+boto_session = None
+
+@events.register_listener("CONFIG_AWS_CREDENTIALS")
+def init_aws_clients(aws_credentials):
+    import boto3
+    global boto_session
+    boto_session = boto3.session.Session(**aws_credentials)
 
 def get_dynamodb_conn():
     if(IS_DEV):
+        import boto3
         return boto3.resource(
             'dynamodb',
             endpoint_url='http://{endpoint}:{port}'.format(endpoint="127.0.0.1", port="8000"),
@@ -19,16 +27,35 @@ def get_dynamodb_conn():
             region_name="ap-south-1"
         )
     else:
-        return boto_sessions[0].resource('dynamodb')
+        return boto_session.resource('dynamodb')
 
 def get_s3_conn():
-    return boto_sessions[0].resource('s3')
+    return boto_session.resource('s3')
 
 def get_sqs_conn():
-    return boto_sessions[0].client('sqs')
+    return boto_session.client('sqs')
 
 def get_ses_conn():
-    return boto_sessions[0].client('ses')
+    return boto_session.client('ses')
+
+
+## gcloud clients
+gcloud_credentials = None
+
+@events.register_listener("CONFIG_GCLOUD_CREDENTIALS")
+def init_gcloud_clients(_gcloud_credentials):
+    global gcloud_credentials
+    from google.oauth2 import service_account
+    gcloud_credentials = service_account.Credentials.from_service_account_info(_gcloud_credentials)
+
+
+def get_gcloud_tasks_client():
+    from google.cloud import tasks_v2
+    return tasks_v2.CloudTasksClient(credentials=gcloud_credentials)
+
+def get_gcloud_storage():
+    from google.cloud import storage
+    return None
 
 
 #default connection generators
@@ -36,7 +63,9 @@ _pool_item_generators = {
     "dynamodb": get_dynamodb_conn,
     "s3" : get_s3_conn,
     "sqs": get_sqs_conn,
-    "ses": get_ses_conn
+    "ses": get_ses_conn,
+    "google_cloudtasks": get_gcloud_tasks_client,
+    "google_cloudstorage": get_gcloud_storage
 }
 
 def register_pool_item_generator(pool_name, func):
@@ -44,10 +73,6 @@ def register_pool_item_generator(pool_name, func):
 
 
 def get_from_pool(pool_id):
-    # check and initialize
-    if(boto_sessions[0] == None and config.aws_config):
-        boto_sessions[0] = boto3.session.Session(**config.aws_config)
-
     conn = None
     conn_pool = conn_pools.get(pool_id, None)
     if (conn_pool == None):
@@ -111,6 +136,12 @@ def use_connection_pool(**pool_args):
         return wrapper
 
     return use_db_connection
+
+
+# try autoloading if already set
+AWS_CREDENTIALS and init_aws_clients(AWS_CREDENTIALS)
+GCLOUD_CREDENTIALS and init_gcloud_clients(GCLOUD_CREDENTIALS)
+
 
 
 '''

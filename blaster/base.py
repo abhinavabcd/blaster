@@ -141,8 +141,9 @@ class Request:
 
 	# instance level
 	sock = None
-	_post = None
 	_get = None
+	_post = None
+	_post_data = None
 	_cookies = None
 	_headers = None
 	# cookies to send to client
@@ -400,13 +401,16 @@ class App:
 	request_handlers = None
 	name = None
 	stream_server = None
+	server_error_page = None
 
-	def __init__(self, **kwargs):
+	def __init__(self, server_error_page=None, **kwargs):
 		self.info = {
 			k: kwargs.get(k, "-") for k in {"title", "description", "version"}
 		}
 		self.route_handlers = []
 		self.request_handlers = []
+		# error
+		self.server_error_page = server_error_page
 
 	def route(
 		self,
@@ -880,6 +884,7 @@ class App:
 						decoded_cookies[_kv[0]] = _kv[1]
 			request_params._cookies = decoded_cookies
 			# process cookies end
+			request_params._post_data = post_data
 			request_params.parse_request_body(post_data, headers)
 
 			handler_args = []
@@ -1003,8 +1008,8 @@ class App:
 				body = ex.args and ex.args[0]
 
 			# if given as error page handler
-			if(not body and blaster_config.server_error_page):
-				body = blaster_config.server_error_page(
+			if(not body and self.server_error_page):
+				body = self.server_error_page(
 					request_type,
 					request_path,
 					request_params,
@@ -1123,7 +1128,7 @@ def static_file_handler(
 	url_path,
 	_base_folder_path_,
 	default_file="index.html",
-	file_not_found_page_cb=None,
+	file_not_found_cb=None,
 	preload=True  # works only in prod and doesn't server anything outside already cached files
 ):
 	# both paths should start with /
@@ -1157,7 +1162,12 @@ def static_file_handler(
 		file_resp = static_file_cache.get(url_path + path, None)
 		if(not file_resp and preload):
 			# show only preloaded files
-			return "404 Not Found", [], "-NO-FILE-"
+			return (
+					file_not_found_cb 
+					and file_not_found_cb(
+						path, request_params=None, headers=None, post_data=None
+					)
+				) or ("404 Not Found", [], "-NO-FILE-")
 
 		if(not file_resp or IS_DEV):
 			gevent_lock.acquire()
@@ -1165,8 +1175,8 @@ def static_file_handler(
 			try:
 				file_resp = get_file_resp(path)
 			except Exception:
-				if(file_not_found_page_cb):
-					file_resp = file_not_found_page_cb(
+				if(file_not_found_cb):
+					file_resp = file_not_found_cb(
 						path, request_params=None, headers=None, post_data=None
 					)
 			finally:
@@ -1176,18 +1186,18 @@ def static_file_handler(
 
 		return file_resp  # headers , data
 
-	if(preload):
-		file_names = [
-			os.path.join(dp, f)
-			for dp, dn, filenames in os.walk(_base_folder_path_) for f in filenames
-		]
-		for file_name in file_names:
-			relative_file_path = ltrim(file_name, _base_folder_path_)
-			_url_file_path = url_path + relative_file_path
-			# strip / at the begininning in the cache
-			# as we search matching path without leading slash in the cache 
-			# in the file handler
-			static_file_cache[_url_file_path] = get_file_resp(relative_file_path)
+	# preload all files once on load
+	file_names = [
+		os.path.join(dp, f)
+		for dp, dn, filenames in os.walk(_base_folder_path_) for f in filenames
+	]
+	for file_name in file_names:
+		relative_file_path = ltrim(file_name, _base_folder_path_)
+		_url_file_path = url_path + relative_file_path
+		# strip / at the begininning in the cache
+		# as we search matching path without leading slash in the cache 
+		# in the file handler
+		static_file_cache[_url_file_path] = get_file_resp(relative_file_path)
 
 	return url_path + "{*path}", file_handler
 
@@ -1376,12 +1386,12 @@ def blaster_fork(num_procs):
 			sock.close()
 
 	# start forking
-	blaster_fork.ID = 0
+	blaster_config.BLASTER_FORK_ID = 0
 	for i in range(1, num_procs):
 		pid = os.fork()
 		if(pid == 0):
 			# cloned process
-			blaster_fork.ID = i
+			blaster_config.BLASTER_FORK_ID = i
 			break
 		# main process, contuing forking more
 		print("Forked/Cloned...", pid)

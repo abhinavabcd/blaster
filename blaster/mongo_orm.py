@@ -1,9 +1,7 @@
 import json
 import heapq
 import types
-import traceback
 import pymongo
-from typing import TypeVar
 from contextlib import ExitStack
 import metrohash
 # from pymongo.read_concern import ReadConcern
@@ -15,7 +13,7 @@ from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 from pymongo import ReturnDocument, ReadPreference
 from .tools import ExpiringCache, all_subclasses,\
-	cur_ms, list_diff2, batched_iter, get_by_key_list
+	cur_ms, list_diff2, batched_iter
 from .config import DEBUG_LEVEL as BLASTER_DEBUG_LEVEL, IS_DEV
 from gevent.threading import Thread
 from gevent import time
@@ -38,6 +36,7 @@ _OBJ_END_ = object()
 
 _NOT_EXISTS_QUERY = {"$exists": False}  # just a constant
 
+_WARN_MAX_QUERY_TIME = 3
 
 # utility to print collection name + node for logging
 def COLLECTION_NAME(collection):
@@ -997,7 +996,6 @@ class Model(object):
 		multi_collection_query_result = MultiCollectionQueryResult()
 
 		def query_collection(_Model, _collection, _query, offset=None):
-
 			IS_DEV \
 				and MONGO_DEBUG_LEVEL > 1 \
 				and LOG_SERVER(
@@ -1007,6 +1005,8 @@ class Model(object):
 					query=str(_query), sort=str(sort), offset=str(offset), limit=str(limit)
 				)
 
+			_start_time = time.time()
+			
 			ret = _collection.find(_query, **kwargs)
 			if(sort):  # from global arg
 				ret = ret.sort(sort)
@@ -1014,6 +1014,16 @@ class Model(object):
 				ret = ret.skip(offset)
 			if(limit):
 				ret = ret.limit(limit)
+
+			if((_elapsed_time := (time.time() - _start_time)) > _WARN_MAX_QUERY_TIME):
+				query_plan = ret.explain()["queryPlanner"]
+				LOG_WARN(
+					"mongo_perf",
+					desc="query took longer than {} seconds".format(_WARN_MAX_QUERY_TIME),
+					elapsed_millis=int(_elapsed_time * 1000),
+					plan_type=query_plan["winningPlan"]["stage"],
+					query=query_plan["parsedQuery"]
+				)
 
 			# we queried from the secondary shard, will not have all fields
 			# requery again
@@ -1062,7 +1072,7 @@ class Model(object):
 			)
 
 		threads = []
-		for _collection_shard_id, shard_and_queries in collections_to_query.items():
+		for _, shard_and_queries in collections_to_query.items():
 			_collection_shard, _queries, _Model = shard_and_queries
 			new_query = None
 			if(len(_queries) == 1):
@@ -1074,7 +1084,10 @@ class Model(object):
 				offset = None
 				LOG_WARN(
 					"MONGO",
-					description="Cannot use offset when query spans multiple collections shards, improve your query",
+					description=(
+						"Cannot use offset when query spans multiple collections shards, "
+						"rethink your query or change sharding"
+					),
 					model=_Model.__name__
 				)
 
@@ -1121,6 +1134,10 @@ class Model(object):
 	def before_update(self):
 		pass
 
+	@property
+	def updated_at(self):
+		return self._original_doc.get("_")
+
 	def commit(
 		self, force=False, ignore_exceptions=None,
 		conditions=None, _transaction=None
@@ -1142,6 +1159,7 @@ class Model(object):
 			):
 				raise Exception("Need to specify _id")
 
+			self._set_query_updates["_"] = int(time.time() * 1000)
 			primary_collection = cls.get_collection(
 				getattr(self, shard_key_name)
 			)
@@ -1799,7 +1817,9 @@ def initialize_mongo(db_nodes, default_db_name=None):
 	elif(isinstance(db_nodes, list)):
 		db_nodes = [DatabaseNode(**db_node) for db_node in db_nodes]
 	else:
-		raise Exception("argument must be a list of dicts, or a single dict")
+		raise Exception(
+			"argument must be a list of dicts, or a single dict, not %s"%(type(db_nodes))
+		)
 	# check connection to mongodb
 	[db_node.mongo_client.server_info() for db_node in db_nodes]
 

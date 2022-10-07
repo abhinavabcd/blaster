@@ -4,9 +4,9 @@ Created on 04-Nov-2017
 @author: abhinav
 '''
 
-import gevent
 from gevent.threading import Thread
 from gevent.queue import Queue
+import json
 import os
 import sys
 import subprocess 
@@ -1608,14 +1608,13 @@ def _process_partitioned_task_queue_items(_queue):
 			func(*args, **kwargs)
 		except Exception as ex:
 			stacktrace_string = traceback.format_exc()
-			LOG_WARN(
-				"background_thread_run_error",
+			LOG_ERROR(
+				"background_task_run_error",
 				func_name=func.__name__,
 				exception_str=str(ex),
 				stacktrace_string=stacktrace_string
 			)
 			IS_DEV and traceback.print_exc()
-
 
 # singleton
 def __start_task_processors():
