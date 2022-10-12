@@ -1,15 +1,13 @@
-'''
-Created on 04-Nov-2017
 
-@author: abhinav
-'''
+from os import environ
 import sys, os
 import json
-from os import environ
 import logging
 from .utils import events
 import inspect
 
+
+# default env variables
 IS_PROD = environ.get("IS_PROD") == "1"
 IS_STAGING = IS_PROD and environ.get("IS_STAGING") == "1"
 IS_DEV = 1 if not (IS_PROD or IS_STAGING) else 0
@@ -20,18 +18,15 @@ DEBUG_LEVEL = int(environ.get("DEBUG_LEVEL") or 1)  # higher implies more debug 
 
 
 _this_ = sys.modules[__name__]
-frozen_keys = [k for k in dir(_this_) if k.isupper()]
-
 
 class Config:
     _config = None
     event_prefix = None
     frozen_keys = None
-    def __init__(self, event_prefix=None, frozen_keys=None):
-        self._config = {}
+    def __init__(self, event_prefix=None):
+        self.frozen_keys = {k:v for k,v in vars(_this_).items() if not k.startswith("_")}
+        self._config = dict(self.frozen_keys)
         self.event_prefix = event_prefix
-        self.Config = Config 
-        self.frozen_keys = set(frozen_keys or [])
 
     def load(self, *paths):
         import yaml
@@ -74,15 +69,12 @@ class Config:
                 caller_frame = inspect.stack()[1]
                 print("MISSING CONFIG Key#: {} {}:{}".format(key, caller_frame[1], caller_frame[2]))
             return None
-        return self._config.get(key)
+        return self._config[key]
 
 # hack: customized config module,
 # that doesn't crash for missing config variables, 
 # they will be just None.
-sys.modules[__name__] = config = Config(event_prefix="CONFIG_", frozen_keys=frozen_keys)
-
-for k in frozen_keys:
-    setattr(config, k, getattr(_this_, k))
+config = Config(event_prefix="CONFIG_")
 
 # more variables from env
 if(gcloud_credential_file := environ.get("GOOGLE_APPLICATION_CREDENTIALS")):

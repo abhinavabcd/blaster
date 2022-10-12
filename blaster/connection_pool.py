@@ -1,4 +1,3 @@
-import os
 from gevent.queue import Queue, Empty
 from .utils import events
 from .config import IS_DEV, \

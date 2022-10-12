@@ -11,24 +11,31 @@ import traceback
 import ujson as json
 import gevent
 from ..base import is_server_running, route, Request
-from ..tools import get_random_id
+from ..tools import background_task, _create_signature, get_random_id
 from ..connection_pool import use_connection_pool
 from ..utils import events
-from ..logging import LOG_WARN, LOG_SERVER
+from ..logging import LOG_ERROR, LOG_WARN, LOG_SERVER, LOG_DEBUG
 from ..config import PUSH_TASKS_SQS_URL,\
-    GCLOUD_TASKS_QUEUE_PATH, GCLOUD_TASK_RUNNER_HOST
+    GCLOUD_TASKS_QUEUE_PATH, GCLOUD_TASK_RUNNER_HOST, GCLOUD_TASKS_AUTH_SECRET
 
 push_tasks = {}
 sqs_reader_greenlets = []
 
 
-def exec_push_task(raw_bytes_message: bytes):
+def exec_push_task(raw_bytes_message: bytes, auth=None):
     message_payload = pickle.loads(
         base64.a85decode(raw_bytes_message)
     )
     kwargs = message_payload.get("kwargs", {})
     args = message_payload.get("args", [])
     func_name = message_payload.get("func_v2", "")
+    # check for authorization
+    if(
+        auth 
+        and _create_signature(auth, func_name) != message_payload.get("signature")
+    ):
+        LOG_ERROR("push_tasks", desc="authorization failed", func=func_name)
+        
     # task_id = message_payload.get("task_id", "")
     # TODO use task_id for logging
     func = push_tasks.get(func_name, None)
@@ -67,7 +74,7 @@ def process_from_sqs(queue_url, msgs_per_batch=10, sqs_client=None):
 
 @route("/gcloudtask")
 def gcloud_task(request:Request):
-    exec_push_task(request._post_data)
+    exec_push_task(request._post_data, auth=GCLOUD_TASKS_AUTH_SECRET)
     return "OK"
 
 # wrapper fun to mark a function as a push_task
@@ -96,6 +103,11 @@ def post_task_to_sqs(push_tasks_sqs_url, message_body, sqs_client=None):
 
 @use_connection_pool(gcloudtasks_client="google_cloudtasks")
 def post_task_to_gcloud_tasks(queue_path, host, message_body: dict, gcloudtasks_client=None):
+    if(GCLOUD_TASKS_AUTH_SECRET):
+        message_body["signature"] = _create_signature(
+            GCLOUD_TASKS_AUTH_SECRET, message_body["func_name"]
+        )
+
     message_body = base64.a85encode(pickle.dumps(message_body)) # bytes
     task = {
         "http_request": {  # Specify the type of request.
@@ -113,6 +125,7 @@ def post_task_to_gcloud_tasks(queue_path, host, message_body: dict, gcloudtasks_
         }
     )
 
+@background_task
 def post_a_task(func, *args, **kwargs):
     args = list(args)
 
@@ -136,9 +149,10 @@ def post_a_task(func, *args, **kwargs):
     if(sqs_url := PUSH_TASKS_SQS_URL):
         return post_task_to_sqs(sqs_url, message_body)        
     elif(
-        (gcloud_tasks_queue_path := GCLOUD_TASKS_QUEUE_PATH)
+        (gcloud_tasks_queue_path := GCLOUD_TASKS_QUEUE_PATH) 
         and (gcloud_task_runner_host := GCLOUD_TASK_RUNNER_HOST)
     ):
+        #ex: queue_path: projects/<PROJECT_NAME>/locations/europe-west3/queues/<QUEUE_NAME>
         return post_task_to_gcloud_tasks(
             gcloud_tasks_queue_path, gcloud_task_runner_host, message_body
         )
