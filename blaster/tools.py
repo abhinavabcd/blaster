@@ -1527,11 +1527,10 @@ def ignore_exceptions(*exceptions):
 # r etries all exceptions or specific given expections only
 # backoff = 1 => exponential sleep
 # max_time milliseconds for exception to sleep, not counts the func runtime
-def retry(num_retries=2, exceptions=None, max_time=5000):
+def retry(num_retries=2, ignore_exceptions=None, max_time=5000):
 	num_retries = max(2, num_retries)
 	sleep_time_on_fail = max_time / num_retries
-	exceptions = set(exceptions) if exceptions else None
-
+	ignore_exceptions = ignore_exceptions or []
 	def decorator(func):
 		def new_func(*args, **kwargs):
 			retry_count = 0
@@ -1539,9 +1538,13 @@ def retry(num_retries=2, exceptions=None, max_time=5000):
 				try:
 					return func(*args, **kwargs)
 				except Exception as ex:
-					if(exceptions and ex not in exceptions):
+					ignore_exception = False
+					for _ex_type in ignore_exceptions:
+						if(isinstance(ex, _ex_type)):
+							ignore_exception = True
+							break
+					if(not ignore_exception):
 						raise ex
-
 					LOG_WARN("retrying", func=func.__name__, exception=str(ex))
 					sleep(sleep_time_on_fail / 1000)
 				retry_count += 1
@@ -1574,8 +1577,10 @@ def empty_func():
 _joinables = []
 
 
-def start_background_thread(func, args=(), kwargs={}):
-	if(not start_background_thread.can_run):
+# Background tasks START
+
+def __background_tasks_runner_thread(func, args=(), kwargs={}):
+	if(not __background_tasks_runner_thread.can_run_tasks):
 		LOG_WARN(
 			"background_threads",
 			msg="Cannot run background threads. Correct copepaths"
@@ -1595,15 +1600,16 @@ def start_background_thread(func, args=(), kwargs={}):
 	_thread_to_start.start()
 
 
-start_background_thread.can_run = True
+__background_tasks_runner_thread.can_run_tasks = True
 
 # partioned queues
-_partitioned_background_task_queues = tuple(Queue() for i in range(4))
+_partitioned_background_task_queues = tuple(Queue() for _ in range(4))
 
 
 def _process_partitioned_task_queue_items(_queue):
-	while start_background_thread.can_run or not _queue.empty():
+	while __background_tasks_runner_thread.can_run_tasks or not _queue.empty():
 		func, args, kwargs = _queue.get()
+		_start_time = time.time()
 		try:
 			func(*args, **kwargs)
 		except Exception as ex:
@@ -1615,12 +1621,20 @@ def _process_partitioned_task_queue_items(_queue):
 				stacktrace_string=stacktrace_string
 			)
 			IS_DEV and traceback.print_exc()
+		
+		if(_elapsed_time := (time.time() - _start_time) > 3):
+			# background tasks shouldn't run longer than 5 seconds
+			LOG_WARN(
+				"background_task_perf",
+				func_name=func.__name__,
+				elapsed_millis=int(_elapsed_time * 1000),
+			)
 
 # singleton
 def __start_task_processors():
 	# start threads to process entries in partitioned queues
 	for _queue in _partitioned_background_task_queues:
-		start_background_thread(
+		__background_tasks_runner_thread(
 			_process_partitioned_task_queue_items, args=(_queue,)
 		)
 	__start_task_processors.started = True
@@ -1649,7 +1663,7 @@ def submit_background_task(partition_key, func, *args, **kwargs):
 def background_task(func):
 	def wrapper(*args, **kwargs):
 		# spawn the thread
-		if(not start_background_thread.can_run):
+		if(not __background_tasks_runner_thread.can_run_tasks):
 			LOG_WARN(
 				"background_threads",
 				msg="Cannot run background threads as can_run flag is not set. Correct codepaths"
@@ -1666,14 +1680,16 @@ def background_task(func):
 @events.register_listener(["blaster_exit0"])
 def exit_0():
 	# start of exit - background threads cannot run
-	if(not start_background_thread.can_run):
+	if(not __background_tasks_runner_thread.can_run_tasks):
 		return  # double calling function
 
-	start_background_thread.can_run = False
+	__background_tasks_runner_thread.can_run_tasks = False
 
 	# push an empty function to queues to flush them off
 	for _partitioned_task_queue in _partitioned_background_task_queues:
 		_partitioned_task_queue.put((empty_func, [], {}))
+
+# Background tasks END
 
 
 @events.register_listener(["blaster_exit5"])

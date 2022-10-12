@@ -25,17 +25,17 @@ import socket
 import pickle
 from gevent import local
 from gevent.socket import socket as GeventSocket
-from gevent.threading import Lock
+from gevent.threading import Lock, Thread
 from gevent.server import StreamServer
 from requests_toolbelt.multipart import decoder
 
 from . import config as blaster_config
 from .config import IS_DEV
 from .tools import SanitizedDict, get_mime_type_from_filename, DummyObject,\
-	set_socket_fast_close_options, start_background_thread, BufferedSocket, ltrim
+	set_socket_fast_close_options, BufferedSocket, ltrim
 from .utils import events
 from .logging import LOG_ERROR, LOG_SERVER
-from .schema import Int, Object, Str, schema as schema_func
+from .schema import Int, Object, Required, Str, schema as schema_func
 from .websocket.server import WebSocketServerHandler
 
 # gevent local
@@ -112,24 +112,31 @@ class HeadersDict(dict):
 
 
 class Query(Object):
-	def __init__(self, **kwargs):
+	def __init__(self, *key, **kwargs):
+		if(key):
+			kwargs[key] = Required[str]
 		super().__init__(**kwargs)
-
 
 class Headers(Object):
-	def __init__(self, **kwargs):
+	def __init__(self, *key, **kwargs):
+		if(key):
+			kwargs[key] = Required[str]
 		super().__init__(**kwargs)
-
 
 class Cookie(Object):
-	def __init__(self, **kwargs):
+	def __init__(self, *key, **kwargs):
+		if(key):
+			kwargs[key] = Required[str]
 		super().__init__(**kwargs)
-
 
 class Body(Object):
-	def __init__(self, **kwargs):
+	def __init__(self, *key, **kwargs):
+		if(key):
+			kwargs[key] = Required[str]
 		super().__init__(**kwargs)
 
+# custom argument hooks
+_argument_creator_hooks = {}
 
 class Request:
 	# class level
@@ -137,7 +144,6 @@ class Request:
 	_after_hooks = []
 
 	after = []
-	__argument_creator_hooks = {}
 
 	# instance level
 	sock = None
@@ -283,109 +289,67 @@ class Request:
 
 	# {type: hook...} function to call to create that argument
 
-	@classmethod
-	def set_arg_type_hook(cls, _type, hook=None):
+	@staticmethod
+	def set_arg_type_hook(_type, hook=None):
 		if(hook == None):
 			# using as decorator  @Request.set_arg_type_hook(User)
 			def wrapper(func):
-				cls.__argument_creator_hooks[_type] = func
+				_argument_creator_hooks[_type] = func
 				return func
 			return wrapper
 		else:
-			cls.__argument_creator_hooks[_type] = hook
+			_argument_creator_hooks[_type] = hook
 
 	# create the value of the argument based on type, default
-	def make_arg(self, name, _type, default, validator):
-		if(not _type):
-			ret = self.get(name, default=_OBJ_END_)
-			if(ret == _OBJ_END_):
-				if(default == _OBJ_END_):
-					# error
-					raise TypeError("{:s} field is required".format(name))
-				return default
-			return ret
-		if(_type == Request):  # request_params: Request
-			return self
+	@classmethod
+	def arg_generator(cls, name, _type, default):
+		if(_type in (str, int, float)):
+			return lambda req: (_val := req.get(name, default)) and _type(_val)
+		elif(_type == Request):  # request_params: Request
+			return lambda req: req
 		elif(_type == Query):  # query: Query
-			return self._get
+			return lambda req: req._get
 		elif(_type == Headers):  # headers: Headers
-			return self._headers
+			return lambda req: req._headers
 		elif(_type == Body):  # headers: Headers
-			return self._post
-
+			return lambda req: req._post
 		elif(isinstance(_type, Query)):  # Query(id=str, abc=str)
-			if(not _type._validations):
-				return self._get
-			ret = {}
-			for k, attr_validation in _type._validations.items():
-				ret[k] = attr_validation(self._get.get(k, escape_quotes=False))
-			return DummyObject(ret)
+			return lambda req: _type.from_dict(req._get)
 
 		elif(isinstance(_type, Headers)):  # Headers('user-agent')
-			if(not _type._validations):
-				return self._get
-			ret = {}
-			for k, attr_validation in _type._validations.items():
-				ret.k = attr_validation(self._headers.get(k))
-			return DummyObject(ret)
+			return lambda req: _type.from_dict(req._headers)
 
 		elif(isinstance(_type, Body)):  # Headers('user-agent')
-			if(not _type._post):
-				return None
-			ret = {}
-			for k, attr_validation in _type._validations.items():
-				_alternate_k = getattr(_type._property_types[k], "_name", None)
-				# first check if an alternate serialized name is given
-				_val = _alternate_k and self._post.get(_alternate_k, escape_quotes=False)
-				# also try with basic name
-				_val = _val or self._post.get(k, escape_quotes=False)
-
-				ret[k] = attr_validation(_val)
-			return DummyObject(ret)
+			return lambda req: _type.from_dict(req._post)
 
 		# type should be class at this point
 		# if has an arg injector, use it
-		has_arg_creator_hook = Request.__argument_creator_hooks.get(_type)
+		has_arg_creator_hook = _argument_creator_hooks.get(_type)
 		if(has_arg_creator_hook):
-			return has_arg_creator_hook(self)
+			return has_arg_creator_hook
 
-		elif(issubclass(_type, Query)):  # :LoginRequestQuery
-			ret = _type()
-			for k, attr_validation in _type._validations.items():
-				_alternate_k = getattr(_type._property_types[k], "_name", None)
-				# first check if an alternate serialized name is given
-				_val = _alternate_k and self._get.get(_alternate_k, escape_quotes=False)
-				# also try with basic name
-				_val = _val or self._get.get(k, escape_quotes=False)
+		elif(isinstance(_type, type) and issubclass(_type, Body)):
+			return lambda req: _type.from_dict(req._post)
 
-				setattr(ret, k, _val)
-			Query.validate(ret)
-			return ret
+		elif(isinstance(_type, type) and issubclass(_type, Query)):  # :LoginRequestQuery
+			return lambda req: _type.from_dict(req._get)
 
-		elif(issubclass(_type, Body)):
-			ret = _type()
-			# set the attributes from the request
-			for k, attr_validation in _type._validations.items():
-				_alternate_k = getattr(_type._property_types[k], "_name", None)
-				# first check if an alternate serialized name is given
-				_val = _alternate_k and self._post.get(_alternate_k, escape_quotes=False)
-				# also try with basic name
-				_val = _val or (self._post and self._post.get(k, escape_quotes=False))
+		elif(
+			isinstance(_type, Object)
+			or (isinstance(_type, type) and issubclass(_type, Object))
+		):
+			return lambda req: _type.from_dict(req)
 
-				setattr(ret, k, _val)
-			Body.validate(ret)
-			return ret
-
-		# get or post
-		ret = self.get(name, default=_OBJ_END_)
-		if(ret == _OBJ_END_):
-			if(default == _OBJ_END_):  # no default provided, raise error
-				raise TypeError("{:s} field is required".format(name))
-			return default
-		return validator(ret) if validator else ret
-
-	def make_obj(self, _Type):
-		return self.make_arg(None, _Type, None, None)
+		else:
+			def _no_type_arg(req):
+				ret = req.get(name, default=_OBJ_END_)
+				if(ret == _OBJ_END_):
+					if(default == _OBJ_END_):
+						# error
+						raise TypeError("{:s} field is required".format(name))
+					return default
+				return ret
+			return _no_type_arg
 
 	def to_dict(self):
 		return {"get": self._get, "post": self._post}
@@ -537,6 +501,8 @@ class App:
 
 			args = []  # typed or untyped
 			kwargs = []
+			arg_generators = []
+			kwarg_generators = []
 			_arg_already_exists = set()
 			for arg_name, _def in args_spec.items():
 
@@ -554,13 +520,19 @@ class App:
 							_type = str  # default type for path params
 							_default = ""
 					# name, type, default, validator
-					args.append((arg_name, _type, _default, schema_func(_type)[1]))
+					args.append((arg_name, _type, _default))
+					arg_generators.append(Request.arg_generator(arg_name, _type, _default))
 				else:
 					# name, type, default, validator
-					kwargs.append((arg_name, _type, _def.default, schema_func(_type)[1]))
+					kwargs.append((arg_name, _type, _def.default))
+					if(_type):
+						kwarg_generators.append((arg_name, Request.arg_generator(arg_name, _type, _def.default)))
 
 			handler["args"] = args
 			handler["kwargs"] = kwargs
+			handler["arg_generators"] = arg_generators
+			handler["kwarg_generators"] = kwarg_generators
+
 			if(func_signature.return_annotation != inspect._empty):
 				handler["return"] = func_signature.return_annotation
 
@@ -899,11 +871,11 @@ class App:
 			# set a reference to handler
 			request_params.handler = handler
 
-			for _args in handler["args"]:
-				handler_args.append(request_params.make_arg(*_args))
+			for arg_generator in handler["arg_generators"]:
+				handler_args.append(arg_generator(request_params))
 
-			for name, *_args in handler["kwargs"]:
-				handler_kwargs[name] = request_params.make_arg(name, *_args)
+			for name, kwarg_generator in handler["kwarg_generators"]:
+				handler_kwargs[name] = kwarg_generator(request_params)
 
 			before_handling_hooks = handler.get("before")
 			after_handling_hooks = handler.get("after")
@@ -1289,10 +1261,9 @@ def blaster_fork(num_procs):
 	BROADCASTER_PID = os.getpid()
 	multiproc_broadcaster_sock_address = "/tmp/blaster-" + str(BROADCASTER_PID) + ".s"
 
-	# broadcaster process => listening socket
-	# cloned process => connection to broadcaster process
 	sock = None
 	tracked_connections = []
+	joinables = []
 
 	# message types
 	EVENT = 0
@@ -1307,11 +1278,12 @@ def blaster_fork(num_procs):
 	# starts reading for events
 	def read_data_from_other_process(sock):
 		CUR_PID = os.getpid()
-		print("multiproc broadcaster:reader starting:", CUR_PID)
-		while(
-			start_background_thread.can_run
-			and (data_size_bytes := sock.recvn(4))
-		):
+		if(BROADCASTER_PID != CUR_PID):
+			print("cloned process:reading from broadcaster process:", CUR_PID)
+		else:
+			print("broadcaster:reading from cloned process:", CUR_PID)
+
+		while(_is_server_running and (data_size_bytes := sock.recvn(4))):
 			data_size = int.from_bytes(data_size_bytes, byteorder=sys.byteorder)
 			data_bytes = sock.recvn(data_size)
 			data = pickle.loads(data_bytes)
@@ -1336,21 +1308,6 @@ def blaster_fork(num_procs):
 
 		sock.close()
 		(sock in tracked_connections) and tracked_connections.remove(sock)
-
-	# accept only on central broadcaster process
-	def accept_connections_from_child(sock):
-		print("multiproc broadcaster:listening to connections:", BROADCASTER_PID)
-		while(
-			start_background_thread.can_run
-			and (_client := sock.accept())
-			and start_background_thread.can_run  # haha first time using same condition
-		):
-			client_sock, client_addr = _client
-			client_sock = BufferedSocket(client_sock)
-			# keep track
-			print("multiproc broadcaster:new connection accepted:", BROADCASTER_PID)
-			tracked_connections.append(client_sock)
-			start_background_thread(read_data_from_other_process, (client_sock,))
 
 	# create multiproc broadcaster
 	def broadcast_event_multiproc(_id, *args, **kwargs):
@@ -1380,10 +1337,10 @@ def blaster_fork(num_procs):
 		if(os.getpid() == BROADCASTER_PID):
 			# this will close all pending read connections
 			broadcast_event_multiproc(None, None)
-			# create a loopback connection to exit all connections
-			sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-			sock.connect(multiproc_broadcaster_sock_address)
-			sock.close()
+
+		for _thread in joinables:
+			print("Waiting on multiproc broadcaster thread to shutdown..")
+			_thread.join()
 
 	# start forking
 	blaster_config.BLASTER_FORK_ID = 0
@@ -1401,16 +1358,26 @@ def blaster_fork(num_procs):
 		sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 		sock.bind(multiproc_broadcaster_sock_address)
 		sock.listen(2)
-		start_background_thread(accept_connections_from_child, (sock,))
+
+		# wait for other forked processes to connect to this broadcaster
+		for i in range(num_procs - 1):
+			client_sock, client_addr = sock.accept()
+			client_sock = BufferedSocket(client_sock)
+			# keep track
+			tracked_connections.append(client_sock)
+			joinables.append(_thread := Thread(target=read_data_from_other_process, args=(client_sock,)))
+			_thread.start()
+
+		sock.close() # all child processes connected
+
 	else:
 		for i in range(3):
 			try:
 				# cloned process, connect to the BROADCASTER SOCKET
 				sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 				sock.connect(multiproc_broadcaster_sock_address)
-				start_background_thread(
-					read_data_from_other_process, (BufferedSocket(sock),)
-				)
+				joinables.append(_thread := Thread(target=read_data_from_other_process, args=(BufferedSocket(sock),)))
+				_thread.start()
 				break
 			except Exception as ex:
 				print("waiting to connect to broadcaster :", ex)
