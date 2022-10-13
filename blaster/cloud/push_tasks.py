@@ -105,7 +105,7 @@ def post_task_to_sqs(push_tasks_sqs_url, message_body, sqs_client=None):
 def post_task_to_gcloud_tasks(queue_path, host, message_body: dict, gcloudtasks_client=None):
     if(GCLOUD_TASKS_AUTH_SECRET):
         message_body["signature"] = _create_signature(
-            GCLOUD_TASKS_AUTH_SECRET, message_body["func_name"]
+            GCLOUD_TASKS_AUTH_SECRET, message_body["func_v2"]
         )
 
     message_body = base64.a85encode(pickle.dumps(message_body)) # bytes

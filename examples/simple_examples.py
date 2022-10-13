@@ -80,10 +80,9 @@ if __name__ == "__main__":
         print("Forking multiple servers...", pid)
 
     start_server(8081, handlers=[
-        (
-            '^/(.*)',
             static_file_handler(
+                '/',
                 os.path.dirname(os.path.abspath(__file__)) + "/web/"
             )
-        )  # can server files too
-    ])
+        ]
+    )

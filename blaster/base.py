@@ -511,15 +511,13 @@ class App:
 				_arg_already_exists.add(arg_name)
 
 				_type = _def.annotation if _def.annotation != inspect._empty else None
+				_default = _OBJ_END_
+				# check if it's pathparam, it's default is str
+				if(not _type and arg_name in _path_params):
+					_type = str  # default type for path params
+					_default = ""
+
 				if(_def.default == inspect._empty):
-					_default = _OBJ_END_
-					if(not _type):
-						if(arg_name not in _path_params):  # check if it's a path param
-							continue
-						else:
-							_type = str  # default type for path params
-							_default = ""
-					# name, type, default, validator
 					args.append((arg_name, _type, _default))
 					arg_generators.append(Request.arg_generator(arg_name, _type, _default))
 				else:
