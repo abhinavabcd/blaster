@@ -36,8 +36,9 @@ class Config:
                 config_files = [path]
             else:
                 config_files.append(os.path.join(path, "app.yaml"))
-                config_files.append(os.path.join(path, "dev.yaml"))
-                if(config.IS_PROD):
+                if(config.IS_DEV):
+                    config_files.append(os.path.join(path, "dev.yaml"))
+                elif(config.IS_PROD):
                     config_files.append(os.path.join(path, "prod.yaml"))
                     config_files.append(os.path.join(path, "prod.secrets.yaml"))
                     if(config.IS_STAGING):

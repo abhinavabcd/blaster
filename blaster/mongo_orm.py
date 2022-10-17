@@ -1768,8 +1768,10 @@ def initialize_model(_Model):
 			db_node.get_collection(_Model).create_index(pymongo_index, **mongo_index_args)
 
 	# create secondary shards
-	for _secondary_shard_key, _secondary_shard in _Model._secondary_shards_.items():
+	for _secondary_shard_key in list(_Model._secondary_shards_.keys()): # iterate on copy
+		_secondary_shard = _Model._secondary_shards_[_secondary_shard_key]
 		if(not _secondary_shard.attrs):
+			_Model._secondary_shards_.pop(_secondary_shard_key)
 			LOG_ERROR(
 				"MONGO", description="not creating secondary shards without any related index",
 				model=_Model.__name__,

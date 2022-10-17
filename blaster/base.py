@@ -31,7 +31,7 @@ from requests_toolbelt.multipart import decoder
 
 from . import config as blaster_config
 from .config import IS_DEV
-from .tools import SanitizedDict, get_mime_type_from_filename, DummyObject,\
+from .tools import LRUCache, SanitizedDict, get_mime_type_from_filename, DummyObject,\
 	set_socket_fast_close_options, BufferedSocket, ltrim
 from .utils import events
 from .logging import LOG_ERROR, LOG_SERVER
@@ -300,6 +300,17 @@ class Request:
 		else:
 			_argument_creator_hooks[_type] = hook
 
+	@staticmethod
+	def wrap_arg_hook_for_defaults(arg_type_hook, name, default):
+		def wrapper(req):
+			ret = arg_type_hook(req)
+			if(ret != None):
+				return ret
+			elif(default != _OBJ_END_):
+				return default
+			raise TypeError("need {} with this request".format(name))
+		return wrapper
+
 	# create the value of the argument based on type, default
 	@classmethod
 	def arg_generator(cls, name, _type, default):
@@ -326,7 +337,7 @@ class Request:
 		# if has an arg injector, use it
 		has_arg_creator_hook = _argument_creator_hooks.get(_type)
 		if(has_arg_creator_hook):
-			return has_arg_creator_hook
+			return Request.wrap_arg_hook_for_defaults(has_arg_creator_hook, name, default)
 
 		elif(isinstance(_type, type) and issubclass(_type, Body)):
 			return lambda req: _type.from_dict(req._post)
@@ -742,7 +753,7 @@ class App:
 		if(not request_line):
 			return
 		post_data = None
-		request_params = Request(buffered_socket)
+		request_params = req_ctx.req = Request(buffered_socket)
 		cur_millis = req_ctx.timestamp = int(1000 * time.time())
 		request_type = None
 		request_path = None
@@ -869,11 +880,11 @@ class App:
 			# set a reference to handler
 			request_params.handler = handler
 
-			for arg_generator in handler["arg_generators"]:
-				handler_args.append(arg_generator(request_params))
+			for _arg_generator in handler["arg_generators"]:
+				handler_args.append(_arg_generator(request_params))
 
-			for name, kwarg_generator in handler["kwarg_generators"]:
-				handler_kwargs[name] = kwarg_generator(request_params)
+			for name, _kwarg_generator in handler["kwarg_generators"]:
+				handler_kwargs[name] = _kwarg_generator(request_params)
 
 			before_handling_hooks = handler.get("before")
 			after_handling_hooks = handler.get("after")
@@ -1091,7 +1102,7 @@ def is_server_running():
 
 
 # File handler for blaster server
-static_file_cache = {}
+static_file_cache = LRUCache(1000)
 
 
 def static_file_handler(
@@ -1152,7 +1163,7 @@ def static_file_handler(
 			finally:
 				gevent_lock.release()
 
-			static_file_cache[path] = file_resp
+			static_file_cache.set(path, file_resp)
 
 		return file_resp  # headers , data
 
@@ -1167,69 +1178,16 @@ def static_file_handler(
 		# strip / at the begininning in the cache
 		# as we search matching path without leading slash in the cache 
 		# in the file handler
-		static_file_cache[_url_file_path] = get_file_resp(relative_file_path)
+		static_file_cache.set(_url_file_path, get_file_resp(relative_file_path))
 
 	return url_path + "{*path}", file_handler
 
-
-# Auto api response utilities
-class AutoApiResponse:
-	data = None
-	templates = None
-	frame_template = None
-	meta_tags = None
-	return_type_param = None
-
-	def __init__(
-		self, data, template=None,
-		frame_template=None, templates=None, meta_tags=None,
-		return_type_param="return_type"
-	):
-		self.data = data
-		self.frame_template = frame_template
-		self.meta_tags = meta_tags
-		self.templates = {"content": template}
-		self.return_type_param = return_type_param
-		if(templates):
-			self.templates.update(templates)
-
-
-def auto_api_response(request_params, response):
-	(status, headers, body) = App.response_body_to_parts(response)
-	if(isinstance(body, AutoApiResponse)):
-		# just keep a reference as we overwrite body variable
-		blaster_response_obj = body
-		# set body as default to repose_obj.data
-		body = blaster_response_obj.data
-		return_type = request_params.get(blaster_response_obj.return_type_param)
-		# standard return_types -> json, content, None(=>content inside frame)
-		if(return_type != "json"):
-			# if template file is given and body should be a dict for the template
-			templates = blaster_response_obj.templates
-			# if no template given or returns just the blaster_response_obj.data
-			template_exists \
-				= (return_type and templates.get(return_type))\
-				or blaster_response_obj.templates.get("content")
-
-			if(template_exists and isinstance(body, dict)):
-				tmpl_rendered = template_exists.render(
-					request_params=request_params,
-					**body
-				)
-
-				frame_template = blaster_response_obj.frame_template
-				# if there is a return type, just retutn the template
-				# render the full frame
-				if(return_type or not frame_template):
-					body = tmpl_rendered  # partial
-
-				else:  # return type is nothing -> return full frame
-					body = frame_template.render(
-						body_content=tmpl_rendered,
-						meta_tags=blaster_response_obj.meta_tags
-					)
-	return status, headers, body
-
+def proxy_file_handler(url_path, proxy_url):
+	import requests
+	def file_handler(req:Request, path):
+		ret = requests.get(proxy_url + path, headers=dict(req._headers))
+		return {"Content-Type": ret.headers["Content-Type"]}, ret.text
+	return url_path + "{*path}", file_handler
 
 # Get args hook
 def _get_web_socket_handler(request_params):
@@ -1388,3 +1346,9 @@ gevent.signal_handler(
 	signal.SIGINT,
 	lambda: events.broadcast_event(signal.SIGINT)
 )
+
+# DEV SPECIFIC SETTINGS
+if(IS_DEV):
+	if(blaster_config.DEV_FORCE_ACCESS_CONTROL_ALLOW_ORIGIN):
+		default_stream_headers["Access-Control-Allow-Origin"] = '*'
+

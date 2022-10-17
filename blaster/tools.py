@@ -1622,7 +1622,7 @@ def _process_partitioned_task_queue_items(_queue):
 			)
 			IS_DEV and traceback.print_exc()
 		
-		if(_elapsed_time := (time.time() - _start_time) > 3):
+		if((_elapsed_time := (time.time() - _start_time)) > 3):
 			# background tasks shouldn't run longer than 5 seconds
 			LOG_WARN(
 				"background_task_perf",

@@ -35,13 +35,14 @@ Optional = _Optional()
 Required = _Required()
 
 
-class Int:
-    def __init__(self, one_of=None, _min=_OBJ_END_, _max=_OBJ_END_, default=_OBJ_END_, _name=None):
+class Number:
+    def __init__(self, one_of=None, _min=_OBJ_END_, _max=_OBJ_END_, default=_OBJ_END_, _name=None, _type=int):
         self._min = _min
         self._max = _max
         self.one_of = set(one_of) if one_of else None
         self._default = default
         self._name = _name
+        self._type = _type
         # make schema
         self._schema_ = _schema = {"type": "integer"}
         if(default != _OBJ_END_):
@@ -64,7 +65,15 @@ class Int:
             raise TypeError("more than maxlen {:d}".format(self._max))
         if(self.one_of and e not in self.one_of):
             raise TypeError("should be one of {:d}".format(str(self.one_of)))
-        return e
+        return self._type(e)
+
+class Int(Number):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, _type=int, **kwargs)
+
+class Float(Number):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, _type=float, **kwargs)
 
 
 class Str:
@@ -109,6 +118,8 @@ class Str:
             if(self._default != _OBJ_END_):
                 return self._default
             raise TypeError("should be string")
+        if(not isinstance(e, str)):
+            e = str(e)
         if(len(e) < self.minlen):
             raise TypeError("should be minlen {:d}".format(self.minlen))
         if(len(e) > self.maxlen):
@@ -129,17 +140,24 @@ class Array:
         self._default = default
 
         # contents validation
-        _s, _v = schema(self._types)
+        _s, _item_validation = schema(self._types)
 
         self._schema_ = _schema = {"type": "array", "items": _s}
         if(default != _OBJ_END_):
             _schema["default"] = default
-        # this is spefic validataion
+            self._default = default
+        self._mix = isinstance(self._types, tuple)
+        # derieve these from the partial of item validation and use it for
+        # array validation
+        self._nullable = _item_validation.keywords.get("nullable") or True
+        self._complex_validations = _item_validation.keywords.get("complex_validations") or ()
+        self._simple_types = _item_validation.keywords.get("simple_types") or ()
         self.validate = partial(
-            array_validation,
-            self,
-            mix=isinstance(self._types, tuple),
-            **_v.keywords
+            array_validation, self, # arg here
+            simple_types=self._simple_types,
+            complex_validations=self._complex_validations,
+            mix=self._mix,
+            nullable=self._nullable
         )
 
     def __getitem__(self, *keys):
@@ -166,15 +184,21 @@ Type definitions:
 '''
 
 class _Dict:
-    def __init__(self, k_type, val_type):
+    def __init__(self, k_type, val_type, default=_OBJ_END_, _name=None):
         self.key_ype_validator = schema(k_type)[1]
         self.val_type_validator = schema(val_type)[1]
+        self._default = default
+        self._name = _name
         self._schema_ = {
             "type": "object",
             "additionalProperties": schema(val_type)[0]
         }
 
     def validate(self, e):
+        if(e == None):
+            if(self._default != _OBJ_END_):
+                return self._default
+
         if(not isinstance(e, dict)):
             return e
         for k in list(e.keys()):
@@ -196,7 +220,7 @@ class Object:
         self._required = set(_required_) if _required_ else set()
         self._name = _name
 
-        # instance specific schema
+        # instance specific: Ex: Object(a=Int, b=Str)
         self._properties = {}
         self._validations = {}
         self._property_types = {}
@@ -217,19 +241,26 @@ class Object:
             _schema["default"] = default
         
 
-    # validates Object(a=str, b=int, h=Test)
-    # just does inplace validation
-    def validate(self, e=_OBJ_END_):
-        is_validating_dict = True
-        if(e == _OBJ_END_):
-            e = self.__dict__
-            is_validating_dict = False
-        elif(isinstance(e, str)):
-            e = json.loads(e)
+    # validates Object(a=str, b=int, h=Test).validate({} or obj or string)
+    # validates ObjectClass.validate({} or )
+    def validate(self):
+        self.__class__.validate(self) # resets internal dict
 
+    @classmethod
+    def validate(cls, obj):
+        is_validating_dict = isinstance(obj, dict)
+        e = obj
+        if(isinstance(e, cls)):
+            e = obj.__dict__
+            is_validating_dict = False
+        elif(isinstance(obj, str)):
+            e = json.loads(obj)
+        else:
+            raise TypeError({
+                "exception": "Invalid type of {} given {}".format(cls.__name__, obj),
+            })
         k = None
         attr_value = None
-        cls = self.__class__ or self
         try:
             for k, attr_validation in cls._validations.items():
                 attr_value = e.get(k, _OBJ_END_)
@@ -244,7 +275,7 @@ class Object:
 
                 if(_validated_attr != attr_value):
                     e[k] = _validated_attr
-            return e if is_validating_dict else self
+            return e if is_validating_dict else obj
         except Exception as ex:
             raise TypeError({
                 "exception": (ex.args and ex.args[0]) or "Validation failed",
@@ -259,20 +290,9 @@ class Object:
     @classmethod
     def from_dict(cls, _dict: dict):
         ret = cls()
-        for k, _validator in cls._validations.items():
-            val_type = cls._property_types[k]
-            # name override ? 
-            _alternate_k = getattr(val_type, "_name", None)
-            # first check if an alternate serialized name is given
-            _val = _alternate_k and _dict.get(_alternate_k)
-            # also try with basic name
-            _val = _val or _dict.get(k)
-
-            if(issubclass(val_type, Object)):
-                _val = _validator(val_type.from_dict(_val))
-            else:
-                _val = _validator(_val)
-            setattr(ret, k, _val)
+        # TODO: improve performance by caching _name(in json) -> to 
+        for _k, (k, _validator) in cls._dict_key_to_object_key.items():
+            setattr(ret, k, _validator(_dict.get(_k)))
         return ret
         
     def to_dict(self):
@@ -316,13 +336,16 @@ def item_validation(e, simple_types=(), complex_validations=(), nullable=True):
     raise TypeError("Cannot be none")
 
 
-def array_validation(_type, arr, simple_types=(), complex_validations=(), mix=False, nullable=True):
+def array_validation(_type, arr, simple_types=None, complex_validations=None, mix=False, nullable=True):
     # sequece
-    if(arr == None and not nullable):
+    if(arr == None):
         if(_type._default != _OBJ_END_):
             return _type._default
+        if(nullable):
+            return None
         raise TypeError("Cannot be none")
     if(not isinstance(arr, list)):
+        print(arr)
         arr = json.loads(arr)
 
     filter_nones = False
@@ -389,6 +412,8 @@ def schema(x):
         x._properties = _properties = {}
         x._property_types = {}
         x._required = _required = set()
+        x._dict_key_to_object_key = {} # used when converting json/dict to object
+
         for k, _type in get_type_hints(x).items():
             is_required = True
             if(
@@ -407,17 +432,33 @@ def schema(x):
             elif(isinstance(_type, _Required)):
                 # required
                 _type = _type._types[0]
+            
+            # pure type to instance of schema types
+            _default = x.__dict__.get(k, _OBJ_END_)  # declaration default
+            if(x == int or x == Int):
+                _type = Int(default=_default)
+
+            elif(x == float):
+                _type = Float(default=_default)
+
+            elif(x == str or x == Str):
+                _type = Str(default=_default)
+
+            elif(x == Array or x == list):  # genric
+                _type = Array(default=list(_default))
+
+            elif(x == dict or x == Dict):  # generic without any attributes
+                _type = _Dict(default=dict(_default))
 
             _schema_and_validation = schema(_type)
             if(_schema_and_validation):
                 _properties[k], _validations[k] = _schema_and_validation
-                _default = x.__dict__.get(k, _OBJ_END_)  # declaration default
                 if(_default != _OBJ_END_):  # ? and not isinstance(_type, type)):
-                    _type._default = _default
                     is_required = False
                 is_required and _required.add(k)
                 # keep track of propeties
                 x._property_types[k] = _type
+                x._dict_key_to_object_key[getattr(_type, "_name", None) or k] = (k, _validations[k])
         # create schema
         x._schema_ = ret = schema.defs[x.__name__] = {
             "type": "object",
@@ -454,7 +495,7 @@ def schema(x):
             if(_type in (int, str, float)):
                 simple_types.append(_type)
             else:
-                complex_validations.append(_type)
+                complex_validations.append(_v)
 
         ret = None
         if(len(x) == 1):
@@ -474,15 +515,6 @@ def schema(x):
             nullable=is_nullable
         )
 
-    elif(x == int or x == Int):
-        return {"type": "integer"}, to_int
-
-    elif(x == float):
-        return {"type": "number", "format": "float"}, to_float
-
-    elif(x == str or x == Str):
-        return {"type": "string"}, to_str
-
     elif(isinstance(x, Str)):
         return x._schema_, x.validate
 
@@ -491,12 +523,6 @@ def schema(x):
 
     elif(isinstance(x, _Dict)):
         return x._schema_, x.validate
-
-    elif(x == Array or x == list):  # genric
-        return {"type": "array"}, (lambda e: e if isinstance(e, list) else None)
-
-    elif(x == dict):  # generic without any attributes
-        return {"type": "object"}, (lambda e: e if isinstance(e, dict) else None)
 
     elif(isinstance(x, Array)):  # Array(_types)
         return x._schema_, x.validate
