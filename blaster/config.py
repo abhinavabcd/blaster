@@ -31,6 +31,10 @@ class Config:
     def load(self, *paths):
         import yaml
         for path in paths or ["./"]:
+            path = os.path.join(
+                os.path.dirname(inspect.stack()[1][1]), # caller file, called once usually, so no performance impact on app
+                path
+            )
             config_files = []
             if(os.path.isfile(path)):
                 config_files = [path]

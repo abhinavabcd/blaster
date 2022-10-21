@@ -911,13 +911,13 @@ class App:
 
 			status, response_headers, body = App.response_body_to_parts(response_from_handler)
 
-			if(status or body != I_AM_HANDLING_THE_SOCKET):
+			if(status or (body != I_AM_HANDLING_THE_SOCKET)):
 				# we will send the status, either default
 				# or given from response
 				status = str(status) if status else '200 OK'
 				buffered_socket.send(b'HTTP/1.1 ', status, b'\r\n')
 
-			if(response_headers or body != I_AM_HANDLING_THE_SOCKET):
+			if(response_headers or (body != I_AM_HANDLING_THE_SOCKET)):
 				# we will be sending headers of this request
 				# either default or given by response
 				if(isinstance(response_headers, list)):
@@ -1100,17 +1100,15 @@ def is_server_running():
 
 # additional utils
 
-
-# File handler for blaster server
-static_file_cache = LRUCache(1000)
-
+DEFAULT_STATIC_FILE_CACHE = {}
 
 def static_file_handler(
 	url_path,
 	_base_folder_path_,
 	default_file="index.html",
 	file_not_found_cb=None,
-	preload=True  # works only in prod and doesn't server anything outside already cached files
+	file_cache=DEFAULT_STATIC_FILE_CACHE,
+	dynamic_files=IS_DEV # always reload from filesystem if not in cache
 ):
 	# both paths should start with /
 	if(url_path[-1] != "/"):
@@ -1118,8 +1116,6 @@ def static_file_handler(
 
 	if(_base_folder_path_[-1] != "/"):
 		_base_folder_path_ += "/"  # it must be a folder
-
-	gevent_lock = Lock()
 
 	def get_file_resp(path):
 		file_path = os.path.abspath(_base_folder_path_ + str(path))
@@ -1140,33 +1136,21 @@ def static_file_handler(
 		if(not path):
 			path = default_file
 
-		file_resp = static_file_cache.get(url_path + path, None)
-		if(not file_resp and preload):
-			# show only preloaded files
-			return (
-					file_not_found_cb 
-					and file_not_found_cb(
-						path, request_params=None, headers=None, post_data=None
-					)
-				) or ("404 Not Found", [], "-NO-FILE-")
-
-		if(not file_resp or IS_DEV):
-			gevent_lock.acquire()
-			# put a lock here
+		file_resp = file_cache.get(url_path + path, None)
+		if((not file_resp and dynamic_files) or IS_DEV): # always reload from filesystem in devmode
 			try:
 				file_resp = get_file_resp(path)
+				file_cache[path] = file_resp # add to cache
 			except Exception:
-				if(file_not_found_cb):
-					file_resp = file_not_found_cb(
-						path, request_params=None, headers=None, post_data=None
-					)
-			finally:
-				gevent_lock.release()
+				pass
 
-			static_file_cache.set(path, file_resp)
-
-		return file_resp  # headers , data
-
+		return file_resp if file_resp else (
+						file_not_found_cb 
+						and file_not_found_cb(
+							path, request_params=None, headers=None, post_data=None
+						)
+					) or ("404 Not Found", [], "-NO-FILE-")
+	# headers , data
 	# preload all files once on load
 	file_names = [
 		os.path.join(dp, f)
@@ -1178,7 +1162,7 @@ def static_file_handler(
 		# strip / at the begininning in the cache
 		# as we search matching path without leading slash in the cache 
 		# in the file handler
-		static_file_cache.set(_url_file_path, get_file_resp(relative_file_path))
+		file_cache[_url_file_path] = get_file_resp(relative_file_path)
 
 	return url_path + "{*path}", file_handler
 

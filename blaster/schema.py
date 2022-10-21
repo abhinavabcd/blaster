@@ -247,18 +247,15 @@ class Object:
         self.__class__.validate(self) # resets internal dict
 
     @classmethod
-    def validate(cls, obj):
-        is_validating_dict = isinstance(obj, dict)
-        e = obj
-        if(isinstance(e, cls)):
-            e = obj.__dict__
-            is_validating_dict = False
+    def validate(cls, obj): # obj -> instance of dict, cls, str
+        if(isinstance(obj, dict)):
+            return cls.from_dict(obj)
         elif(isinstance(obj, str)):
-            e = json.loads(obj)
-        else:
-            raise TypeError({
-                "exception": "Invalid type of {} given {}".format(cls.__name__, obj),
-            })
+            return cls.from_dict(json.loads(obj))
+
+        # regular class instance
+        # validate __dict__ of the instance inplace
+        e = obj.__dict__
         k = None
         attr_value = None
         try:
@@ -275,7 +272,7 @@ class Object:
 
                 if(_validated_attr != attr_value):
                     e[k] = _validated_attr
-            return e if is_validating_dict else obj
+            return obj
         except Exception as ex:
             raise TypeError({
                 "exception": (ex.args and ex.args[0]) or "Validation failed",
@@ -290,7 +287,6 @@ class Object:
     @classmethod
     def from_dict(cls, _dict: dict):
         ret = cls()
-        # TODO: improve performance by caching _name(in json) -> to 
         for _k, (k, _validator) in cls._dict_key_to_object_key.items():
             setattr(ret, k, _validator(_dict.get(_k)))
         return ret

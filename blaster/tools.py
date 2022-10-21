@@ -84,6 +84,12 @@ class LRUCache:
 
 		return removed_entries
 
+	def __setitem__(self, key, value):
+		return self.set(key, value)
+
+	def __getitem__(self, key, default=None):
+		return self.get(key, default)
+
 	def delete(self, key):
 		return self.cache.pop(key, None)
 
@@ -146,6 +152,12 @@ class ExpiringCache:
 		self.cache[key] = (cur_ms(), value)
 
 		return removed_entries
+
+	def __setitem__(self, key, value):
+		return self.set(key, value)
+
+	def __getitem__(self, key, default=None):
+		return self.get(key, default)
 
 	def exists(self, key):
 		return self.cache.get(key, _OBJ_END_) != _OBJ_END_
@@ -1339,7 +1351,9 @@ MIME_TYPE_MAP = dict(
 	aac=TypeDescriptor(mime_type='audio/aac'),
 	docx=TypeDescriptor(mime_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
 	pdf=TypeDescriptor(mime_type='application/pdf'),
-
+	# images
+	svg=TypeDescriptor(mime_type='image/svg+xml'),
+	ico=TypeDescriptor(mime_type='image/image/x-icon'),
 	# variables should not start numerals
 	gp=TypeDescriptor(mime_type='audio/3gp'),
 	amr=TypeDescriptor(mime_type='audio/amr'),
