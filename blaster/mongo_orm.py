@@ -72,7 +72,7 @@ __all_models__ = {}
 class MongoList(list):
 	_initializing = True
 	_model_obj = None
-	path = None
+	path = ""  # empty string becuase it doesn't break pickling
 
 	def __init__(self, _model_obj, path, initial_value):
 		self._initializing = True
@@ -167,11 +167,16 @@ class MongoList(list):
 		for i in items:
 			this.append(i)
 
+	def clear(self):
+		super().clear()
+		self._model_obj._set_query_updates[self.path] = self
+		self._initializing = True  # Hack for new object
+ 
 
 class MongoDict(dict):
 	_initializing = True
 	_model_obj = None
-	path = None
+	path = ""  # empty string becuase it doesn't break pickling
 
 	def __init__(self, _model_obj, path, initial_value):
 		self._initializing = True
@@ -219,6 +224,11 @@ class MongoDict(dict):
 			self[k] = v
 		# allow chaining
 		return self
+
+	def clear(self):
+		super().clear()
+		self._model_obj._set_query_updates[self.path] = self
+		self._initializing = True  # Hack for new object
 
 # utility function to cache and return a session for transaction
 def _with_transaction(collection, _transaction, exit_stack):
@@ -1015,7 +1025,7 @@ class Model(object):
 			if(limit):
 				ret = ret.limit(limit)
 
-			if((_elapsed_time := (time.time() - _start_time)) > _WARN_MAX_QUERY_TIME):
+			if((_elapsed_time:= (time.time() - _start_time)) > _WARN_MAX_QUERY_TIME):
 				query_plan = ret.explain()["queryPlanner"]
 				LOG_WARN(
 					"mongo_perf",
@@ -1302,7 +1312,7 @@ class Model(object):
 			return True
 
 		count = 0
-		while((cur_timestamp := cur_ms()) - start_timestamp < timeout):
+		while((cur_timestamp:= cur_ms()) - start_timestamp < timeout):
 			count += 1
 			locked_until = cur_timestamp + can_hold_until
 			if(
@@ -1733,7 +1743,7 @@ def initialize_model(_Model):
 
 	# check unused indexes
 	existing_indexes = {
-		tuple(_index["key"]): _index
+		tuple([(x, int(y)) for x, y in _index["key"]]): _index # sometimes it's float so convert to int
 		for _, _index in existing_indexes.items()
 	}  # key: ((_id, 1)).., value: {uqniue: False} or None
 
@@ -1748,24 +1758,29 @@ def initialize_model(_Model):
 		LOG_WARN(
 			"mongo_indexes", desc="index not declared in orm, delete it on db?",
 			collection=_Model._collection_name_with_shard_,
-			index=str(_index_keys),
+			index=json.dumps({x:y for x,y in _index_keys}),
 		)
-	for _index_keys in _new_indexes:
-		LOG_APP_INFO(
-			"mongo_indexes", desc="creating a new index",
-			collection=_Model._collection_name_with_shard_,
-			index=str(_index_keys)
-		)
-
-	for pymongo_index, mongo_index_args in _pymongo_indexes_to_create.items():
-		IS_DEV \
-			and MONGO_DEBUG_LEVEL > 1 \
-			and print(
-				"\n\n#MONGO: creating_indexes", _Model, pymongo_index, mongo_index_args
+	if(_new_indexes):
+		for _index in _new_indexes:
+			LOG_ERROR(
+				"missing_mongo_indexes",
+				desc=(
+					f"db.{_Model._collection_name_with_shard_}"
+					f".createIndex({json.dumps({x:y for x,y in _index})}, "
+					f"{json.dumps(_pymongo_indexes_to_create[_index])})"
+				)
 			)
-		# in each node create indexes
-		for db_node in _Model._db_nodes_:
-			db_node.get_collection(_Model).create_index(pymongo_index, **mongo_index_args)
+		raise Exception("Missing indexes. Check error log for missing_mongo_indexes and create them on db before rollout")
+
+	# for pymongo_index, mongo_index_args in _pymongo_indexes_to_create.items():
+	# 	IS_DEV \
+	# 		and MONGO_DEBUG_LEVEL > 1 \
+	# 		and print(
+	# 			"\n\n#MONGO: creating_indexes", _Model, pymongo_index, mongo_index_args
+	# 		)
+	# 	# in each node create indexes
+	# 	for db_node in _Model._db_nodes_:
+	# 		db_node.get_collection(_Model).create_index(pymongo_index, **mongo_index_args)
 
 	# create secondary shards
 	for _secondary_shard_key in list(_Model._secondary_shards_.keys()): # iterate on copy

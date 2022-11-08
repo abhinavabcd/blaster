@@ -11,7 +11,7 @@ import traceback
 import ujson as json
 import gevent
 from ..base import is_server_running, route, Request
-from ..tools import background_task, _create_signature, get_random_id
+from ..tools import background_task, _create_signature, get_random_id, retry
 from ..connection_pool import use_connection_pool
 from ..utils import events
 from ..logging import LOG_ERROR, LOG_WARN, LOG_SERVER, LOG_DEBUG
@@ -21,11 +21,9 @@ from ..config import PUSH_TASKS_SQS_URL,\
 push_tasks = {}
 sqs_reader_greenlets = []
 
-
+@retry(2)
 def exec_push_task(raw_bytes_message: bytes, auth=None):
-    message_payload = pickle.loads(
-        base64.a85decode(raw_bytes_message)
-    )
+    message_payload = pickle.loads(base64.a85decode(raw_bytes_message))
     kwargs = message_payload.get("kwargs", {})
     args = message_payload.get("args", [])
     func_name = message_payload.get("func_v2", "")
@@ -146,11 +144,11 @@ def post_a_task(func, *args, **kwargs):
         "created_at": now
     }
 
-    if(sqs_url := PUSH_TASKS_SQS_URL):
+    if(sqs_url:= PUSH_TASKS_SQS_URL):
         return post_task_to_sqs(sqs_url, message_body)        
     elif(
-        (gcloud_tasks_queue_path := GCLOUD_TASKS_QUEUE_PATH) 
-        and (gcloud_task_runner_host := GCLOUD_TASK_RUNNER_HOST)
+        (gcloud_tasks_queue_path:= GCLOUD_TASKS_QUEUE_PATH) 
+        and (gcloud_task_runner_host:= GCLOUD_TASK_RUNNER_HOST)
     ):
         #ex: queue_path: projects/<PROJECT_NAME>/locations/europe-west3/queues/<QUEUE_NAME>
         return post_task_to_gcloud_tasks(
@@ -158,6 +156,8 @@ def post_a_task(func, *args, **kwargs):
         )
     else:
         LOG_WARN("server_info", data="calling directly as not queue provided")
+        # test pickling 
+        # exec_push_task(base64.a85encode(pickle.dumps(message_body)))
         func = push_tasks.get(
             message_body.get("func_v2", ""),
             None
@@ -165,7 +165,7 @@ def post_a_task(func, *args, **kwargs):
         func and func(*message_body.get("args", []), **message_body.get("kwargs", {}))
         return None
 
-    return response
+    return
 
 
 def run_later(func):

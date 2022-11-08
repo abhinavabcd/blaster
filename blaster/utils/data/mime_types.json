@@ -1,0 +1,3494 @@
+{
+    ".ez": {
+        "mime_type": "application/andrew-inset",
+        "description": "Published specification:  \"Multimedia Applications Development with the Andrew Toolkit\", by Nathaniel S. Borenstein, Prentice Hall, 1990. Editors note: I looked him up, he works at Mimecast now. Reach out!"
+    },
+    ".aw": {
+        "mime_type": "application/applixware",
+        "description": ""
+    },
+    ".atom": {
+        "mime_type": "application/atom+xml",
+        "description": ""
+    },
+    ".atomcat": {
+        "mime_type": "application/atomcat+xml",
+        "description": ""
+    },
+    ".atomsvc": {
+        "mime_type": "application/atomsvc+xml",
+        "description": ""
+    },
+    ".ccxml": {
+        "mime_type": "application/ccxml+xml",
+        "description": ""
+    },
+    ".cu": {
+        "mime_type": "application/cu-seeme",
+        "description": ""
+    },
+    ".davmount": {
+        "mime_type": "application/davmount+xml",
+        "description": ""
+    },
+    ".ecma": {
+        "mime_type": "application/ecmascript",
+        "description": ""
+    },
+    ".emma": {
+        "mime_type": "application/emma+xml",
+        "description": ""
+    },
+    ".epub": {
+        "mime_type": "application/epub+zip",
+        "description": ""
+    },
+    ".pfr": {
+        "mime_type": "application/font-tdpfr",
+        "description": ""
+    },
+    ".gz": {
+        "mime_type": "application/x-gzip",
+        "description": ""
+    },
+    ".tgz": {
+        "mime_type": "application/x-gzip",
+        "description": ""
+    },
+    ".stk": {
+        "mime_type": "application/hyperstudio",
+        "description": ""
+    },
+    ".jar": {
+        "mime_type": "application/java-archive",
+        "description": ""
+    },
+    ".ser": {
+        "mime_type": "application/java-serialized-object",
+        "description": ""
+    },
+    ".class": {
+        "mime_type": "application/java-vm",
+        "description": ""
+    },
+    ".json": {
+        "mime_type": "application/json",
+        "description": "JSON (JavaScript Object Notation) is widely used by web applications, mobile apps, and other programs to communicate between different systems (such as between a client and server). While it is named after JavaScript, there are libraries for many other programming and scripting languages to let them use this format as well. The geospatial format GeoJSON is based on JSON, as is the remote-procedure-call protocol JSON-RPC and the JSON-LD linked-data format. The IBM standard of JSONx is an XML implementation of JSON. I-JSON is a restricted profile of JSON for Internet use. JSON Web Tokens, JSON Web Encryption, and JSON Web Signatures are JSON-based formats for security-related functions."
+    },
+    ".lostxml": {
+        "mime_type": "application/lost+xml",
+        "description": ""
+    },
+    ".hqx": {
+        "mime_type": "application/mac-binhex40",
+        "description": ""
+    },
+    ".cpt": {
+        "mime_type": "application/mac-compactpro",
+        "description": ""
+    },
+    ".mrc": {
+        "mime_type": "application/marc",
+        "description": ""
+    },
+    ".ma": {
+        "mime_type": "application/mathematica",
+        "description": ""
+    },
+    ".mb": {
+        "mime_type": "application/mathematica",
+        "description": ""
+    },
+    ".nb": {
+        "mime_type": "application/mathematica",
+        "description": ""
+    },
+    ".mathml": {
+        "mime_type": "text/mathml",
+        "description": ""
+    },
+    ".mml": {
+        "mime_type": "text/mathml",
+        "description": ""
+    },
+    ".mbox": {
+        "mime_type": "application/mbox",
+        "description": ""
+    },
+    ".mscml": {
+        "mime_type": "application/mediaservercontrol+xml",
+        "description": ""
+    },
+    ".mp4s": {
+        "mime_type": "application/mp4",
+        "description": ""
+    },
+    ".doc": {
+        "mime_type": "application/msword",
+        "description": "Microsoft Word is a popular word processor program which has existed in a number of versions for DOS, Windows, and the Macintosh. It is often distributed as part of the Microsoft Office suite. Various native file formats have been used, and some other non-Word-specific formats can also be opened and saved.Please note the more modern .docx file extension does not use this mime type."
+    },
+    ".dot": {
+        "mime_type": "application/msword",
+        "description": "Microsoft Word is a popular word processor program which has existed in a number of versions for DOS, Windows, and the Macintosh. It is often distributed as part of the Microsoft Office suite. Various native file formats have been used, and some other non-Word-specific formats can also be opened and saved.Please note the more modern .docx file extension does not use this mime type."
+    },
+    ".wiz": {
+        "mime_type": "application/msword",
+        "description": "Microsoft Word is a popular word processor program which has existed in a number of versions for DOS, Windows, and the Macintosh. It is often distributed as part of the Microsoft Office suite. Various native file formats have been used, and some other non-Word-specific formats can also be opened and saved.Please note the more modern .docx file extension does not use this mime type."
+    },
+    ".mxf": {
+        "mime_type": "application/mxf",
+        "description": ""
+    },
+    ".a": {
+        "mime_type": "application/octet-stream",
+        "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
+    },
+    ".bin": {
+        "mime_type": "application/octet-stream",
+        "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
+    },
+    ".bpk": {
+        "mime_type": "application/octet-stream",
+        "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
+    },
+    ".deploy": {
+        "mime_type": "application/octet-stream",
+        "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
+    },
+    ".dist": {
+        "mime_type": "application/octet-stream",
+        "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
+    },
+    ".distz": {
+        "mime_type": "application/octet-stream",
+        "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
+    },
+    ".dmg": {
+        "mime_type": "application/octet-stream",
+        "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
+    },
+    ".dms": {
+        "mime_type": "application/octet-stream",
+        "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
+    },
+    ".dump": {
+        "mime_type": "application/octet-stream",
+        "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
+    },
+    ".elc": {
+        "mime_type": "application/octet-stream",
+        "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
+    },
+    ".iso": {
+        "mime_type": "application/octet-stream",
+        "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
+    },
+    ".lha": {
+        "mime_type": "application/octet-stream",
+        "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
+    },
+    ".lrf": {
+        "mime_type": "application/octet-stream",
+        "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
+    },
+    ".lzh": {
+        "mime_type": "application/octet-stream",
+        "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
+    },
+    ".o": {
+        "mime_type": "application/octet-stream",
+        "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
+    },
+    ".obj": {
+        "mime_type": "application/octet-stream",
+        "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
+    },
+    ".pkg": {
+        "mime_type": "application/octet-stream",
+        "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
+    },
+    ".so": {
+        "mime_type": "application/octet-stream",
+        "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
+    },
+    ".oda": {
+        "mime_type": "application/oda",
+        "description": ""
+    },
+    ".opf": {
+        "mime_type": "application/oebps-package+xml",
+        "description": ""
+    },
+    ".ogx": {
+        "mime_type": "application/ogg",
+        "description": ""
+    },
+    ".onepkg": {
+        "mime_type": "application/onenote",
+        "description": ""
+    },
+    ".onetmp": {
+        "mime_type": "application/onenote",
+        "description": ""
+    },
+    ".onetoc": {
+        "mime_type": "application/onenote",
+        "description": ""
+    },
+    ".onetoc2": {
+        "mime_type": "application/onenote",
+        "description": ""
+    },
+    ".xer": {
+        "mime_type": "application/patch-ops-error+xml",
+        "description": ""
+    },
+    ".pdf": {
+        "mime_type": "application/pdf",
+        "description": "Portable Document Format (PDF) is a document file format originally from Adobe, based on PostScript. It has many subsets."
+    },
+    ".pgp": {
+        "mime_type": "application/pgp-encrypted",
+        "description": ""
+    },
+    ".asc": {
+        "mime_type": "application/pgp-signature",
+        "description": "PGP (Pretty Good Privacy) is an encryption program, and its encryption format which eventually became the OpenPGP standard.Created by Phil Zimmerman in 1991, it got into some legal trouble early on because encryption of this grade was classified as a munition under U.S. law and restricted from export. These laws, while not completely repealed even now, have been considerably liberalized since, and now export of PGP and related software is only restricted when it's being exported to countries such as Iran that are under special sanction. Zimmerman's PGP company was eventually acquired by Network Associates (now McAfee), which eventually rebranded the original command-line-based PGP as \"McAfee E-Business Server\" and sold off all other PGP assets to some PGP developers who formed a new PGP company, which was eventually acquired by Symantec. Meanwhile, the specifications of the file format had been released as the OpenPGP spec and published as an RFC document, making it available for use in other products.GNU Privacy Guard (GnuPG, GPG) is a commonly-used encryption tool using PGP format, running on Linux systems.PGP uses a combination of several encryption techniques applied serially, including symmetric-key and public-key cryptography."
+    },
+    ".sig": {
+        "mime_type": "application/pgp-signature",
+        "description": "PGP (Pretty Good Privacy) is an encryption program, and its encryption format which eventually became the OpenPGP standard.Created by Phil Zimmerman in 1991, it got into some legal trouble early on because encryption of this grade was classified as a munition under U.S. law and restricted from export. These laws, while not completely repealed even now, have been considerably liberalized since, and now export of PGP and related software is only restricted when it's being exported to countries such as Iran that are under special sanction. Zimmerman's PGP company was eventually acquired by Network Associates (now McAfee), which eventually rebranded the original command-line-based PGP as \"McAfee E-Business Server\" and sold off all other PGP assets to some PGP developers who formed a new PGP company, which was eventually acquired by Symantec. Meanwhile, the specifications of the file format had been released as the OpenPGP spec and published as an RFC document, making it available for use in other products.GNU Privacy Guard (GnuPG, GPG) is a commonly-used encryption tool using PGP format, running on Linux systems.PGP uses a combination of several encryption techniques applied serially, including symmetric-key and public-key cryptography."
+    },
+    ".prf": {
+        "mime_type": "application/pics-rules",
+        "description": ""
+    },
+    ".p10": {
+        "mime_type": "application/pkcs10",
+        "description": ""
+    },
+    ".p7c": {
+        "mime_type": "application/pkcs7-mime",
+        "description": ""
+    },
+    ".p7m": {
+        "mime_type": "application/pkcs7-mime",
+        "description": ""
+    },
+    ".p7s": {
+        "mime_type": "application/pkcs7-signature",
+        "description": ""
+    },
+    ".cer": {
+        "mime_type": "application/pkix-cert",
+        "description": ""
+    },
+    ".crl": {
+        "mime_type": "application/pkix-crl",
+        "description": ""
+    },
+    ".pkipath": {
+        "mime_type": "application/pkix-pkipath",
+        "description": ""
+    },
+    ".pki": {
+        "mime_type": "application/pkixcmp",
+        "description": ""
+    },
+    ".pls": {
+        "mime_type": "application/pls+xml",
+        "description": ""
+    },
+    ".ai": {
+        "mime_type": "application/postscript",
+        "description": ""
+    },
+    ".eps": {
+        "mime_type": "application/postscript",
+        "description": ""
+    },
+    ".ps": {
+        "mime_type": "application/postscript",
+        "description": ""
+    },
+    ".cww": {
+        "mime_type": "application/prs.cww",
+        "description": ""
+    },
+    ".rdf": {
+        "mime_type": "application/rdf+xml",
+        "description": ""
+    },
+    ".rif": {
+        "mime_type": "application/reginfo+xml",
+        "description": ""
+    },
+    ".rnc": {
+        "mime_type": "application/relax-ng-compact-syntax",
+        "description": ""
+    },
+    ".rl": {
+        "mime_type": "application/resource-lists+xml",
+        "description": ""
+    },
+    ".rld": {
+        "mime_type": "application/resource-lists-diff+xml",
+        "description": ""
+    },
+    ".rs": {
+        "mime_type": "application/rls-services+xml",
+        "description": ""
+    },
+    ".rsd": {
+        "mime_type": "application/rsd+xml",
+        "description": ""
+    },
+    ".rss": {
+        "mime_type": "application/rss+xml",
+        "description": ""
+    },
+    ".rtf": {
+        "mime_type": "application/rtf",
+        "description": ""
+    },
+    ".sbml": {
+        "mime_type": "application/sbml+xml",
+        "description": ""
+    },
+    ".scq": {
+        "mime_type": "application/scvp-cv-request",
+        "description": ""
+    },
+    ".scs": {
+        "mime_type": "application/scvp-cv-response",
+        "description": ""
+    },
+    ".spq": {
+        "mime_type": "application/scvp-vp-request",
+        "description": ""
+    },
+    ".spp": {
+        "mime_type": "application/scvp-vp-response",
+        "description": ""
+    },
+    ".sdp": {
+        "mime_type": "application/sdp",
+        "description": ""
+    },
+    ".setpay": {
+        "mime_type": "application/set-payment-initiation",
+        "description": ""
+    },
+    ".setreg": {
+        "mime_type": "application/set-registration-initiation",
+        "description": ""
+    },
+    ".shf": {
+        "mime_type": "application/shf+xml",
+        "description": ""
+    },
+    ".smi": {
+        "mime_type": "application/smil+xml",
+        "description": ""
+    },
+    ".smil": {
+        "mime_type": "application/smil+xml",
+        "description": ""
+    },
+    ".rq": {
+        "mime_type": "application/sparql-query",
+        "description": ""
+    },
+    ".srx": {
+        "mime_type": "application/sparql-results+xml",
+        "description": ""
+    },
+    ".gram": {
+        "mime_type": "application/srgs",
+        "description": ""
+    },
+    ".grxml": {
+        "mime_type": "application/srgs+xml",
+        "description": ""
+    },
+    ".ssml": {
+        "mime_type": "application/ssml+xml",
+        "description": ""
+    },
+    ".plb": {
+        "mime_type": "application/vnd.3gpp.pic-bw-large",
+        "description": ""
+    },
+    ".psb": {
+        "mime_type": "application/vnd.3gpp.pic-bw-small",
+        "description": ""
+    },
+    ".pvb": {
+        "mime_type": "application/vnd.3gpp.pic-bw-var",
+        "description": ""
+    },
+    ".tcap": {
+        "mime_type": "application/vnd.3gpp2.tcap",
+        "description": ""
+    },
+    ".pwn": {
+        "mime_type": "application/vnd.3m.post-it-notes",
+        "description": ""
+    },
+    ".aso": {
+        "mime_type": "application/vnd.accpac.simply.aso",
+        "description": ""
+    },
+    ".imp": {
+        "mime_type": "application/vnd.accpac.simply.imp",
+        "description": ""
+    },
+    ".acu": {
+        "mime_type": "application/vnd.acucobol",
+        "description": ""
+    },
+    ".acutc": {
+        "mime_type": "application/vnd.acucorp",
+        "description": ""
+    },
+    ".atc": {
+        "mime_type": "application/vnd.acucorp",
+        "description": ""
+    },
+    ".air": {
+        "mime_type": "application/vnd.adobe.air-application-installer-package+zip",
+        "description": ""
+    },
+    ".xdp": {
+        "mime_type": "application/vnd.adobe.xdp+xml",
+        "description": ""
+    },
+    ".xfdf": {
+        "mime_type": "application/vnd.adobe.xfdf",
+        "description": ""
+    },
+    ".azf": {
+        "mime_type": "application/vnd.airzip.filesecure.azf",
+        "description": ""
+    },
+    ".azs": {
+        "mime_type": "application/vnd.airzip.filesecure.azs",
+        "description": ""
+    },
+    ".azw": {
+        "mime_type": "application/vnd.amazon.ebook",
+        "description": ""
+    },
+    ".acc": {
+        "mime_type": "application/vnd.americandynamics.acc",
+        "description": ""
+    },
+    ".ami": {
+        "mime_type": "application/vnd.amiga.ami",
+        "description": ""
+    },
+    ".apk": {
+        "mime_type": "application/vnd.android.package-archive",
+        "description": "APK is an archive format used for distributing Android apps. It is based on the Jar format (for Java), and like that format, is actually a ZIP archive with a different extension, and with specific files and directories within it.The executable part of the app is usually in either Dalvik Executable (for older Android versions prior to 5.0) or ART format (for newer versions).Metadata about the app is in a META-INF directory within the archive (similarly to Jar files), compiled code is in a lib directory, and resources in a res directory. There are also a few files at the root level including AndroidManifest.xml (which may be regular XML or, often, binary XML)."
+    },
+    ".cii": {
+        "mime_type": "application/vnd.anser-web-certificate-issue-initiation",
+        "description": ""
+    },
+    ".fti": {
+        "mime_type": "application/vnd.anser-web-funds-transfer-initiation",
+        "description": ""
+    },
+    ".atx": {
+        "mime_type": "application/vnd.antix.game-component",
+        "description": ""
+    },
+    ".mpkg": {
+        "mime_type": "application/vnd.apple.installer+xml",
+        "description": ""
+    },
+    ".swi": {
+        "mime_type": "application/vnd.arastra.swi",
+        "description": ""
+    },
+    ".aep": {
+        "mime_type": "application/vnd.audiograph",
+        "description": ""
+    },
+    ".mpm": {
+        "mime_type": "application/vnd.blueice.multipass",
+        "description": ""
+    },
+    ".bmi": {
+        "mime_type": "application/vnd.bmi",
+        "description": ""
+    },
+    ".rep": {
+        "mime_type": "application/vnd.businessobjects",
+        "description": ""
+    },
+    ".cdxml": {
+        "mime_type": "application/vnd.chemdraw+xml",
+        "description": ""
+    },
+    ".mmd": {
+        "mime_type": "application/vnd.chipnuts.karaoke-mmd",
+        "description": ""
+    },
+    ".cdy": {
+        "mime_type": "application/vnd.cinderella",
+        "description": ""
+    },
+    ".cla": {
+        "mime_type": "application/vnd.claymore",
+        "description": ""
+    },
+    ".c4d": {
+        "mime_type": "application/vnd.clonk.c4group",
+        "description": ""
+    },
+    ".c4f": {
+        "mime_type": "application/vnd.clonk.c4group",
+        "description": ""
+    },
+    ".c4g": {
+        "mime_type": "application/vnd.clonk.c4group",
+        "description": ""
+    },
+    ".c4p": {
+        "mime_type": "application/vnd.clonk.c4group",
+        "description": ""
+    },
+    ".c4u": {
+        "mime_type": "application/vnd.clonk.c4group",
+        "description": ""
+    },
+    ".csp": {
+        "mime_type": "application/vnd.commonspace",
+        "description": ""
+    },
+    ".cdbcmsg": {
+        "mime_type": "application/vnd.contact.cmsg",
+        "description": ""
+    },
+    ".cmc": {
+        "mime_type": "application/vnd.cosmocaller",
+        "description": ""
+    },
+    ".clkx": {
+        "mime_type": "application/vnd.crick.clicker",
+        "description": ""
+    },
+    ".clkk": {
+        "mime_type": "application/vnd.crick.clicker.keyboard",
+        "description": ""
+    },
+    ".clkp": {
+        "mime_type": "application/vnd.crick.clicker.palette",
+        "description": ""
+    },
+    ".clkt": {
+        "mime_type": "application/vnd.crick.clicker.template",
+        "description": ""
+    },
+    ".clkw": {
+        "mime_type": "application/vnd.crick.clicker.wordbank",
+        "description": ""
+    },
+    ".wbs": {
+        "mime_type": "application/vnd.criticaltools.wbs+xml",
+        "description": ""
+    },
+    ".pml": {
+        "mime_type": "application/vnd.ctc-posml",
+        "description": ""
+    },
+    ".ppd": {
+        "mime_type": "application/vnd.cups-ppd",
+        "description": ""
+    },
+    ".car": {
+        "mime_type": "application/vnd.curl.car",
+        "description": ""
+    },
+    ".pcurl": {
+        "mime_type": "application/vnd.curl.pcurl",
+        "description": ""
+    },
+    ".rdz": {
+        "mime_type": "application/vnd.data-vision.rdz",
+        "description": ""
+    },
+    ".deb": {
+        "mime_type": "application/x-debian-package",
+        "description": ""
+    },
+    ".udeb": {
+        "mime_type": "application/x-debian-package",
+        "description": ""
+    },
+    ".fe_launch": {
+        "mime_type": "application/vnd.denovo.fcselayout-link",
+        "description": ""
+    },
+    ".dna": {
+        "mime_type": "application/vnd.dna",
+        "description": ""
+    },
+    ".mlp": {
+        "mime_type": "application/vnd.dolby.mlp",
+        "description": ""
+    },
+    ".dpg": {
+        "mime_type": "application/vnd.dpgraph",
+        "description": ""
+    },
+    ".dfac": {
+        "mime_type": "application/vnd.dreamfactory",
+        "description": ""
+    },
+    ".geo": {
+        "mime_type": "application/vnd.dynageo",
+        "description": ""
+    },
+    ".mag": {
+        "mime_type": "application/vnd.ecowin.chart",
+        "description": ""
+    },
+    ".nml": {
+        "mime_type": "application/vnd.enliven",
+        "description": ""
+    },
+    ".esf": {
+        "mime_type": "application/vnd.epson.esf",
+        "description": ""
+    },
+    ".msf": {
+        "mime_type": "application/vnd.epson.msf",
+        "description": ""
+    },
+    ".qam": {
+        "mime_type": "application/vnd.epson.quickanime",
+        "description": ""
+    },
+    ".slt": {
+        "mime_type": "application/vnd.epson.salt",
+        "description": ""
+    },
+    ".ssf": {
+        "mime_type": "application/vnd.epson.ssf",
+        "description": ""
+    },
+    ".es3": {
+        "mime_type": "application/vnd.eszigno3+xml",
+        "description": ""
+    },
+    ".et3": {
+        "mime_type": "application/vnd.eszigno3+xml",
+        "description": ""
+    },
+    ".ez2": {
+        "mime_type": "application/vnd.ezpix-album",
+        "description": ""
+    },
+    ".ez3": {
+        "mime_type": "application/vnd.ezpix-package",
+        "description": ""
+    },
+    ".fdf": {
+        "mime_type": "application/vnd.fdf",
+        "description": ""
+    },
+    ".mseed": {
+        "mime_type": "application/vnd.fdsn.mseed",
+        "description": ""
+    },
+    ".dataless": {
+        "mime_type": "application/vnd.fdsn.seed",
+        "description": ""
+    },
+    ".seed": {
+        "mime_type": "application/vnd.fdsn.seed",
+        "description": ""
+    },
+    ".gph": {
+        "mime_type": "application/vnd.flographit",
+        "description": ""
+    },
+    ".ftc": {
+        "mime_type": "application/vnd.fluxtime.clip",
+        "description": ""
+    },
+    ".book": {
+        "mime_type": "application/vnd.framemaker",
+        "description": ""
+    },
+    ".fm": {
+        "mime_type": "application/vnd.framemaker",
+        "description": ""
+    },
+    ".frame": {
+        "mime_type": "application/vnd.framemaker",
+        "description": ""
+    },
+    ".maker": {
+        "mime_type": "application/vnd.framemaker",
+        "description": ""
+    },
+    ".fnc": {
+        "mime_type": "application/vnd.frogans.fnc",
+        "description": ""
+    },
+    ".ltf": {
+        "mime_type": "application/vnd.frogans.ltf",
+        "description": ""
+    },
+    ".fsc": {
+        "mime_type": "application/vnd.fsc.weblaunch",
+        "description": ""
+    },
+    ".oas": {
+        "mime_type": "application/vnd.fujitsu.oasys",
+        "description": ""
+    },
+    ".oa2": {
+        "mime_type": "application/vnd.fujitsu.oasys2",
+        "description": ""
+    },
+    ".oa3": {
+        "mime_type": "application/vnd.fujitsu.oasys3",
+        "description": ""
+    },
+    ".fg5": {
+        "mime_type": "application/vnd.fujitsu.oasysgp",
+        "description": ""
+    },
+    ".bh2": {
+        "mime_type": "application/vnd.fujitsu.oasysprs",
+        "description": ""
+    },
+    ".ddd": {
+        "mime_type": "application/vnd.fujixerox.ddd",
+        "description": ""
+    },
+    ".xdw": {
+        "mime_type": "application/vnd.fujixerox.docuworks",
+        "description": ""
+    },
+    ".xbd": {
+        "mime_type": "application/vnd.fujixerox.docuworks.binder",
+        "description": ""
+    },
+    ".fzs": {
+        "mime_type": "application/vnd.fuzzysheet",
+        "description": ""
+    },
+    ".txd": {
+        "mime_type": "application/vnd.genomatix.tuxedo",
+        "description": ""
+    },
+    ".ggb": {
+        "mime_type": "application/vnd.geogebra.file",
+        "description": ""
+    },
+    ".ggt": {
+        "mime_type": "application/vnd.geogebra.tool",
+        "description": ""
+    },
+    ".gex": {
+        "mime_type": "application/vnd.geometry-explorer",
+        "description": ""
+    },
+    ".gre": {
+        "mime_type": "application/vnd.geometry-explorer",
+        "description": ""
+    },
+    ".gmx": {
+        "mime_type": "application/vnd.gmx",
+        "description": ""
+    },
+    ".kml": {
+        "mime_type": "application/vnd.google-earth.kml+xml",
+        "description": ""
+    },
+    ".kmz": {
+        "mime_type": "application/vnd.google-earth.kmz",
+        "description": ""
+    },
+    ".gqf": {
+        "mime_type": "application/vnd.grafeq",
+        "description": ""
+    },
+    ".gqs": {
+        "mime_type": "application/vnd.grafeq",
+        "description": ""
+    },
+    ".gac": {
+        "mime_type": "application/vnd.groove-account",
+        "description": ""
+    },
+    ".ghf": {
+        "mime_type": "application/vnd.groove-help",
+        "description": ""
+    },
+    ".gim": {
+        "mime_type": "application/vnd.groove-identity-message",
+        "description": ""
+    },
+    ".grv": {
+        "mime_type": "application/vnd.groove-injector",
+        "description": ""
+    },
+    ".gtm": {
+        "mime_type": "application/vnd.groove-tool-message",
+        "description": ""
+    },
+    ".tpl": {
+        "mime_type": "application/vnd.groove-tool-template",
+        "description": ""
+    },
+    ".vcg": {
+        "mime_type": "application/vnd.groove-vcard",
+        "description": ""
+    },
+    ".zmm": {
+        "mime_type": "application/vnd.handheld-entertainment+xml",
+        "description": ""
+    },
+    ".hbci": {
+        "mime_type": "application/vnd.hbci",
+        "description": ""
+    },
+    ".les": {
+        "mime_type": "application/vnd.hhe.lesson-player",
+        "description": ""
+    },
+    ".hpgl": {
+        "mime_type": "application/vnd.hp-hpgl",
+        "description": ""
+    },
+    ".hpid": {
+        "mime_type": "application/vnd.hp-hpid",
+        "description": ""
+    },
+    ".hps": {
+        "mime_type": "application/vnd.hp-hps",
+        "description": ""
+    },
+    ".jlt": {
+        "mime_type": "application/vnd.hp-jlyt",
+        "description": ""
+    },
+    ".pcl": {
+        "mime_type": "application/vnd.hp-pcl",
+        "description": ""
+    },
+    ".pclxl": {
+        "mime_type": "application/vnd.hp-pclxl",
+        "description": ""
+    },
+    ".sfd-hdstx": {
+        "mime_type": "application/vnd.hydrostatix.sof-data",
+        "description": ""
+    },
+    ".x3d": {
+        "mime_type": "application/vnd.hzn-3d-crossword",
+        "description": ""
+    },
+    ".mpy": {
+        "mime_type": "application/vnd.ibm.minipay",
+        "description": ""
+    },
+    ".afp": {
+        "mime_type": "application/vnd.ibm.modcap",
+        "description": ""
+    },
+    ".list3820": {
+        "mime_type": "application/vnd.ibm.modcap",
+        "description": ""
+    },
+    ".listafp": {
+        "mime_type": "application/vnd.ibm.modcap",
+        "description": ""
+    },
+    ".irm": {
+        "mime_type": "application/vnd.ibm.rights-management",
+        "description": ""
+    },
+    ".sc": {
+        "mime_type": "application/vnd.ibm.secure-container",
+        "description": ""
+    },
+    ".icc": {
+        "mime_type": "application/vnd.iccprofile",
+        "description": ""
+    },
+    ".icm": {
+        "mime_type": "application/vnd.iccprofile",
+        "description": ""
+    },
+    ".igl": {
+        "mime_type": "application/vnd.igloader",
+        "description": ""
+    },
+    ".ivp": {
+        "mime_type": "application/vnd.immervision-ivp",
+        "description": ""
+    },
+    ".ivu": {
+        "mime_type": "application/vnd.immervision-ivu",
+        "description": ""
+    },
+    ".xpw": {
+        "mime_type": "application/vnd.intercon.formnet",
+        "description": ""
+    },
+    ".xpx": {
+        "mime_type": "application/vnd.intercon.formnet",
+        "description": ""
+    },
+    ".qbo": {
+        "mime_type": "application/vnd.intu.qbo",
+        "description": ""
+    },
+    ".qfx": {
+        "mime_type": "application/vnd.intu.qfx",
+        "description": ""
+    },
+    ".rcprofile": {
+        "mime_type": "application/vnd.ipunplugged.rcprofile",
+        "description": ""
+    },
+    ".irp": {
+        "mime_type": "application/vnd.irepository.package+xml",
+        "description": ""
+    },
+    ".xpr": {
+        "mime_type": "application/vnd.is-xpr",
+        "description": ""
+    },
+    ".jam": {
+        "mime_type": "application/vnd.jam",
+        "description": ""
+    },
+    ".rms": {
+        "mime_type": "application/vnd.jcp.javame.midlet-rms",
+        "description": ""
+    },
+    ".jisp": {
+        "mime_type": "application/vnd.jisp",
+        "description": ""
+    },
+    ".joda": {
+        "mime_type": "application/vnd.joost.joda-archive",
+        "description": ""
+    },
+    ".ktr": {
+        "mime_type": "application/vnd.kahootz",
+        "description": ""
+    },
+    ".ktz": {
+        "mime_type": "application/vnd.kahootz",
+        "description": ""
+    },
+    ".karbon": {
+        "mime_type": "application/vnd.kde.karbon",
+        "description": ""
+    },
+    ".chrt": {
+        "mime_type": "application/vnd.kde.kchart",
+        "description": ""
+    },
+    ".kfo": {
+        "mime_type": "application/vnd.kde.kformula",
+        "description": ""
+    },
+    ".flw": {
+        "mime_type": "application/vnd.kde.kivio",
+        "description": ""
+    },
+    ".kon": {
+        "mime_type": "application/vnd.kde.kontour",
+        "description": ""
+    },
+    ".kpr": {
+        "mime_type": "application/vnd.kde.kpresenter",
+        "description": ""
+    },
+    ".kpt": {
+        "mime_type": "application/vnd.kde.kpresenter",
+        "description": ""
+    },
+    ".ksp": {
+        "mime_type": "application/vnd.kde.kspread",
+        "description": ""
+    },
+    ".kwd": {
+        "mime_type": "application/vnd.kde.kword",
+        "description": ""
+    },
+    ".kwt": {
+        "mime_type": "application/vnd.kde.kword",
+        "description": ""
+    },
+    ".htke": {
+        "mime_type": "application/vnd.kenameaapp",
+        "description": ""
+    },
+    ".kia": {
+        "mime_type": "application/vnd.kidspiration",
+        "description": ""
+    },
+    ".kne": {
+        "mime_type": "application/vnd.kinar",
+        "description": ""
+    },
+    ".knp": {
+        "mime_type": "application/vnd.kinar",
+        "description": ""
+    },
+    ".skd": {
+        "mime_type": "application/vnd.koan",
+        "description": ""
+    },
+    ".skm": {
+        "mime_type": "application/vnd.koan",
+        "description": ""
+    },
+    ".skp": {
+        "mime_type": "application/vnd.koan",
+        "description": ""
+    },
+    ".skt": {
+        "mime_type": "application/vnd.koan",
+        "description": ""
+    },
+    ".sse": {
+        "mime_type": "application/vnd.kodak-descriptor",
+        "description": ""
+    },
+    ".lbd": {
+        "mime_type": "application/vnd.llamagraphics.life-balance.desktop",
+        "description": ""
+    },
+    ".lbe": {
+        "mime_type": "application/vnd.llamagraphics.life-balance.exchange+xml",
+        "description": ""
+    },
+    ".123": {
+        "mime_type": "application/vnd.lotus-1-2-3",
+        "description": ""
+    },
+    ".apr": {
+        "mime_type": "application/vnd.lotus-approach",
+        "description": ""
+    },
+    ".pre": {
+        "mime_type": "application/vnd.lotus-freelance",
+        "description": ""
+    },
+    ".nsf": {
+        "mime_type": "application/vnd.lotus-notes",
+        "description": ""
+    },
+    ".org": {
+        "mime_type": "application/vnd.lotus-organizer",
+        "description": ""
+    },
+    ".scm": {
+        "mime_type": "application/vnd.lotus-screencam",
+        "description": ""
+    },
+    ".lwp": {
+        "mime_type": "application/vnd.lotus-wordpro",
+        "description": ""
+    },
+    ".portpkg": {
+        "mime_type": "application/vnd.macports.portpkg",
+        "description": ""
+    },
+    ".mcd": {
+        "mime_type": "application/vnd.mcd",
+        "description": ""
+    },
+    ".mc1": {
+        "mime_type": "application/vnd.medcalcdata",
+        "description": ""
+    },
+    ".cdkey": {
+        "mime_type": "application/vnd.mediastation.cdkey",
+        "description": ""
+    },
+    ".mwf": {
+        "mime_type": "application/vnd.mfer",
+        "description": ""
+    },
+    ".mfm": {
+        "mime_type": "application/vnd.mfmp",
+        "description": ""
+    },
+    ".flo": {
+        "mime_type": "application/vnd.micrografx.flo",
+        "description": ""
+    },
+    ".igx": {
+        "mime_type": "application/vnd.micrografx.igx",
+        "description": ""
+    },
+    ".mif": {
+        "mime_type": "application/vnd.mif",
+        "description": ""
+    },
+    ".daf": {
+        "mime_type": "application/vnd.mobius.daf",
+        "description": ""
+    },
+    ".dis": {
+        "mime_type": "application/vnd.mobius.dis",
+        "description": ""
+    },
+    ".mbk": {
+        "mime_type": "application/vnd.mobius.mbk",
+        "description": ""
+    },
+    ".mqy": {
+        "mime_type": "application/vnd.mobius.mqy",
+        "description": ""
+    },
+    ".msl": {
+        "mime_type": "application/vnd.mobius.msl",
+        "description": ""
+    },
+    ".plc": {
+        "mime_type": "application/vnd.mobius.plc",
+        "description": ""
+    },
+    ".txf": {
+        "mime_type": "application/vnd.mobius.txf",
+        "description": ""
+    },
+    ".mpn": {
+        "mime_type": "application/vnd.mophun.application",
+        "description": ""
+    },
+    ".mpc": {
+        "mime_type": "application/vnd.mophun.certificate",
+        "description": ""
+    },
+    ".xul": {
+        "mime_type": "application/vnd.mozilla.xul+xml",
+        "description": ""
+    },
+    ".cil": {
+        "mime_type": "application/vnd.ms-artgalry",
+        "description": ""
+    },
+    ".cab": {
+        "mime_type": "application/vnd.ms-cab-compressed",
+        "description": ""
+    },
+    ".xla": {
+        "mime_type": "application/vnd.ms-excel",
+        "description": ""
+    },
+    ".xlb": {
+        "mime_type": "application/vnd.ms-excel",
+        "description": ""
+    },
+    ".xlc": {
+        "mime_type": "application/vnd.ms-excel",
+        "description": ""
+    },
+    ".xlm": {
+        "mime_type": "application/vnd.ms-excel",
+        "description": ""
+    },
+    ".xls": {
+        "mime_type": "application/vnd.ms-excel",
+        "description": ""
+    },
+    ".xlt": {
+        "mime_type": "application/vnd.ms-excel",
+        "description": ""
+    },
+    ".xlw": {
+        "mime_type": "application/vnd.ms-excel",
+        "description": ""
+    },
+    ".xlam": {
+        "mime_type": "application/vnd.ms-excel.addin.macroenabled.12",
+        "description": ""
+    },
+    ".xlsb": {
+        "mime_type": "application/vnd.ms-excel.sheet.binary.macroenabled.12",
+        "description": ""
+    },
+    ".xlsm": {
+        "mime_type": "application/vnd.ms-excel.sheet.macroenabled.12",
+        "description": ""
+    },
+    ".xltm": {
+        "mime_type": "application/vnd.ms-excel.template.macroenabled.12",
+        "description": ""
+    },
+    ".eot": {
+        "mime_type": "application/vnd.ms-fontobject",
+        "description": ""
+    },
+    ".chm": {
+        "mime_type": "application/vnd.ms-htmlhelp",
+        "description": ""
+    },
+    ".ims": {
+        "mime_type": "application/vnd.ms-ims",
+        "description": ""
+    },
+    ".lrm": {
+        "mime_type": "application/vnd.ms-lrm",
+        "description": ""
+    },
+    ".cat": {
+        "mime_type": "application/vnd.ms-pki.seccat",
+        "description": ""
+    },
+    ".stl": {
+        "mime_type": "application/vnd.ms-pki.stl",
+        "description": ""
+    },
+    ".pot": {
+        "mime_type": "application/vnd.ms-powerpoint",
+        "description": ""
+    },
+    ".ppa": {
+        "mime_type": "application/vnd.ms-powerpoint",
+        "description": ""
+    },
+    ".pps": {
+        "mime_type": "application/vnd.ms-powerpoint",
+        "description": ""
+    },
+    ".ppt": {
+        "mime_type": "application/vnd.ms-powerpoint",
+        "description": ""
+    },
+    ".pwz": {
+        "mime_type": "application/vnd.ms-powerpoint",
+        "description": ""
+    },
+    ".ppam": {
+        "mime_type": "application/vnd.ms-powerpoint.addin.macroenabled.12",
+        "description": ""
+    },
+    ".pptm": {
+        "mime_type": "application/vnd.ms-powerpoint.presentation.macroenabled.12",
+        "description": ""
+    },
+    ".sldm": {
+        "mime_type": "application/vnd.ms-powerpoint.slide.macroenabled.12",
+        "description": ""
+    },
+    ".ppsm": {
+        "mime_type": "application/vnd.ms-powerpoint.slideshow.macroenabled.12",
+        "description": ""
+    },
+    ".potm": {
+        "mime_type": "application/vnd.ms-powerpoint.template.macroenabled.12",
+        "description": ""
+    },
+    ".mpp": {
+        "mime_type": "application/vnd.ms-project",
+        "description": ""
+    },
+    ".mpt": {
+        "mime_type": "application/vnd.ms-project",
+        "description": ""
+    },
+    ".docm": {
+        "mime_type": "application/vnd.ms-word.document.macroenabled.12",
+        "description": ""
+    },
+    ".dotm": {
+        "mime_type": "application/vnd.ms-word.template.macroenabled.12",
+        "description": ""
+    },
+    ".wcm": {
+        "mime_type": "application/vnd.ms-works",
+        "description": ""
+    },
+    ".wdb": {
+        "mime_type": "application/vnd.ms-works",
+        "description": ""
+    },
+    ".wks": {
+        "mime_type": "application/vnd.ms-works",
+        "description": ""
+    },
+    ".wps": {
+        "mime_type": "application/vnd.ms-works",
+        "description": ""
+    },
+    ".wpl": {
+        "mime_type": "application/vnd.ms-wpl",
+        "description": ""
+    },
+    ".xps": {
+        "mime_type": "application/vnd.ms-xpsdocument",
+        "description": ""
+    },
+    ".mseq": {
+        "mime_type": "application/vnd.mseq",
+        "description": ""
+    },
+    ".mus": {
+        "mime_type": "application/vnd.musician",
+        "description": ""
+    },
+    ".msty": {
+        "mime_type": "application/vnd.muvee.style",
+        "description": ""
+    },
+    ".nlu": {
+        "mime_type": "application/vnd.neurolanguage.nlu",
+        "description": ""
+    },
+    ".nnd": {
+        "mime_type": "application/vnd.noblenet-directory",
+        "description": ""
+    },
+    ".nns": {
+        "mime_type": "application/vnd.noblenet-sealer",
+        "description": ""
+    },
+    ".nnw": {
+        "mime_type": "application/vnd.noblenet-web",
+        "description": ""
+    },
+    ".ngdat": {
+        "mime_type": "application/vnd.nokia.n-gage.data",
+        "description": ""
+    },
+    ".n-gage": {
+        "mime_type": "application/vnd.nokia.n-gage.symbian.install",
+        "description": ""
+    },
+    ".rpst": {
+        "mime_type": "application/vnd.nokia.radio-preset",
+        "description": ""
+    },
+    ".rpss": {
+        "mime_type": "application/vnd.nokia.radio-presets",
+        "description": ""
+    },
+    ".edm": {
+        "mime_type": "application/vnd.novadigm.edm",
+        "description": ""
+    },
+    ".edx": {
+        "mime_type": "application/vnd.novadigm.edx",
+        "description": ""
+    },
+    ".ext": {
+        "mime_type": "application/vnd.novadigm.ext",
+        "description": ""
+    },
+    ".odc": {
+        "mime_type": "application/vnd.oasis.opendocument.chart",
+        "description": ""
+    },
+    ".otc": {
+        "mime_type": "application/vnd.oasis.opendocument.chart-template",
+        "description": ""
+    },
+    ".odb": {
+        "mime_type": "application/vnd.oasis.opendocument.database",
+        "description": ""
+    },
+    ".odf": {
+        "mime_type": "application/vnd.oasis.opendocument.formula",
+        "description": ""
+    },
+    ".odft": {
+        "mime_type": "application/vnd.oasis.opendocument.formula-template",
+        "description": ""
+    },
+    ".odg": {
+        "mime_type": "application/vnd.oasis.opendocument.graphics",
+        "description": ""
+    },
+    ".otg": {
+        "mime_type": "application/vnd.oasis.opendocument.graphics-template",
+        "description": ""
+    },
+    ".odi": {
+        "mime_type": "application/vnd.oasis.opendocument.image",
+        "description": ""
+    },
+    ".oti": {
+        "mime_type": "application/vnd.oasis.opendocument.image-template",
+        "description": ""
+    },
+    ".odp": {
+        "mime_type": "application/vnd.oasis.opendocument.presentation",
+        "description": ""
+    },
+    ".otp": {
+        "mime_type": "application/vnd.oasis.opendocument.presentation-template",
+        "description": ""
+    },
+    ".ods": {
+        "mime_type": "application/vnd.oasis.opendocument.spreadsheet",
+        "description": ""
+    },
+    ".ots": {
+        "mime_type": "application/vnd.oasis.opendocument.spreadsheet-template",
+        "description": ""
+    },
+    ".odt": {
+        "mime_type": "application/vnd.oasis.opendocument.text",
+        "description": ""
+    },
+    ".otm": {
+        "mime_type": "application/vnd.oasis.opendocument.text-master",
+        "description": ""
+    },
+    ".ott": {
+        "mime_type": "application/vnd.oasis.opendocument.text-template",
+        "description": ""
+    },
+    ".oth": {
+        "mime_type": "application/vnd.oasis.opendocument.text-web",
+        "description": ""
+    },
+    ".xo": {
+        "mime_type": "application/vnd.olpc-sugar",
+        "description": ""
+    },
+    ".dd2": {
+        "mime_type": "application/vnd.oma.dd2+xml",
+        "description": ""
+    },
+    ".oxt": {
+        "mime_type": "application/vnd.openofficeorg.extension",
+        "description": ""
+    },
+    ".pptx": {
+        "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "description": ""
+    },
+    ".sldx": {
+        "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.slide",
+        "description": ""
+    },
+    ".ppsx": {
+        "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
+        "description": ""
+    },
+    ".potx": {
+        "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.template",
+        "description": ""
+    },
+    ".xlsx": {
+        "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "description": ""
+    },
+    ".xltx": {
+        "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.template",
+        "description": ""
+    },
+    ".docx": {
+        "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "description": ""
+    },
+    ".dotx": {
+        "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+        "description": ""
+    },
+    ".dp": {
+        "mime_type": "application/vnd.osgi.dp",
+        "description": ""
+    },
+    ".oprc": {
+        "mime_type": "application/vnd.palm",
+        "description": ""
+    },
+    ".pdb": {
+        "mime_type": "application/vnd.palm",
+        "description": ""
+    },
+    ".pqa": {
+        "mime_type": "application/vnd.palm",
+        "description": ""
+    },
+    ".str": {
+        "mime_type": "application/vnd.pg.format",
+        "description": ""
+    },
+    ".ei6": {
+        "mime_type": "application/vnd.pg.osasli",
+        "description": ""
+    },
+    ".efif": {
+        "mime_type": "application/vnd.picsel",
+        "description": ""
+    },
+    ".plf": {
+        "mime_type": "application/vnd.pocketlearn",
+        "description": ""
+    },
+    ".pbd": {
+        "mime_type": "application/vnd.powerbuilder6",
+        "description": ""
+    },
+    ".box": {
+        "mime_type": "application/vnd.previewsystems.box",
+        "description": ""
+    },
+    ".mgz": {
+        "mime_type": "application/vnd.proteus.magazine",
+        "description": ""
+    },
+    ".qps": {
+        "mime_type": "application/vnd.publishare-delta-tree",
+        "description": ""
+    },
+    ".ptid": {
+        "mime_type": "application/vnd.pvi.ptid1",
+        "description": ""
+    },
+    ".qwd": {
+        "mime_type": "application/vnd.quark.quarkxpress",
+        "description": ""
+    },
+    ".qwt": {
+        "mime_type": "application/vnd.quark.quarkxpress",
+        "description": ""
+    },
+    ".qxb": {
+        "mime_type": "application/vnd.quark.quarkxpress",
+        "description": ""
+    },
+    ".qxd": {
+        "mime_type": "application/vnd.quark.quarkxpress",
+        "description": ""
+    },
+    ".qxl": {
+        "mime_type": "application/vnd.quark.quarkxpress",
+        "description": ""
+    },
+    ".qxt": {
+        "mime_type": "application/vnd.quark.quarkxpress",
+        "description": ""
+    },
+    ".mxl": {
+        "mime_type": "application/vnd.recordare.musicxml",
+        "description": ""
+    },
+    ".musicxml": {
+        "mime_type": "application/vnd.recordare.musicxml+xml",
+        "description": ""
+    },
+    ".cod": {
+        "mime_type": "application/vnd.rim.cod",
+        "description": ""
+    },
+    ".rm": {
+        "mime_type": "application/vnd.rn-realmedia",
+        "description": ""
+    },
+    ".link66": {
+        "mime_type": "application/vnd.route66.link66+xml",
+        "description": ""
+    },
+    ".see": {
+        "mime_type": "application/vnd.seemail",
+        "description": ""
+    },
+    ".sema": {
+        "mime_type": "application/vnd.sema",
+        "description": ""
+    },
+    ".semd": {
+        "mime_type": "application/vnd.semd",
+        "description": ""
+    },
+    ".semf": {
+        "mime_type": "application/vnd.semf",
+        "description": ""
+    },
+    ".ifm": {
+        "mime_type": "application/vnd.shana.informed.formdata",
+        "description": ""
+    },
+    ".itp": {
+        "mime_type": "application/vnd.shana.informed.formtemplate",
+        "description": ""
+    },
+    ".iif": {
+        "mime_type": "application/vnd.shana.informed.interchange",
+        "description": ""
+    },
+    ".ipk": {
+        "mime_type": "application/vnd.shana.informed.package",
+        "description": ""
+    },
+    ".twd": {
+        "mime_type": "application/vnd.simtech-mindmapper",
+        "description": ""
+    },
+    ".twds": {
+        "mime_type": "application/vnd.simtech-mindmapper",
+        "description": ""
+    },
+    ".mmf": {
+        "mime_type": "application/vnd.smaf",
+        "description": ""
+    },
+    ".teacher": {
+        "mime_type": "application/vnd.smart.teacher",
+        "description": ""
+    },
+    ".sdkd": {
+        "mime_type": "application/vnd.solent.sdkm+xml",
+        "description": ""
+    },
+    ".sdkm": {
+        "mime_type": "application/vnd.solent.sdkm+xml",
+        "description": ""
+    },
+    ".dxp": {
+        "mime_type": "application/vnd.spotfire.dxp",
+        "description": ""
+    },
+    ".sfs": {
+        "mime_type": "application/vnd.spotfire.sfs",
+        "description": ""
+    },
+    ".db": {
+        "mime_type": "application/vnd.sqlite3",
+        "description": "SQLite is a self-contained, serverless, zero-configuration, transactional SQL database engine. The code for SQLite is in the public domain and is thus free for use for any purpose, commercial or private."
+    },
+    ".sqlite": {
+        "mime_type": "application/vnd.sqlite3",
+        "description": "SQLite is a self-contained, serverless, zero-configuration, transactional SQL database engine. The code for SQLite is in the public domain and is thus free for use for any purpose, commercial or private."
+    },
+    ".sqlite3": {
+        "mime_type": "application/vnd.sqlite3",
+        "description": "SQLite is a self-contained, serverless, zero-configuration, transactional SQL database engine. The code for SQLite is in the public domain and is thus free for use for any purpose, commercial or private."
+    },
+    ".db-wal": {
+        "mime_type": "application/vnd.sqlite3",
+        "description": "SQLite is a self-contained, serverless, zero-configuration, transactional SQL database engine. The code for SQLite is in the public domain and is thus free for use for any purpose, commercial or private."
+    },
+    ".sqlite-wal": {
+        "mime_type": "application/vnd.sqlite3",
+        "description": "SQLite is a self-contained, serverless, zero-configuration, transactional SQL database engine. The code for SQLite is in the public domain and is thus free for use for any purpose, commercial or private."
+    },
+    ".db-shm": {
+        "mime_type": "application/vnd.sqlite3",
+        "description": "SQLite is a self-contained, serverless, zero-configuration, transactional SQL database engine. The code for SQLite is in the public domain and is thus free for use for any purpose, commercial or private."
+    },
+    ".sqlite-shm": {
+        "mime_type": "application/vnd.sqlite3",
+        "description": "SQLite is a self-contained, serverless, zero-configuration, transactional SQL database engine. The code for SQLite is in the public domain and is thus free for use for any purpose, commercial or private."
+    },
+    ".sdc": {
+        "mime_type": "application/vnd.stardivision.calc",
+        "description": ""
+    },
+    ".sda": {
+        "mime_type": "application/vnd.stardivision.draw",
+        "description": ""
+    },
+    ".sdd": {
+        "mime_type": "application/vnd.stardivision.impress",
+        "description": ""
+    },
+    ".smf": {
+        "mime_type": "application/vnd.stardivision.math",
+        "description": ""
+    },
+    ".sdw": {
+        "mime_type": "application/vnd.stardivision.writer",
+        "description": ""
+    },
+    ".vor": {
+        "mime_type": "application/vnd.stardivision.writer",
+        "description": ""
+    },
+    ".sgl": {
+        "mime_type": "application/vnd.stardivision.writer-global",
+        "description": ""
+    },
+    ".sxc": {
+        "mime_type": "application/vnd.sun.xml.calc",
+        "description": ""
+    },
+    ".stc": {
+        "mime_type": "application/vnd.sun.xml.calc.template",
+        "description": ""
+    },
+    ".sxd": {
+        "mime_type": "application/vnd.sun.xml.draw",
+        "description": ""
+    },
+    ".std": {
+        "mime_type": "application/vnd.sun.xml.draw.template",
+        "description": ""
+    },
+    ".sxi": {
+        "mime_type": "application/vnd.sun.xml.impress",
+        "description": ""
+    },
+    ".sti": {
+        "mime_type": "application/vnd.sun.xml.impress.template",
+        "description": ""
+    },
+    ".sxm": {
+        "mime_type": "application/vnd.sun.xml.math",
+        "description": ""
+    },
+    ".sxw": {
+        "mime_type": "application/vnd.sun.xml.writer",
+        "description": ""
+    },
+    ".sxg": {
+        "mime_type": "application/vnd.sun.xml.writer.global",
+        "description": ""
+    },
+    ".stw": {
+        "mime_type": "application/vnd.sun.xml.writer.template",
+        "description": ""
+    },
+    ".sus": {
+        "mime_type": "application/vnd.sus-calendar",
+        "description": ""
+    },
+    ".susp": {
+        "mime_type": "application/vnd.sus-calendar",
+        "description": ""
+    },
+    ".svd": {
+        "mime_type": "application/vnd.svd",
+        "description": ""
+    },
+    ".sis": {
+        "mime_type": "application/vnd.symbian.install",
+        "description": ""
+    },
+    ".sisx": {
+        "mime_type": "application/vnd.symbian.install",
+        "description": ""
+    },
+    ".xsm": {
+        "mime_type": "application/vnd.syncml+xml",
+        "description": ""
+    },
+    ".bdm": {
+        "mime_type": "application/vnd.syncml.dm+wbxml",
+        "description": ""
+    },
+    ".xdm": {
+        "mime_type": "application/vnd.syncml.dm+xml",
+        "description": ""
+    },
+    ".tao": {
+        "mime_type": "application/vnd.tao.intent-module-archive",
+        "description": ""
+    },
+    ".tmo": {
+        "mime_type": "application/vnd.tmobile-livetv",
+        "description": ""
+    },
+    ".tpt": {
+        "mime_type": "application/vnd.trid.tpt",
+        "description": ""
+    },
+    ".mxs": {
+        "mime_type": "application/vnd.triscape.mxs",
+        "description": ""
+    },
+    ".tra": {
+        "mime_type": "application/vnd.trueapp",
+        "description": ""
+    },
+    ".ufd": {
+        "mime_type": "application/vnd.ufdl",
+        "description": ""
+    },
+    ".ufdl": {
+        "mime_type": "application/vnd.ufdl",
+        "description": ""
+    },
+    ".utz": {
+        "mime_type": "application/vnd.uiq.theme",
+        "description": ""
+    },
+    ".umj": {
+        "mime_type": "application/vnd.umajin",
+        "description": ""
+    },
+    ".unityweb": {
+        "mime_type": "application/vnd.unity",
+        "description": ""
+    },
+    ".uoml": {
+        "mime_type": "application/vnd.uoml+xml",
+        "description": ""
+    },
+    ".vcx": {
+        "mime_type": "application/vnd.vcx",
+        "description": ""
+    },
+    ".vsd": {
+        "mime_type": "application/vnd.visio",
+        "description": ""
+    },
+    ".vss": {
+        "mime_type": "application/vnd.visio",
+        "description": ""
+    },
+    ".vst": {
+        "mime_type": "application/vnd.visio",
+        "description": ""
+    },
+    ".vsw": {
+        "mime_type": "application/vnd.visio",
+        "description": ""
+    },
+    ".vis": {
+        "mime_type": "application/vnd.visionary",
+        "description": ""
+    },
+    ".vsf": {
+        "mime_type": "application/vnd.vsf",
+        "description": ""
+    },
+    ".sic": {
+        "mime_type": "application/vnd.wap.sic",
+        "description": ""
+    },
+    ".slc": {
+        "mime_type": "application/vnd.wap.slc",
+        "description": ""
+    },
+    ".wbxml": {
+        "mime_type": "application/vnd.wap.wbxml",
+        "description": ""
+    },
+    ".wmlc": {
+        "mime_type": "application/vnd.wap.wmlc",
+        "description": ""
+    },
+    ".wmlsc": {
+        "mime_type": "application/vnd.wap.wmlscriptc",
+        "description": ""
+    },
+    ".wtb": {
+        "mime_type": "application/vnd.webturbo",
+        "description": ""
+    },
+    ".wpd": {
+        "mime_type": "application/vnd.wordperfect",
+        "description": ""
+    },
+    ".wqd": {
+        "mime_type": "application/vnd.wqd",
+        "description": ""
+    },
+    ".stf": {
+        "mime_type": "application/vnd.wt.stf",
+        "description": ""
+    },
+    ".xar": {
+        "mime_type": "application/vnd.xara",
+        "description": ""
+    },
+    ".xfdl": {
+        "mime_type": "application/vnd.xfdl",
+        "description": ""
+    },
+    ".hvd": {
+        "mime_type": "application/vnd.yamaha.hv-dic",
+        "description": ""
+    },
+    ".hvs": {
+        "mime_type": "application/vnd.yamaha.hv-script",
+        "description": ""
+    },
+    ".hvp": {
+        "mime_type": "application/vnd.yamaha.hv-voice",
+        "description": ""
+    },
+    ".osf": {
+        "mime_type": "application/vnd.yamaha.openscoreformat",
+        "description": ""
+    },
+    ".osfpvg": {
+        "mime_type": "application/vnd.yamaha.openscoreformat.osfpvg+xml",
+        "description": ""
+    },
+    ".saf": {
+        "mime_type": "application/vnd.yamaha.smaf-audio",
+        "description": ""
+    },
+    ".spf": {
+        "mime_type": "application/vnd.yamaha.smaf-phrase",
+        "description": ""
+    },
+    ".cmp": {
+        "mime_type": "application/vnd.yellowriver-custom-menu",
+        "description": ""
+    },
+    ".zir": {
+        "mime_type": "application/vnd.zul",
+        "description": ""
+    },
+    ".zirz": {
+        "mime_type": "application/vnd.zul",
+        "description": ""
+    },
+    ".zaz": {
+        "mime_type": "application/vnd.zzazz.deck+xml",
+        "description": ""
+    },
+    ".vxml": {
+        "mime_type": "application/voicexml+xml",
+        "description": ""
+    },
+    ".hlp": {
+        "mime_type": "application/winhlp",
+        "description": ""
+    },
+    ".wsdl": {
+        "mime_type": "application/wsdl+xml",
+        "description": ""
+    },
+    ".wspolicy": {
+        "mime_type": "application/wspolicy+xml",
+        "description": ""
+    },
+    ".7z": {
+        "mime_type": "application/x-7z-compressed",
+        "description": "7-zip archive"
+    },
+    ".abw": {
+        "mime_type": "application/x-abiword",
+        "description": ""
+    },
+    ".ace": {
+        "mime_type": "application/x-ace-compressed",
+        "description": ""
+    },
+    ".aab": {
+        "mime_type": "application/x-authorware-bin",
+        "description": ""
+    },
+    ".u32": {
+        "mime_type": "application/x-authorware-bin",
+        "description": ""
+    },
+    ".vox": {
+        "mime_type": "application/x-authorware-bin",
+        "description": ""
+    },
+    ".x32": {
+        "mime_type": "application/x-authorware-bin",
+        "description": ""
+    },
+    ".aam": {
+        "mime_type": "application/x-authorware-map",
+        "description": ""
+    },
+    ".aas": {
+        "mime_type": "application/x-authorware-seg",
+        "description": ""
+    },
+    ".bcpio": {
+        "mime_type": "application/x-bcpio",
+        "description": ""
+    },
+    ".torrent": {
+        "mime_type": "application/x-bittorrent",
+        "description": ""
+    },
+    ".bz": {
+        "mime_type": "application/x-bzip",
+        "description": ""
+    },
+    ".boz": {
+        "mime_type": "application/x-bzip2",
+        "description": ""
+    },
+    ".bz2": {
+        "mime_type": "application/x-bzip2",
+        "description": ""
+    },
+    ".vcd": {
+        "mime_type": "application/x-cdlink",
+        "description": ""
+    },
+    ".chat": {
+        "mime_type": "application/x-chat",
+        "description": ""
+    },
+    ".pgn": {
+        "mime_type": "application/x-chess-pgn",
+        "description": ""
+    },
+    ".cpio": {
+        "mime_type": "application/x-cpio",
+        "description": ""
+    },
+    ".csh": {
+        "mime_type": "application/x-csh",
+        "description": ""
+    },
+    ".cct": {
+        "mime_type": "application/x-director",
+        "description": ""
+    },
+    ".cst": {
+        "mime_type": "application/x-director",
+        "description": ""
+    },
+    ".cxt": {
+        "mime_type": "application/x-director",
+        "description": ""
+    },
+    ".dcr": {
+        "mime_type": "image/x-kodak-dcr",
+        "description": "This is another proprietary format, used by old Kodak DCS digital cameras. It is based on TIFF. The full-resolution image is in one of the sub-IFDs of the first IFD. A possible way to identify it is that it uses Compression code 65000 in an IFD or sub-IFD."
+    },
+    ".dir": {
+        "mime_type": "application/x-director",
+        "description": ""
+    },
+    ".dxr": {
+        "mime_type": "application/x-director",
+        "description": ""
+    },
+    ".fgd": {
+        "mime_type": "application/x-director",
+        "description": ""
+    },
+    ".swa": {
+        "mime_type": "application/x-director",
+        "description": ""
+    },
+    ".w3d": {
+        "mime_type": "application/x-director",
+        "description": ""
+    },
+    ".wad": {
+        "mime_type": "application/x-doom",
+        "description": ""
+    },
+    ".ncx": {
+        "mime_type": "application/x-dtbncx+xml",
+        "description": ""
+    },
+    ".dtb": {
+        "mime_type": "application/x-dtbook+xml",
+        "description": ""
+    },
+    ".res": {
+        "mime_type": "application/x-dtbresource+xml",
+        "description": ""
+    },
+    ".dvi": {
+        "mime_type": "application/x-dvi",
+        "description": ""
+    },
+    ".bdf": {
+        "mime_type": "application/x-font-bdf",
+        "description": ""
+    },
+    ".gsf": {
+        "mime_type": "application/x-font-ghostscript",
+        "description": ""
+    },
+    ".psf": {
+        "mime_type": "application/x-font-linux-psf",
+        "description": ""
+    },
+    ".otf": {
+        "mime_type": "font/otf",
+        "description": ""
+    },
+    ".pcf": {
+        "mime_type": "application/x-font-pcf",
+        "description": ""
+    },
+    ".snf": {
+        "mime_type": "application/x-font-snf",
+        "description": ""
+    },
+    ".ttc": {
+        "mime_type": "application/x-font-ttf",
+        "description": ""
+    },
+    ".ttf": {
+        "mime_type": "application/x-font-ttf",
+        "description": ""
+    },
+    ".afm": {
+        "mime_type": "application/x-font-type1",
+        "description": ""
+    },
+    ".pfa": {
+        "mime_type": "application/x-font-type1",
+        "description": ""
+    },
+    ".pfb": {
+        "mime_type": "application/x-font-type1",
+        "description": ""
+    },
+    ".pfm": {
+        "mime_type": "application/x-font-type1",
+        "description": ""
+    },
+    ".spl": {
+        "mime_type": "application/x-futuresplash",
+        "description": ""
+    },
+    ".gnumeric": {
+        "mime_type": "application/x-gnumeric",
+        "description": ""
+    },
+    ".gtar": {
+        "mime_type": "application/x-gtar",
+        "description": ""
+    },
+    ".hdf": {
+        "mime_type": "application/x-hdf",
+        "description": ""
+    },
+    ".jnlp": {
+        "mime_type": "application/x-java-jnlp-file",
+        "description": ""
+    },
+    ".kil": {
+        "mime_type": "application/x-killustrator",
+        "description": ""
+    },
+    ".kra": {
+        "mime_type": "application/x-krita",
+        "description": "KRA is the file format for Krita, a raster graphics editor. It is a ZIP archive containing a number of files, including the image data, the layer structure, and the document settings.It is similar in function to PSD files for photoshop.A .krz file is a compressed version of a .kra file and only missing the mergedimage.png contained within it to save storage. The lack of this file can affect interchange with other applications such as Scribus."
+    },
+    ".krz": {
+        "mime_type": "application/x-krita",
+        "description": "KRA is the file format for Krita, a raster graphics editor. It is a ZIP archive containing a number of files, including the image data, the layer structure, and the document settings.It is similar in function to PSD files for photoshop.A .krz file is a compressed version of a .kra file and only missing the mergedimage.png contained within it to save storage. The lack of this file can affect interchange with other applications such as Scribus."
+    },
+    ".latex": {
+        "mime_type": "application/x-latex",
+        "description": ""
+    },
+    ".mobi": {
+        "mime_type": "application/x-mobipocket-ebook",
+        "description": ""
+    },
+    ".prc": {
+        "mime_type": "application/x-mobipocket-ebook",
+        "description": ""
+    },
+    ".application": {
+        "mime_type": "application/x-ms-application",
+        "description": ""
+    },
+    ".wmd": {
+        "mime_type": "application/x-ms-wmd",
+        "description": ""
+    },
+    ".wmz": {
+        "mime_type": "application/x-ms-wmz",
+        "description": ""
+    },
+    ".xbap": {
+        "mime_type": "application/x-ms-xbap",
+        "description": ""
+    },
+    ".mdb": {
+        "mime_type": "application/x-msaccess",
+        "description": ""
+    },
+    ".obd": {
+        "mime_type": "application/x-msbinder",
+        "description": ""
+    },
+    ".crd": {
+        "mime_type": "application/x-mscardfile",
+        "description": ""
+    },
+    ".clp": {
+        "mime_type": "application/x-msclip",
+        "description": ""
+    },
+    ".bat": {
+        "mime_type": "application/x-msdownload",
+        "description": ""
+    },
+    ".com": {
+        "mime_type": "application/x-msdownload",
+        "description": ""
+    },
+    ".dll": {
+        "mime_type": "application/x-msdownload",
+        "description": ""
+    },
+    ".exe": {
+        "mime_type": "application/x-msdownload",
+        "description": ""
+    },
+    ".msi": {
+        "mime_type": "application/x-msdownload",
+        "description": ""
+    },
+    ".m13": {
+        "mime_type": "application/x-msmediaview",
+        "description": ""
+    },
+    ".m14": {
+        "mime_type": "application/x-msmediaview",
+        "description": ""
+    },
+    ".mvb": {
+        "mime_type": "application/x-msmediaview",
+        "description": ""
+    },
+    ".wmf": {
+        "mime_type": "application/x-msmetafile",
+        "description": ""
+    },
+    ".mny": {
+        "mime_type": "application/x-msmoney",
+        "description": ""
+    },
+    ".pub": {
+        "mime_type": "application/x-mspublisher",
+        "description": ""
+    },
+    ".scd": {
+        "mime_type": "application/x-msschedule",
+        "description": ""
+    },
+    ".trm": {
+        "mime_type": "application/x-msterminal",
+        "description": ""
+    },
+    ".wri": {
+        "mime_type": "application/x-mswrite",
+        "description": ""
+    },
+    ".cdf": {
+        "mime_type": "application/x-netcdf",
+        "description": ""
+    },
+    ".nc": {
+        "mime_type": "application/x-netcdf",
+        "description": ""
+    },
+    ".pm": {
+        "mime_type": "application/x-perl",
+        "description": ""
+    },
+    ".pl": {
+        "mime_type": "text/plain",
+        "description": ""
+    },
+    ".p12": {
+        "mime_type": "application/x-pkcs12",
+        "description": ""
+    },
+    ".pfx": {
+        "mime_type": "application/x-pkcs12",
+        "description": ""
+    },
+    ".p7b": {
+        "mime_type": "application/x-pkcs7-certificates",
+        "description": ""
+    },
+    ".spc": {
+        "mime_type": "application/x-pkcs7-certificates",
+        "description": ""
+    },
+    ".pyc": {
+        "mime_type": "application/x-python-code",
+        "description": ""
+    },
+    ".pyo": {
+        "mime_type": "application/x-python-code",
+        "description": ""
+    },
+    ".rpa": {
+        "mime_type": "application/x-redhat-package-manager",
+        "description": ""
+    },
+    ".rpm": {
+        "mime_type": "application/x-rpm",
+        "description": ""
+    },
+    ".sh": {
+        "mime_type": "application/x-shellscript",
+        "description": "Why even drag this in?"
+    },
+    ".shar": {
+        "mime_type": "application/x-shar",
+        "description": ""
+    },
+    ".swf": {
+        "mime_type": "application/x-shockwave-flash",
+        "description": ""
+    },
+    ".xap": {
+        "mime_type": "application/x-silverlight-app",
+        "description": ""
+    },
+    ".sit": {
+        "mime_type": "application/x-stuffit",
+        "description": ""
+    },
+    ".sitx": {
+        "mime_type": "application/x-stuffitx",
+        "description": ""
+    },
+    ".sv4cpio": {
+        "mime_type": "application/x-sv4cpio",
+        "description": ""
+    },
+    ".sv4crc": {
+        "mime_type": "application/x-sv4crc",
+        "description": ""
+    },
+    ".tar": {
+        "mime_type": "application/x-tar",
+        "description": ""
+    },
+    ".tcl": {
+        "mime_type": "application/x-tcl",
+        "description": ""
+    },
+    ".tex": {
+        "mime_type": "application/x-tex",
+        "description": ""
+    },
+    ".tfm": {
+        "mime_type": "application/x-tex-tfm",
+        "description": ""
+    },
+    ".texi": {
+        "mime_type": "application/x-texinfo",
+        "description": ""
+    },
+    ".texinfo": {
+        "mime_type": "application/x-texinfo",
+        "description": ""
+    },
+    ".ustar": {
+        "mime_type": "application/x-ustar",
+        "description": ""
+    },
+    ".src": {
+        "mime_type": "application/x-wais-source",
+        "description": ""
+    },
+    ".crt": {
+        "mime_type": "application/x-x509-ca-cert",
+        "description": ""
+    },
+    ".der": {
+        "mime_type": "application/x-x509-ca-cert",
+        "description": ""
+    },
+    ".fig": {
+        "mime_type": "application/x-xfig",
+        "description": ""
+    },
+    ".xpi": {
+        "mime_type": "application/x-xpinstall",
+        "description": ""
+    },
+    ".xenc": {
+        "mime_type": "application/xenc+xml",
+        "description": ""
+    },
+    ".xht": {
+        "mime_type": "application/xhtml+xml",
+        "description": ""
+    },
+    ".xhtml": {
+        "mime_type": "application/xhtml+xml",
+        "description": ""
+    },
+    ".xml": {
+        "mime_type": "application/xml",
+        "description": ""
+    },
+    ".xpdl": {
+        "mime_type": "application/xml",
+        "description": ""
+    },
+    ".xsl": {
+        "mime_type": "application/xml",
+        "description": ""
+    },
+    ".dtd": {
+        "mime_type": "application/xml-dtd",
+        "description": ""
+    },
+    ".xop": {
+        "mime_type": "application/xop+xml",
+        "description": ""
+    },
+    ".xslt": {
+        "mime_type": "application/xslt+xml",
+        "description": ""
+    },
+    ".xspf": {
+        "mime_type": "application/xspf+xml",
+        "description": ""
+    },
+    ".mxml": {
+        "mime_type": "application/xv+xml",
+        "description": ""
+    },
+    ".xhvml": {
+        "mime_type": "application/xv+xml",
+        "description": ""
+    },
+    ".xvm": {
+        "mime_type": "application/xv+xml",
+        "description": ""
+    },
+    ".xvml": {
+        "mime_type": "application/xv+xml",
+        "description": ""
+    },
+    ".zip": {
+        "mime_type": "application/zip",
+        "description": "ZIP is one of the most popular file compression formats. It was created in 1989 as the native format of the PKZIP program, which was introduced by Phil Katz in the wake of a lawsuit (which he lost) against him by the makers of the then-popular ARC program (and file format) for copyright and trademark infringement in an earlier program PKARC which had been file-compatible with ARC. This resulted in Katz creating a new file format, which rapidly overtook ARC in popularity (to a large extent because of BBS sysops, then the primary users of such compression, resenting the lawsuit). Many programs have been released for a variety of operating systems to compress and decompress ZIP files, and native support for the format is built into several popular operating systems."
+    },
+    ".3gp": {
+        "mime_type": "video/3gpp",
+        "description": ""
+    },
+    ".3g2": {
+        "mime_type": "video/3gpp2",
+        "description": ""
+    },
+    ".adp": {
+        "mime_type": "audio/adpcm",
+        "description": ""
+    },
+    ".aiff": {
+        "mime_type": "audio/x-aiff",
+        "description": ""
+    },
+    ".aif": {
+        "mime_type": "audio/x-aiff",
+        "description": ""
+    },
+    ".aff": {
+        "mime_type": "audio/aiff",
+        "description": "AIFF (Audio Interchange File Format) files store uncompressed signed audio samples inside an IFF container. There's also a compressed variant, called AIFC with the same mimetype.AIFF chunks provide native metadata. In addition, although it is not in the specification, an ID3 chunk is often used to include ID3V2 metadata."
+    },
+    ".au": {
+        "mime_type": "audio/basic",
+        "description": ""
+    },
+    ".snd": {
+        "mime_type": "audio/basic",
+        "description": ""
+    },
+    ".flac": {
+        "mime_type": "audio/flac",
+        "description": "FLAC stands for Free Lossless Audio Codec, an audio format similar to MP3, but lossless, meaning that audio is compressed in FLAC without any loss in quality. It can encode audio with a PCM bit resolution up to 32 bits per sample and sampling rates up to 640 kHz. FLAC-encoded audio is usually found either in a native container (which has the extension .flac), or in an Ogg container (when it's known as OggFLAC)."
+    },
+    ".kar": {
+        "mime_type": "audio/midi",
+        "description": ""
+    },
+    ".mid": {
+        "mime_type": "audio/midi",
+        "description": ""
+    },
+    ".midi": {
+        "mime_type": "audio/midi",
+        "description": ""
+    },
+    ".rmi": {
+        "mime_type": "audio/midi",
+        "description": ""
+    },
+    ".mp4a": {
+        "mime_type": "audio/mp4",
+        "description": "MP4 usually refers to the multimedia file format defined in Part 14 (and to a lesser extent Part 1) of the MPEG-4 standard. \"MP4\" could also mean the entire MPEG-4 standard, or some other subset of MPEG-4. MPEG-4 Part 14 is an application of Part 12. The recommended extension for it is \".mp4\", though \".m4a\" is often used for audio-only files. It is standardized by ISO/IEC 14496-14."
+    },
+    ".m2a": {
+        "mime_type": "audio/mpeg",
+        "description": "MP3 is the name commonly given to the audio formats specified by MPEG-1 Layer III and MPEG-2 Layer III, standardized as ISO/IEC 11172-3:1993, with some additions in ISO/IEC 13818-3:1995. It uses lossy compressed data.MP3 is based in part on work by the Fraunhofer Institute, which held patents in the format. Other companies may also have held patents encumbering its implementation. One of the relevant patents was U.S. Patent 5,812,672, which expired in September 2015; many other related patents in various countries expired earlier. The final expiration of all relevant patents took until 2017, however, due to some \"submarine patents\" which were kept in the application process for years, extending their expiration dates. A modified version of DCT compression (Discrete cosine transform) is used, a lossy compression method also used in JPEG images.ID3 tags are often used to provide metadata in MP3 files, though they aren't part of the MP3 specification."
+    },
+    ".m3a": {
+        "mime_type": "audio/mpeg",
+        "description": "MP3 is the name commonly given to the audio formats specified by MPEG-1 Layer III and MPEG-2 Layer III, standardized as ISO/IEC 11172-3:1993, with some additions in ISO/IEC 13818-3:1995. It uses lossy compressed data.MP3 is based in part on work by the Fraunhofer Institute, which held patents in the format. Other companies may also have held patents encumbering its implementation. One of the relevant patents was U.S. Patent 5,812,672, which expired in September 2015; many other related patents in various countries expired earlier. The final expiration of all relevant patents took until 2017, however, due to some \"submarine patents\" which were kept in the application process for years, extending their expiration dates. A modified version of DCT compression (Discrete cosine transform) is used, a lossy compression method also used in JPEG images.ID3 tags are often used to provide metadata in MP3 files, though they aren't part of the MP3 specification."
+    },
+    ".mp2": {
+        "mime_type": "audio/mpeg",
+        "description": "MP3 is the name commonly given to the audio formats specified by MPEG-1 Layer III and MPEG-2 Layer III, standardized as ISO/IEC 11172-3:1993, with some additions in ISO/IEC 13818-3:1995. It uses lossy compressed data.MP3 is based in part on work by the Fraunhofer Institute, which held patents in the format. Other companies may also have held patents encumbering its implementation. One of the relevant patents was U.S. Patent 5,812,672, which expired in September 2015; many other related patents in various countries expired earlier. The final expiration of all relevant patents took until 2017, however, due to some \"submarine patents\" which were kept in the application process for years, extending their expiration dates. A modified version of DCT compression (Discrete cosine transform) is used, a lossy compression method also used in JPEG images.ID3 tags are often used to provide metadata in MP3 files, though they aren't part of the MP3 specification."
+    },
+    ".mp2a": {
+        "mime_type": "audio/mpeg",
+        "description": "MP3 is the name commonly given to the audio formats specified by MPEG-1 Layer III and MPEG-2 Layer III, standardized as ISO/IEC 11172-3:1993, with some additions in ISO/IEC 13818-3:1995. It uses lossy compressed data.MP3 is based in part on work by the Fraunhofer Institute, which held patents in the format. Other companies may also have held patents encumbering its implementation. One of the relevant patents was U.S. Patent 5,812,672, which expired in September 2015; many other related patents in various countries expired earlier. The final expiration of all relevant patents took until 2017, however, due to some \"submarine patents\" which were kept in the application process for years, extending their expiration dates. A modified version of DCT compression (Discrete cosine transform) is used, a lossy compression method also used in JPEG images.ID3 tags are often used to provide metadata in MP3 files, though they aren't part of the MP3 specification."
+    },
+    ".mp3": {
+        "mime_type": "audio/mpeg",
+        "description": "MP3 is the name commonly given to the audio formats specified by MPEG-1 Layer III and MPEG-2 Layer III, standardized as ISO/IEC 11172-3:1993, with some additions in ISO/IEC 13818-3:1995. It uses lossy compressed data.MP3 is based in part on work by the Fraunhofer Institute, which held patents in the format. Other companies may also have held patents encumbering its implementation. One of the relevant patents was U.S. Patent 5,812,672, which expired in September 2015; many other related patents in various countries expired earlier. The final expiration of all relevant patents took until 2017, however, due to some \"submarine patents\" which were kept in the application process for years, extending their expiration dates. A modified version of DCT compression (Discrete cosine transform) is used, a lossy compression method also used in JPEG images.ID3 tags are often used to provide metadata in MP3 files, though they aren't part of the MP3 specification."
+    },
+    ".mpga": {
+        "mime_type": "audio/mpeg",
+        "description": "MP3 is the name commonly given to the audio formats specified by MPEG-1 Layer III and MPEG-2 Layer III, standardized as ISO/IEC 11172-3:1993, with some additions in ISO/IEC 13818-3:1995. It uses lossy compressed data.MP3 is based in part on work by the Fraunhofer Institute, which held patents in the format. Other companies may also have held patents encumbering its implementation. One of the relevant patents was U.S. Patent 5,812,672, which expired in September 2015; many other related patents in various countries expired earlier. The final expiration of all relevant patents took until 2017, however, due to some \"submarine patents\" which were kept in the application process for years, extending their expiration dates. A modified version of DCT compression (Discrete cosine transform) is used, a lossy compression method also used in JPEG images.ID3 tags are often used to provide metadata in MP3 files, though they aren't part of the MP3 specification."
+    },
+    ".oga": {
+        "mime_type": "audio/ogg",
+        "description": ""
+    },
+    ".ogg": {
+        "mime_type": "audio/ogg",
+        "description": ""
+    },
+    ".spx": {
+        "mime_type": "audio/ogg",
+        "description": ""
+    },
+    ".opus": {
+        "mime_type": "audio/opus",
+        "description": "Opus audio"
+    },
+    ".eol": {
+        "mime_type": "audio/vnd.digital-winds",
+        "description": ""
+    },
+    ".dts": {
+        "mime_type": "audio/vnd.dts",
+        "description": ""
+    },
+    ".dtshd": {
+        "mime_type": "audio/vnd.dts.hd",
+        "description": ""
+    },
+    ".lvp": {
+        "mime_type": "audio/vnd.lucent.voice",
+        "description": ""
+    },
+    ".pya": {
+        "mime_type": "audio/vnd.ms-playready.media.pya",
+        "description": ""
+    },
+    ".ecelp4800": {
+        "mime_type": "audio/vnd.nuera.ecelp4800",
+        "description": ""
+    },
+    ".ecelp7470": {
+        "mime_type": "audio/vnd.nuera.ecelp7470",
+        "description": ""
+    },
+    ".ecelp9600": {
+        "mime_type": "audio/vnd.nuera.ecelp9600",
+        "description": ""
+    },
+    ".wav": {
+        "mime_type": "audio/wav",
+        "description": ""
+    },
+    ".weba": {
+        "mime_type": "audio/webm",
+        "description": "WEBM audio"
+    },
+    ".aac": {
+        "mime_type": "audio/x-aac",
+        "description": ""
+    },
+    ".aifc": {
+        "mime_type": "audio/x-aiff",
+        "description": ""
+    },
+    ".mka": {
+        "mime_type": "audio/x-matroska",
+        "description": "Matroska Audio files consist of a Matroska container containing one or more audio files compressed with one of the supported codecs. As well as the compressed audio, a Matroska Audio file might also contain embedded lyrics or transcriptions, in the form of SRT subtitles. In addition, Matroska Audio files can be separated into tracks or chapters - it is possible, for example, to contain a whole album or audiobook in a single file while retaining clear separation between tracks."
+    },
+    ".m3u": {
+        "mime_type": "audio/x-mpegurl",
+        "description": ""
+    },
+    ".wax": {
+        "mime_type": "audio/x-ms-wax",
+        "description": ""
+    },
+    ".wma": {
+        "mime_type": "audio/x-ms-wma",
+        "description": ""
+    },
+    ".ra": {
+        "mime_type": "audio/x-pn-realaudio",
+        "description": ""
+    },
+    ".ram": {
+        "mime_type": "audio/x-pn-realaudio",
+        "description": ""
+    },
+    ".rmp": {
+        "mime_type": "audio/x-pn-realaudio-plugin",
+        "description": ""
+    },
+    ".cdx": {
+        "mime_type": "chemical/x-cdx",
+        "description": ""
+    },
+    ".cif": {
+        "mime_type": "chemical/x-cif",
+        "description": ""
+    },
+    ".cmdf": {
+        "mime_type": "chemical/x-cmdf",
+        "description": ""
+    },
+    ".cml": {
+        "mime_type": "chemical/x-cml",
+        "description": ""
+    },
+    ".csml": {
+        "mime_type": "chemical/x-csml",
+        "description": ""
+    },
+    ".xyz": {
+        "mime_type": "chemical/x-xyz",
+        "description": ""
+    },
+    ".woff": {
+        "mime_type": "font/woff",
+        "description": "Web Open Font Format (WOFF)"
+    },
+    ".woff2": {
+        "mime_type": "font/woff2",
+        "description": "Web Open Font Format (WOFF)"
+    },
+    ".gcode": {
+        "mime_type": "gcode",
+        "description": "GCODE files are created by slicing programs, such as Simplify3D and Slic3r, that translate CAD drawings into G-Code, which a 3D printer can read.There's no official mimetype assigned as far as the author is aware, however these are the ones commonly reported."
+    },
+    ".avif": {
+        "mime_type": "image/avif",
+        "description": "AVIF (AV1 Image File Format) is an image and animation file format, an extension of HEIF allowing images encoded with AV1. Most files will only have AV1-encoded images, but a mixture of different encodings is allowed. Early draft versions were named AV1 Still Image File Format."
+    },
+    ".avifs": {
+        "mime_type": "image/avif",
+        "description": "AVIF (AV1 Image File Format) is an image and animation file format, an extension of HEIF allowing images encoded with AV1. Most files will only have AV1-encoded images, but a mixture of different encodings is allowed. Early draft versions were named AV1 Still Image File Format."
+    },
+    ".bmp": {
+        "mime_type": "image/bmp",
+        "description": ""
+    },
+    ".cgm": {
+        "mime_type": "image/cgm",
+        "description": ""
+    },
+    ".g3": {
+        "mime_type": "image/g3fax",
+        "description": ""
+    },
+    ".gif": {
+        "mime_type": "image/gif",
+        "description": "Graphics Interchange Format (GIF) was introduced by the CompuServe online service in 1987, intended to provide a consistent and compact format for graphics to be downloaded on that service. Since the specifications were openly released, the format gained wide use in graphics software and on online services and bulletin board systems (BBSs), not just CompuServe; later it became a major Web graphic format. GIF's ability to have animation (unlike most still graphic formats) has caused it to gain some Internet notoriety and use in conjunction with \"memes\"."
+    },
+    ".heif": {
+        "mime_type": "image/heic",
+        "description": "The MIME subtype name may be 'heic' only if the file conforms to the requirements of the 'heic', 'heix', 'heim', or 'heis' brand, and contains at least one of those brands as a compatible brand. The MIME subtype name may be 'heif' only if the file conforms to the requirements of the 'mif1' brand, and contains that brand as a compatible brand.HEIF (High Efficiency Image File Format) is the lossy image and animation format defined by MPEG-H Part 12 (ISO/IEC 23008-12). It is closely related to the HEVC video format, so in that way it is similar to BPG. It uses boxes/atoms format as a container format, so in that way it is similar to JPEG 2000."
+    },
+    ".heic": {
+        "mime_type": "image/heic",
+        "description": "The MIME subtype name may be 'heic' only if the file conforms to the requirements of the 'heic', 'heix', 'heim', or 'heis' brand, and contains at least one of those brands as a compatible brand. The MIME subtype name may be 'heif' only if the file conforms to the requirements of the 'mif1' brand, and contains that brand as a compatible brand.HEIF (High Efficiency Image File Format) is the lossy image and animation format defined by MPEG-H Part 12 (ISO/IEC 23008-12). It is closely related to the HEVC video format, so in that way it is similar to BPG. It uses boxes/atoms format as a container format, so in that way it is similar to JPEG 2000."
+    },
+    ".ief": {
+        "mime_type": "image/ief",
+        "description": ""
+    },
+    ".jpe": {
+        "mime_type": "image/pjpeg",
+        "description": "PJPEG files refer to images wherein the Progressive JPEG format (hence JPEG) is used for bitmap images."
+    },
+    ".jpeg": {
+        "mime_type": "image/pjpeg",
+        "description": "PJPEG files refer to images wherein the Progressive JPEG format (hence JPEG) is used for bitmap images."
+    },
+    ".jpg": {
+        "mime_type": "image/pjpeg",
+        "description": "PJPEG files refer to images wherein the Progressive JPEG format (hence JPEG) is used for bitmap images."
+    },
+    ".pjpg": {
+        "mime_type": "image/pjpeg",
+        "description": "PJPEG files refer to images wherein the Progressive JPEG format (hence JPEG) is used for bitmap images."
+    },
+    ".jfif": {
+        "mime_type": "image/pjpeg",
+        "description": "PJPEG files refer to images wherein the Progressive JPEG format (hence JPEG) is used for bitmap images."
+    },
+    ".jfif-tbnl": {
+        "mime_type": "image/pjpeg",
+        "description": "PJPEG files refer to images wherein the Progressive JPEG format (hence JPEG) is used for bitmap images."
+    },
+    ".jif": {
+        "mime_type": "image/pjpeg",
+        "description": "PJPEG files refer to images wherein the Progressive JPEG format (hence JPEG) is used for bitmap images."
+    },
+    ".jfi": {
+        "mime_type": "image/pjpeg",
+        "description": "PJPEG files refer to images wherein the Progressive JPEG format (hence JPEG) is used for bitmap images."
+    },
+    ".png": {
+        "mime_type": "image/png",
+        "description": "Portable Network Graphics (PNG) was devised starting in a discussion on newsgroup comp.graphics in 1995, with the first version of its specification released in 1996. The motivation for its creation was to create a free and unencumbered image format in the wake of the patent issue with GIF."
+    },
+    ".btif": {
+        "mime_type": "image/prs.btif",
+        "description": ""
+    },
+    ".svg": {
+        "mime_type": "image/svg+xml",
+        "description": ""
+    },
+    ".svgz": {
+        "mime_type": "image/svg+xml",
+        "description": ""
+    },
+    ".tif": {
+        "mime_type": "image/tiff",
+        "description": "TIFF, formerly known as Tag(ged) Image File Format, is an image format capable of storing multiple high quality images in a single file. A TIFF image may be uncompressed or use a compression scheme internally. Two of the most widely used compression schemes in TIFF files are lossless, including LZW and, for bitonal images CCITT Group 4, as used for facsimile transmission [fax]. JPEG baseline DCT-based lossy compression is also used."
+    },
+    ".tiff": {
+        "mime_type": "image/tiff",
+        "description": "TIFF, formerly known as Tag(ged) Image File Format, is an image format capable of storing multiple high quality images in a single file. A TIFF image may be uncompressed or use a compression scheme internally. Two of the most widely used compression schemes in TIFF files are lossless, including LZW and, for bitonal images CCITT Group 4, as used for facsimile transmission [fax]. JPEG baseline DCT-based lossy compression is also used."
+    },
+    ".psd": {
+        "mime_type": "image/vnd.adobe.photoshop",
+        "description": ""
+    },
+    ".djv": {
+        "mime_type": "image/vnd.djvu",
+        "description": ""
+    },
+    ".djvu": {
+        "mime_type": "image/vnd.djvu",
+        "description": ""
+    },
+    ".dwg": {
+        "mime_type": "image/vnd.dwg",
+        "description": ""
+    },
+    ".dxf": {
+        "mime_type": "image/vnd.dxf",
+        "description": ""
+    },
+    ".fbs": {
+        "mime_type": "image/vnd.fastbidsheet",
+        "description": ""
+    },
+    ".fpx": {
+        "mime_type": "image/vnd.fpx",
+        "description": ""
+    },
+    ".fst": {
+        "mime_type": "image/vnd.fst",
+        "description": ""
+    },
+    ".mmr": {
+        "mime_type": "image/vnd.fujixerox.edmics-mmr",
+        "description": ""
+    },
+    ".rlc": {
+        "mime_type": "image/vnd.fujixerox.edmics-rlc",
+        "description": ""
+    },
+    ".mdi": {
+        "mime_type": "image/vnd.ms-modi",
+        "description": ""
+    },
+    ".npx": {
+        "mime_type": "image/vnd.net-fpx",
+        "description": ""
+    },
+    ".wbmp": {
+        "mime_type": "image/vnd.wap.wbmp",
+        "description": ""
+    },
+    ".xif": {
+        "mime_type": "image/vnd.xiff",
+        "description": ""
+    },
+    ".webp": {
+        "mime_type": "image/webp",
+        "description": "WEBP image"
+    },
+    ".dng": {
+        "mime_type": "image/x-adobe-dng",
+        "description": "DNG (Digital Negative) is a digital camera raw image format developed by Adobe and released in 2004. Adobe also released a free DNG converter at this time which is continually being updated with compatible RAW file types. DNG is an extension of TIFF 6.0 and is compatible with TIFF/EP.Adobe intends for DNG to become an archival file type, creating an open standard for RAW files."
+    },
+    ".cr2": {
+        "mime_type": "image/x-canon-cr2",
+        "description": "Canon RAW 2 (CR2) is a raw image format used by Canon cameras. It replaced CRW, starting with the 20D, 350D/Digital Rebel Xt and 1D. It was replaced by Canon RAW 3."
+    },
+    ".crw": {
+        "mime_type": "image/x-canon-crw",
+        "description": "The Camera Image File Format, sometimes called the Canon RAW (CRW) format, was used by some early Canon digital cameras. It was replaced by the CR2 format starting with the EOS 20D in 2004. The .crw extension is sometimes used by CHDK, but this is a different file format."
+    },
+    ".ras": {
+        "mime_type": "image/x-cmu-raster",
+        "description": ""
+    },
+    ".cmx": {
+        "mime_type": "image/x-cmx",
+        "description": ""
+    },
+    ".erf": {
+        "mime_type": "image/x-epson-erf",
+        "description": "ERF files are generated by the Epson R-D1 and R-D1s digital rangefinder cameras."
+    },
+    ".fh": {
+        "mime_type": "image/x-freehand",
+        "description": ""
+    },
+    ".fh4": {
+        "mime_type": "image/x-freehand",
+        "description": ""
+    },
+    ".fh5": {
+        "mime_type": "image/x-freehand",
+        "description": ""
+    },
+    ".fh7": {
+        "mime_type": "image/x-freehand",
+        "description": ""
+    },
+    ".fhc": {
+        "mime_type": "image/x-freehand",
+        "description": ""
+    },
+    ".raf": {
+        "mime_type": "image/x-fuji-raf",
+        "description": "RAF, or Fujifilm RAW, is a raw image format used by some Fujifilm digital cameras."
+    },
+    ".ico": {
+        "mime_type": "image/x-icon",
+        "description": ""
+    },
+    ".k25": {
+        "mime_type": "image/x-kodak-k25",
+        "description": "K25 format was used by model DC25. High resolution pictures are 140,352 bytes long and Standard resolution is 77,888."
+    },
+    ".kdc": {
+        "mime_type": "image/x-kodak-kdc",
+        "description": "Kodak KDC mime and extension can be present for two formats with little in common. See further reading for more information."
+    },
+    ".mrw": {
+        "mime_type": "image/x-minolta-mrw",
+        "description": "MRW (Minolta RAW) is a raw image format used by Minolta (later Konica-Minolta) cameras. After the Sony purchase, Sony branded SLR use a different format: ARW."
+    },
+    ".nef": {
+        "mime_type": "image/x-nikon-nef",
+        "description": "Nikon Electronic Format is Nikon's RAW digital image format for DSLR cameras. It is a close relative to TIFF, and has a standard TIFF header. NEF files are usually big-endian, with the exception of files from the Coolpix 5700, which were little-endian. Data can be either 12- or 14-bit (from 2005's D200 onwards), and depending on the camera may be uncompressed, losslessly compressed, or lossily compressed."
+    },
+    ".orf": {
+        "mime_type": "image/x-olympus-orf",
+        "description": "ORF, or Olympus RAW, is a raw image format produced by Olympus digital cameras. The format is TIFF-like, but with a different file signature. The full-size image is in the first IFD. There is also Exif data, with a MakerNote.\\n\\n"
+    },
+    ".raw": {
+        "mime_type": "image/x-panasonic-raw",
+        "description": "Panasonic RAW/RW2, also known as Leica RAW or RWL, is a raw image format used by some Panasonic and Leica digital cameras. It can also be known by a camera-specific name such as Lumix RAW or Panasonic LX3 RAW.Different cameras produce different versions of it, and at some point the .raw file extension was changed to .rw2. The term Panasonic RAW might refer to just the .raw files, but more likely includes both .raw and .rw2."
+    },
+    ".rw2": {
+        "mime_type": "image/x-panasonic-raw",
+        "description": "Panasonic RAW/RW2, also known as Leica RAW or RWL, is a raw image format used by some Panasonic and Leica digital cameras. It can also be known by a camera-specific name such as Lumix RAW or Panasonic LX3 RAW.Different cameras produce different versions of it, and at some point the .raw file extension was changed to .rw2. The term Panasonic RAW might refer to just the .raw files, but more likely includes both .raw and .rw2."
+    },
+    ".rwl": {
+        "mime_type": "image/x-panasonic-raw",
+        "description": "Panasonic RAW/RW2, also known as Leica RAW or RWL, is a raw image format used by some Panasonic and Leica digital cameras. It can also be known by a camera-specific name such as Lumix RAW or Panasonic LX3 RAW.Different cameras produce different versions of it, and at some point the .raw file extension was changed to .rw2. The term Panasonic RAW might refer to just the .raw files, but more likely includes both .raw and .rw2."
+    },
+    ".pcx": {
+        "mime_type": "image/x-pcx",
+        "description": ""
+    },
+    ".pef": {
+        "mime_type": "image/x-pentax-pef",
+        "description": "Pentax PEF (or Pentax RAW) is a raw image format associated with Pentax digital cameras. It is based on TIFF."
+    },
+    ".ptx": {
+        "mime_type": "image/x-pentax-pef",
+        "description": "Pentax PEF (or Pentax RAW) is a raw image format associated with Pentax digital cameras. It is based on TIFF."
+    },
+    ".pct": {
+        "mime_type": "image/x-pict",
+        "description": ""
+    },
+    ".pic": {
+        "mime_type": "image/x-pict",
+        "description": ""
+    },
+    ".pnm": {
+        "mime_type": "image/x-portable-anymap",
+        "description": ""
+    },
+    ".pbm": {
+        "mime_type": "image/x-portable-bitmap",
+        "description": ""
+    },
+    ".pgm": {
+        "mime_type": "image/x-portable-graymap",
+        "description": ""
+    },
+    ".ppm": {
+        "mime_type": "image/x-portable-pixmap",
+        "description": ""
+    },
+    ".rgb": {
+        "mime_type": "image/x-rgb",
+        "description": ""
+    },
+    ".x3f": {
+        "mime_type": "image/x-sigma-x3f",
+        "description": "X3F (or Sigma X3F, or Foveon X3F) is a raw image format used by some Sigma digital cameras that use a \"Foveon sensor\"."
+    },
+    ".arw": {
+        "mime_type": "image/x-sony-arw",
+        "description": "Sony ARW is a raw image format used by some Sony digital cameras. It is based on TIFF."
+    },
+    ".sr2": {
+        "mime_type": "image/x-sony-sr2",
+        "description": "SR2 is a raw image format produced by some makes of Sony cameras. The format is based upon TIFF."
+    },
+    ".srf": {
+        "mime_type": "image/x-sony-srf",
+        "description": ""
+    },
+    ".xbm": {
+        "mime_type": "image/x-xbitmap",
+        "description": ""
+    },
+    ".xpm": {
+        "mime_type": "image/x-xpixmap",
+        "description": ""
+    },
+    ".xwd": {
+        "mime_type": "image/x-xwindowdump",
+        "description": ""
+    },
+    ".eml": {
+        "mime_type": "message/rfc822",
+        "description": ""
+    },
+    ".mht": {
+        "mime_type": "message/rfc822",
+        "description": ""
+    },
+    ".mhtml": {
+        "mime_type": "message/rfc822",
+        "description": ""
+    },
+    ".mime": {
+        "mime_type": "message/rfc822",
+        "description": ""
+    },
+    ".nws": {
+        "mime_type": "message/rfc822",
+        "description": ""
+    },
+    ".iges": {
+        "mime_type": "model/iges",
+        "description": ""
+    },
+    ".igs": {
+        "mime_type": "model/iges",
+        "description": ""
+    },
+    ".mesh": {
+        "mime_type": "model/mesh",
+        "description": ""
+    },
+    ".msh": {
+        "mime_type": "model/mesh",
+        "description": ""
+    },
+    ".silo": {
+        "mime_type": "model/mesh",
+        "description": ""
+    },
+    ".dwf": {
+        "mime_type": "model/vnd.dwf",
+        "description": ""
+    },
+    ".gdl": {
+        "mime_type": "model/vnd.gdl",
+        "description": ""
+    },
+    ".gtw": {
+        "mime_type": "model/vnd.gtw",
+        "description": ""
+    },
+    ".mts": {
+        "mime_type": "model/vnd.mts",
+        "description": ""
+    },
+    ".vtu": {
+        "mime_type": "model/vnd.vtu",
+        "description": ""
+    },
+    ".vrml": {
+        "mime_type": "model/vrml",
+        "description": ""
+    },
+    ".wrl": {
+        "mime_type": "model/vrml",
+        "description": ""
+    },
+    ".ics": {
+        "mime_type": "text/calendar",
+        "description": ""
+    },
+    ".ifb": {
+        "mime_type": "text/calendar",
+        "description": ""
+    },
+    ".css": {
+        "mime_type": "text/css",
+        "description": ""
+    },
+    ".csv": {
+        "mime_type": "text/csv",
+        "description": ""
+    },
+    ".htm": {
+        "mime_type": "text/html",
+        "description": ""
+    },
+    ".html": {
+        "mime_type": "text/html",
+        "description": ""
+    },
+    ".js": {
+        "mime_type": "text/javascript",
+        "description": "JavaScript (sometimes abbreviated JS) is a scripting language commonly implemented as part of a web browser in order to create enhanced user interfaces and dynamic websites, but also used in other contexts (such as server-side JavaScript).This is not the same as Java. People constantly get confused about that.JavaScript was originally developed at Netscape by Brendan Eich (who later became Mozilla CEO... very briefly), where it was originally called LiveScript while under development, but became JavaScript (with the name licensed from Sun) in order to capitalize on the popularity of Java, though the languages aren't really related (although there are some similarities in syntax). Later, a Microsoft implementation designed to be (more or less) compatible was called JScript, and an attempt at a formally standardized version of the language was published by ECMA as ECMAScript.The node.js runtime environment is (mostly) implemented in JavaScript, as are applications running within it.Due to its status as the only scripting language for browsers, JavaScript skyrocketed in popularity in the 2000's and 2010's and as of 2017 serves as a lingua franca of Web development. Arguably, it is currently the world's most popular programming language (it tops GitHub and StackOverflow currently)."
+    },
+    ".md": {
+        "mime_type": "text/markdown",
+        "description": "Markdown is a lightweight and human readable markup format for text formatting created by John Gruber and Aaron Swartz. It is similar to various forms of wiki markup. There is no formal specification for the original Markdown, and it has ambiguities that are handled inconsistently by different implementations.An attempt to improve on this situation was done (released 2014-09) by a group unrelated to the originators of Markdown, and was originally dubbed Standard Markdown until John Gruber objected to this name, and it was first renamed \"Common Markdown\" and later CommonMark. Markdeep is an extended Markdown implemented in JavaScript for web use."
+    },
+    ".markdown": {
+        "mime_type": "text/markdown",
+        "description": "Markdown is a lightweight and human readable markup format for text formatting created by John Gruber and Aaron Swartz. It is similar to various forms of wiki markup. There is no formal specification for the original Markdown, and it has ambiguities that are handled inconsistently by different implementations.An attempt to improve on this situation was done (released 2014-09) by a group unrelated to the originators of Markdown, and was originally dubbed Standard Markdown until John Gruber objected to this name, and it was first renamed \"Common Markdown\" and later CommonMark. Markdeep is an extended Markdown implemented in JavaScript for web use."
+    },
+    ".mdown": {
+        "mime_type": "text/markdown",
+        "description": "Markdown is a lightweight and human readable markup format for text formatting created by John Gruber and Aaron Swartz. It is similar to various forms of wiki markup. There is no formal specification for the original Markdown, and it has ambiguities that are handled inconsistently by different implementations.An attempt to improve on this situation was done (released 2014-09) by a group unrelated to the originators of Markdown, and was originally dubbed Standard Markdown until John Gruber objected to this name, and it was first renamed \"Common Markdown\" and later CommonMark. Markdeep is an extended Markdown implemented in JavaScript for web use."
+    },
+    ".markdn": {
+        "mime_type": "text/markdown",
+        "description": "Markdown is a lightweight and human readable markup format for text formatting created by John Gruber and Aaron Swartz. It is similar to various forms of wiki markup. There is no formal specification for the original Markdown, and it has ambiguities that are handled inconsistently by different implementations.An attempt to improve on this situation was done (released 2014-09) by a group unrelated to the originators of Markdown, and was originally dubbed Standard Markdown until John Gruber objected to this name, and it was first renamed \"Common Markdown\" and later CommonMark. Markdeep is an extended Markdown implemented in JavaScript for web use."
+    },
+    ".conf": {
+        "mime_type": "text/plain",
+        "description": ""
+    },
+    ".def": {
+        "mime_type": "text/plain",
+        "description": ""
+    },
+    ".diff": {
+        "mime_type": "text/plain",
+        "description": ""
+    },
+    ".in": {
+        "mime_type": "text/plain",
+        "description": ""
+    },
+    ".ksh": {
+        "mime_type": "text/plain",
+        "description": ""
+    },
+    ".list": {
+        "mime_type": "text/plain",
+        "description": ""
+    },
+    ".log": {
+        "mime_type": "text/plain",
+        "description": ""
+    },
+    ".text": {
+        "mime_type": "text/plain",
+        "description": ""
+    },
+    ".txt": {
+        "mime_type": "text/plain",
+        "description": ""
+    },
+    ".dsc": {
+        "mime_type": "text/prs.lines.tag",
+        "description": ""
+    },
+    ".rtx": {
+        "mime_type": "text/richtext",
+        "description": ""
+    },
+    ".sgm": {
+        "mime_type": "text/sgml",
+        "description": ""
+    },
+    ".sgml": {
+        "mime_type": "text/sgml",
+        "description": ""
+    },
+    ".tsv": {
+        "mime_type": "text/tab-separated-values",
+        "description": ""
+    },
+    ".man": {
+        "mime_type": "text/troff",
+        "description": ""
+    },
+    ".me": {
+        "mime_type": "text/troff",
+        "description": ""
+    },
+    ".ms": {
+        "mime_type": "text/troff",
+        "description": ""
+    },
+    ".roff": {
+        "mime_type": "text/troff",
+        "description": ""
+    },
+    ".t": {
+        "mime_type": "text/troff",
+        "description": ""
+    },
+    ".tr": {
+        "mime_type": "text/troff",
+        "description": ""
+    },
+    ".uri": {
+        "mime_type": "text/uri-list",
+        "description": ""
+    },
+    ".uris": {
+        "mime_type": "text/uri-list",
+        "description": ""
+    },
+    ".urls": {
+        "mime_type": "text/uri-list",
+        "description": ""
+    },
+    ".curl": {
+        "mime_type": "text/vnd.curl",
+        "description": ""
+    },
+    ".dcurl": {
+        "mime_type": "text/vnd.curl.dcurl",
+        "description": ""
+    },
+    ".mcurl": {
+        "mime_type": "text/vnd.curl.mcurl",
+        "description": ""
+    },
+    ".scurl": {
+        "mime_type": "text/vnd.curl.scurl",
+        "description": ""
+    },
+    ".fly": {
+        "mime_type": "text/vnd.fly",
+        "description": ""
+    },
+    ".flx": {
+        "mime_type": "text/vnd.fmi.flexstor",
+        "description": ""
+    },
+    ".gv": {
+        "mime_type": "text/vnd.graphviz",
+        "description": ""
+    },
+    ".3dml": {
+        "mime_type": "text/vnd.in3d.3dml",
+        "description": ""
+    },
+    ".spot": {
+        "mime_type": "text/vnd.in3d.spot",
+        "description": ""
+    },
+    ".jad": {
+        "mime_type": "text/vnd.sun.j2me.app-descriptor",
+        "description": ""
+    },
+    ".si": {
+        "mime_type": "text/vnd.wap.si",
+        "description": ""
+    },
+    ".sl": {
+        "mime_type": "text/vnd.wap.sl",
+        "description": ""
+    },
+    ".wml": {
+        "mime_type": "text/vnd.wap.wml",
+        "description": ""
+    },
+    ".wmls": {
+        "mime_type": "text/vnd.wap.wmlscript",
+        "description": ""
+    },
+    ".asm": {
+        "mime_type": "text/x-asm",
+        "description": ""
+    },
+    ".s": {
+        "mime_type": "text/x-asm",
+        "description": ""
+    },
+    ".c": {
+        "mime_type": "text/x-c",
+        "description": ""
+    },
+    ".cc": {
+        "mime_type": "text/x-c",
+        "description": ""
+    },
+    ".cpp": {
+        "mime_type": "text/x-c",
+        "description": ""
+    },
+    ".cxx": {
+        "mime_type": "text/x-c",
+        "description": ""
+    },
+    ".dic": {
+        "mime_type": "text/x-c",
+        "description": ""
+    },
+    ".h": {
+        "mime_type": "text/x-c",
+        "description": ""
+    },
+    ".hh": {
+        "mime_type": "text/x-c",
+        "description": ""
+    },
+    ".f": {
+        "mime_type": "text/x-fortran",
+        "description": ""
+    },
+    ".f77": {
+        "mime_type": "text/x-fortran",
+        "description": ""
+    },
+    ".f90": {
+        "mime_type": "text/x-fortran",
+        "description": ""
+    },
+    ".for": {
+        "mime_type": "text/x-fortran",
+        "description": ""
+    },
+    ".java": {
+        "mime_type": "text/x-java-source",
+        "description": ""
+    },
+    ".p": {
+        "mime_type": "text/x-pascal",
+        "description": "Pascal is an influential imperative and procedural programming language, designed in 1968\u20131969 and published in 1970. Borland's Turbo Pascal, and the later Borland Pascal, were popular in the 1980s and early 1990s on the PC/MS-DOS platform (CP/M versions were also released)."
+    },
+    ".pas": {
+        "mime_type": "text/x-pascal",
+        "description": "Pascal is an influential imperative and procedural programming language, designed in 1968\u20131969 and published in 1970. Borland's Turbo Pascal, and the later Borland Pascal, were popular in the 1980s and early 1990s on the PC/MS-DOS platform (CP/M versions were also released)."
+    },
+    ".pp": {
+        "mime_type": "text/x-pascal",
+        "description": "Pascal is an influential imperative and procedural programming language, designed in 1968\u20131969 and published in 1970. Borland's Turbo Pascal, and the later Borland Pascal, were popular in the 1980s and early 1990s on the PC/MS-DOS platform (CP/M versions were also released)."
+    },
+    ".inc": {
+        "mime_type": "text/x-pascal",
+        "description": "Pascal is an influential imperative and procedural programming language, designed in 1968\u20131969 and published in 1970. Borland's Turbo Pascal, and the later Borland Pascal, were popular in the 1980s and early 1990s on the PC/MS-DOS platform (CP/M versions were also released)."
+    },
+    ".py": {
+        "mime_type": "text/x-python",
+        "description": ""
+    },
+    ".etx": {
+        "mime_type": "text/x-setext",
+        "description": ""
+    },
+    ".uu": {
+        "mime_type": "text/x-uuencode",
+        "description": ""
+    },
+    ".vcs": {
+        "mime_type": "text/x-vcalendar",
+        "description": ""
+    },
+    ".vcf": {
+        "mime_type": "text/x-vcard",
+        "description": ""
+    },
+    ".h261": {
+        "mime_type": "video/h261",
+        "description": ""
+    },
+    ".h263": {
+        "mime_type": "video/h263",
+        "description": ""
+    },
+    ".h264": {
+        "mime_type": "video/h264",
+        "description": "Advanced Video Coding (AVC), also referred to as H.264 or MPEG-4 Part 10, Advanced Video Coding (MPEG-4 AVC), is a video compression standard based on block-oriented, motion-compensated integer-DCT coding.[1] It is by far the most commonly used format for the recording, compression, and distribution of video content, used by 91% of video industry developers as of September 2019.It supports resolutions up to and including 8K UHD.H.264 is controversial for being patent-encumbered, and hence subject to royalty requirements. In 2013, Cisco is attempting to partially remedy this by producing a freely distributed executable H.264 codec for many platforms for which they have paid the royalty, allowing anybody to download and use it in unmodified form royalty-free. The source code is also openly available, but any altered versions that anybody might create from it would require separate licensing, as would any distribution of the executables other than direct download from Cisco. Thus, the only way to use it as part of a product without additional license fees is to have the product's installer download the executable from Cisco during the install process, rather than including it directly in your own product (whether on disk or downloadable from your site).HEVC (H.265) has been developed as a more efficient successor to this format, but it is also patent-encumbered. Attempts to create a royalty-free alternative include AV1, Daala, VP9, and Thor.The H.264 specification does not, in an extremely strict sense, define a codec which fits into a series of bytes; instead, it describes the stream as fitting into a sequence of frames called \"network abstraction layer units\", which can then be delineated into a raw byte format by the user. The format for putting these into a raw bytestream described by Annex B of the specification apparently is apparently very widely-used."
+    },
+    ".jpgv": {
+        "mime_type": "video/jpeg",
+        "description": ""
+    },
+    ".jpgm": {
+        "mime_type": "video/jpm",
+        "description": ""
+    },
+    ".jpm": {
+        "mime_type": "video/jpm",
+        "description": ""
+    },
+    ".mj2": {
+        "mime_type": "video/mj2",
+        "description": ""
+    },
+    ".mjp2": {
+        "mime_type": "video/mj2",
+        "description": ""
+    },
+    ".mp4": {
+        "mime_type": "video/mp4",
+        "description": "MP4 usually refers to the multimedia file format defined in Part 14 (and to a lesser extent Part 1) of the MPEG-4 standard. \"MP4\" could also mean the entire MPEG-4 standard, or some other subset of MPEG-4. MPEG-4 Part 14 is an application of Part 12. The recommended extension for it is \".mp4\", though \".m4a\" is often used for audio-only files. It is standardized by ISO/IEC 14496-14."
+    },
+    ".mp4v": {
+        "mime_type": "video/mp4",
+        "description": "MP4 usually refers to the multimedia file format defined in Part 14 (and to a lesser extent Part 1) of the MPEG-4 standard. \"MP4\" could also mean the entire MPEG-4 standard, or some other subset of MPEG-4. MPEG-4 Part 14 is an application of Part 12. The recommended extension for it is \".mp4\", though \".m4a\" is often used for audio-only files. It is standardized by ISO/IEC 14496-14."
+    },
+    ".mpg4": {
+        "mime_type": "video/mp4",
+        "description": "MP4 usually refers to the multimedia file format defined in Part 14 (and to a lesser extent Part 1) of the MPEG-4 standard. \"MP4\" could also mean the entire MPEG-4 standard, or some other subset of MPEG-4. MPEG-4 Part 14 is an application of Part 12. The recommended extension for it is \".mp4\", though \".m4a\" is often used for audio-only files. It is standardized by ISO/IEC 14496-14."
+    },
+    ".m1v": {
+        "mime_type": "video/mpeg",
+        "description": ""
+    },
+    ".m2v": {
+        "mime_type": "video/mpeg",
+        "description": ""
+    },
+    ".mpa": {
+        "mime_type": "video/mpeg",
+        "description": ""
+    },
+    ".mpe": {
+        "mime_type": "video/mpeg",
+        "description": ""
+    },
+    ".mpeg": {
+        "mime_type": "video/mpeg",
+        "description": ""
+    },
+    ".mpg": {
+        "mime_type": "video/mpeg",
+        "description": ""
+    },
+    ".ogv": {
+        "mime_type": "video/ogg",
+        "description": ""
+    },
+    ".mov": {
+        "mime_type": "video/quicktime",
+        "description": ""
+    },
+    ".qt": {
+        "mime_type": "video/quicktime",
+        "description": ""
+    },
+    ".fvt": {
+        "mime_type": "video/vnd.fvt",
+        "description": ""
+    },
+    ".m4u": {
+        "mime_type": "video/vnd.mpegurl",
+        "description": ""
+    },
+    ".mxu": {
+        "mime_type": "video/vnd.mpegurl",
+        "description": ""
+    },
+    ".pyv": {
+        "mime_type": "video/vnd.ms-playready.media.pyv",
+        "description": ""
+    },
+    ".viv": {
+        "mime_type": "video/vnd.vivo",
+        "description": ""
+    },
+    ".webm": {
+        "mime_type": "video/webm",
+        "description": "WebM is a video and audio container format released by Google, used with content encoded under the VP8 or VP9 codecs for video, and Vorbis and Opus for audio. It is a variant of Matroska, based on EBML."
+    },
+    ".f4v": {
+        "mime_type": "video/x-f4v",
+        "description": ""
+    },
+    ".fli": {
+        "mime_type": "video/x-fli",
+        "description": ""
+    },
+    ".flv": {
+        "mime_type": "video/x-flv",
+        "description": ""
+    },
+    ".m4v": {
+        "mime_type": "video/x-m4v",
+        "description": ""
+    },
+    ".mkv": {
+        "mime_type": "video/x-matroska",
+        "description": "Matroska (sometimes spelled Matro\u0161ka) is an open standard multimedia container format. It is based on the EBML metaformat and can be used with a variety of compressed video formats."
+    },
+    ".asf": {
+        "mime_type": "video/x-ms-asf",
+        "description": ""
+    },
+    ".asx": {
+        "mime_type": "video/x-ms-asf",
+        "description": ""
+    },
+    ".wm": {
+        "mime_type": "video/x-ms-wm",
+        "description": ""
+    },
+    ".wmv": {
+        "mime_type": "video/x-ms-wmv",
+        "description": ""
+    },
+    ".wmx": {
+        "mime_type": "video/x-ms-wmx",
+        "description": ""
+    },
+    ".wvx": {
+        "mime_type": "video/x-ms-wvx",
+        "description": ""
+    },
+    ".avi": {
+        "mime_type": "video/x-msvideo",
+        "description": ""
+    },
+    ".movie": {
+        "mime_type": "video/x-sgi-movie",
+        "description": ""
+    },
+    ".ice": {
+        "mime_type": "x-conference/x-cooltalk",
+        "description": ""
+    }
+}

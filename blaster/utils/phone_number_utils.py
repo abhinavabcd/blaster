@@ -1,5 +1,5 @@
 import re
-from . import data_utils
+from .data_utils import COUNTRY_DATA
 from ..tools import ltrim
 
 PHONE_NUMBER_REGEX = re.compile(r"^\+?[0-9]+")
@@ -66,9 +66,8 @@ class PhoneNumberObj:
 			_root = _root[_d]
 
 		if(not country_phone_code and iso2_country_code):
-			country_phone_code = data_utils.iso2_to_phone_code.get(
-				iso2_country_code, None
-			)  # netherlands by defailt
+			if(_country_data:=COUNTRY_DATA.get(iso2_country_code)):
+				country_phone_code = _country_data["phone_code"]
 
 		if(not country_phone_code):
 			country_phone_code = "31"  # try netherlands by default

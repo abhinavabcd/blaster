@@ -5,17 +5,17 @@ Created on 05-Jun-2019
 '''
 import os
 from ..connection_pool import get_from_pool, release_to_pool
-from ..tools import MIME_TYPE_MAP
-
+from ..utils.data_utils import FILE_EXTENSION_TO_MIME_TYPE
+from ..config import UPLOADS_S3_BUCKET, UPLOADS_S3_CLIENT_POOL
 
 def generate_upload_url(
-    file_name, base_folder, s3_connection_pool_name="s3",
-    bucket=None, redirect_url=None, mime_type=None
+    file_path, 
+    s3_connection_pool_name=UPLOADS_S3_CLIENT_POOL, bucket=UPLOADS_S3_BUCKET,
+    redirect_url=None, mime_type=None
 ):
     if(not mime_type):
         # just in case
-        extension = os.path.splitext(file_name)[1][1:]
-        mime_type = MIME_TYPE_MAP.get(extension)
+        mime_type = FILE_EXTENSION_TO_MIME_TYPE[os.path.splitext(file_path)[1]]
 
     fields = {
         "acl": "public-read",
@@ -30,14 +30,11 @@ def generate_upload_url(
     ]
     if(redirect_url):
         conditions.append({"redirect": redirect_url})
-
-    # Generate the POST attributes
-    s3_key = base_folder + "/" + file_name
-
+    
     s3 = get_from_pool(s3_connection_pool_name)
     post = s3.meta.client.generate_presigned_post(
         Bucket=bucket,
-        Key=s3_key,
+        Key=file_path,
         Fields=fields,
         Conditions=conditions,
         ExpiresIn=604800

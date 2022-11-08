@@ -23,23 +23,21 @@ import traceback
 import inspect
 import socket
 import pickle
-from gevent import local
 from gevent.socket import socket as GeventSocket
-from gevent.threading import Lock, Thread
+from gevent.threading import Thread
 from gevent.server import StreamServer
 from requests_toolbelt.multipart import decoder
 
-from . import config as blaster_config
+from . import config as blaster_config, req_ctx
 from .config import IS_DEV
-from .tools import LRUCache, SanitizedDict, get_mime_type_from_filename, DummyObject,\
+from .tools import LRUCache, SanitizedDict, DummyObject,\
 	set_socket_fast_close_options, BufferedSocket, ltrim
 from .utils import events
+from .utils.data_utils import FILE_EXTENSION_TO_MIME_TYPE
 from .logging import LOG_ERROR, LOG_SERVER
 from .schema import Int, Object, Required, Str, schema as schema_func
 from .websocket.server import WebSocketServerHandler
 
-# gevent local
-req_ctx = local.local()
 
 _is_server_running = True
 default_stream_headers = {
@@ -315,7 +313,7 @@ class Request:
 	@classmethod
 	def arg_generator(cls, name, _type, default):
 		if(_type in (str, int, float)):
-			return lambda req: (_val := req.get(name, default)) and _type(_val)
+			return lambda req: (_val:= req.get(name, default)) and _type(_val)
 		elif(_type == Request):  # request_params: Request
 			return lambda req: req
 		elif(_type == Query):  # query: Query
@@ -829,6 +827,7 @@ class App:
 
 				_headers_data_size += len(data)
 
+			req_ctx.client_name = headers.get("x-client")
 			# check if there is a content length or transfer encoding chunked
 			content_length = int(headers.get("Content-Length", 0))
 			_max_body_size = handler.get("max_body_size") or HTTP_MAX_REQUEST_BODY_SIZE
@@ -1123,11 +1122,12 @@ def static_file_handler(
 		if(not file_path.startswith(_base_folder_path_)):
 			return "404 Not Found", [], "Invalid path submitted"
 		data = open(file_path, "rb").read()
-		mime_type_headers = get_mime_type_from_filename(file_path)
 		resp_headers = None
-		if(mime_type_headers):
+		# add mime type header
+		mime_type = FILE_EXTENSION_TO_MIME_TYPE.get(os.path.splitext(file_path)[1])
+		if(mime_type):
 			resp_headers = {
-				'Content-Type': mime_type_headers.mime_type,
+				'Content-Type': mime_type,
 				'Cache-Control': 'max-age=31536000'
 			}
 		return ("200 OK", resp_headers, data)
@@ -1223,7 +1223,7 @@ def blaster_fork(num_procs):
 		else:
 			print("broadcaster:reading from cloned process:", CUR_PID)
 
-		while(_is_server_running and (data_size_bytes := sock.recvn(4))):
+		while(_is_server_running and (data_size_bytes:= sock.recvn(4))):
 			data_size = int.from_bytes(data_size_bytes, byteorder=sys.byteorder)
 			data_bytes = sock.recvn(data_size)
 			data = pickle.loads(data_bytes)
@@ -1305,7 +1305,7 @@ def blaster_fork(num_procs):
 			client_sock = BufferedSocket(client_sock)
 			# keep track
 			tracked_connections.append(client_sock)
-			joinables.append(_thread := Thread(target=read_data_from_other_process, args=(client_sock,)))
+			joinables.append(_thread:= Thread(target=read_data_from_other_process, args=(client_sock,)))
 			_thread.start()
 
 		sock.close() # all child processes connected
@@ -1316,7 +1316,7 @@ def blaster_fork(num_procs):
 				# cloned process, connect to the BROADCASTER SOCKET
 				sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 				sock.connect(multiproc_broadcaster_sock_address)
-				joinables.append(_thread := Thread(target=read_data_from_other_process, args=(BufferedSocket(sock),)))
+				joinables.append(_thread:= Thread(target=read_data_from_other_process, args=(BufferedSocket(sock),)))
 				_thread.start()
 				break
 			except Exception as ex:

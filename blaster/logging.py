@@ -8,8 +8,13 @@ from gevent.queue import Queue
 from gevent.threading import Thread
 from logging import DEBUG, INFO, WARN, ERROR
 from .utils import events
-from .config import LOG_LEVEL
+from .config import LOG_LEVEL, APP_VERSION, APP_NAME
+from . import req_ctx
+
 # CRITICAL-50 ERROR-40  WARNING-30  INFO-20  DEBUG-10  NOTSET-0
+
+LOG_APP_NAME = os.getenv("LOG_APP_NAME") or APP_NAME or ""
+LOG_APP_VERSION = os.getenv("LOG_APP_VERSION") or APP_VERSION or ""
 
 _1_DAY_MILLIS = 24 * 60 * 60 * 1000
 _this_ = sys.modules[__name__]
@@ -26,13 +31,6 @@ log_level_to_names = {
 	SERVER_INFO: "SERVER",
 	APP_INFO: "APP"
 }
-
-
-deployment_config = json.loads(open(".deploy").read()) if os.path.isfile(".deploy") else {}
-
-# some constants
-_app_name = deployment_config.get("app", "BlasterApp")
-_app_version = deployment_config.get("version", "0")
 
 
 log_streaming_thread = None
@@ -166,7 +164,6 @@ log_level_colors = {
 
 # LOGGING functions start
 def LOG(level, log_type, **kwargs):
-	global udp_log_listeners_i
 
 	if(level < LOG_LEVEL):
 		return
@@ -181,14 +178,18 @@ def LOG(level, log_type, **kwargs):
 	)
 
 	if(log_streaming_thread):
-		log_queue.put({
+		_log = {
 			"log_type": log_type,
 			"log_level": log_level_name,
-			"app": _app_name,
-			"version": _app_version,
+			"app": LOG_APP_NAME,
+			"version": LOG_APP_VERSION,
 			"timestamp": int(1000 * time.time()),
 			"payload": kwargs
-		})
+		}
+		if(client:=req_ctx.client_name):
+			_log["client"] = client
+
+		log_queue.put(_log)
 
 
 def LOG_SERVER(log_type, **kwargs):

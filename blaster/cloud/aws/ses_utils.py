@@ -3,9 +3,9 @@ Created on 05-Jun-2019
 
 @author: abhinav
 '''
-from ..connection_pool import use_connection_pool
-from ..logging import LOG_WARN
-from ..tools import retry, background_task
+from ...connection_pool import use_connection_pool
+from ...logging import LOG_WARN
+from ...tools import retry, background_task
 
 
 @background_task

@@ -1,4 +1,3 @@
-
 from os import environ
 import sys, os
 import json
@@ -72,7 +71,8 @@ class Config:
                 return getattr(_this_, key, None)
             elif(not self._config.get("BLASTER_FORK_ID")): # None or 0
                 caller_frame = inspect.stack()[1]
-                print("MISSING CONFIG Key#: {} {}:{}".format(key, caller_frame[1], caller_frame[2]))
+                if(not caller_frame[1].startswith("<frozen")): # <frozen importlib._bootstrap>
+                    print("MISSING CONFIG Key#: {} {}:{}".format(key, caller_frame[1], caller_frame[2]))
             return None
         return self._config[key]
 
@@ -82,7 +82,7 @@ class Config:
 config = Config(event_prefix="CONFIG_")
 
 # more variables from env
-if(gcloud_credential_file := environ.get("GOOGLE_APPLICATION_CREDENTIALS")):
+if(gcloud_credential_file:= environ.get("GOOGLE_APPLICATION_CREDENTIALS")):
     try:
         config.GCLOUD_CREDENTIALS = json.loads(open(gcloud_credential_file).read())
     except Exception as ex: 

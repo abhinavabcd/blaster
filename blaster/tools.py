@@ -1330,50 +1330,6 @@ class WebsocketConnection(WebSocket):
 			self.lock.release()
 		return
 
-
-# upload related mime_types
-TypeDescriptor = namedtuple('TypeDescriptor', ['mime_type'])
-MIME_TYPE_MAP = dict(
-	gif=TypeDescriptor(mime_type='image/gif'),
-	webp=TypeDescriptor(mime_type='image/webp'),
-	mp4=TypeDescriptor(mime_type='video/mp4'),
-
-	jpeg=TypeDescriptor(mime_type='image/jpeg'),
-	jpg=TypeDescriptor(mime_type='image/jpeg'),
-	png=TypeDescriptor(mime_type='image/png'),
-	json=TypeDescriptor(mime_type='application/json'),
-	zip=TypeDescriptor(mime_type='application/zip'),
-	mp3=TypeDescriptor(mime_type='audio/mpeg'),
-	ogg=TypeDescriptor(mime_type='audio/ogg'),
-	opus=TypeDescriptor(mime_type='audio/ogg'),
-	wav=TypeDescriptor(mime_type='audio/wav'),
-	m4a=TypeDescriptor(mime_type='audio/mp4'),
-	aac=TypeDescriptor(mime_type='audio/aac'),
-	docx=TypeDescriptor(mime_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
-	pdf=TypeDescriptor(mime_type='application/pdf'),
-	# images
-	svg=TypeDescriptor(mime_type='image/svg+xml'),
-	ico=TypeDescriptor(mime_type='image/image/x-icon'),
-	# variables should not start numerals
-	gp=TypeDescriptor(mime_type='audio/3gp'),
-	amr=TypeDescriptor(mime_type='audio/amr'),
-	wma=TypeDescriptor(mime_type='audio/wma'),
-	gpp=TypeDescriptor(mime_type='audio/3gpp'),
-	flac=TypeDescriptor(mime_type='audio/flac'),
-
-	css=TypeDescriptor(mime_type='text/css'),
-	js=TypeDescriptor(mime_type='text/javascript'),
-	wasm=TypeDescriptor(mime_type='application/wasm'),
-)
-# mime_type -> file extension map
-MIME_TYPE_TO_EXTENSION = {v.mime_type: k for k, v in MIME_TYPE_MAP.items()}
-
-
-def get_mime_type_from_filename(file_name):
-	ext = os.path.splitext(file_name)[1][1:]
-	return MIME_TYPE_MAP.get(ext, None)
-
-
 def parse_cmd_line_arguments():
 	from sys import argv
 	args_map = {}
@@ -1636,7 +1592,7 @@ def _process_partitioned_task_queue_items(_queue):
 			)
 			IS_DEV and traceback.print_exc()
 		
-		if((_elapsed_time := (time.time() - _start_time)) > 3):
+		if((_elapsed_time:= (time.time() - _start_time)) > 3):
 			# background tasks shouldn't run longer than 5 seconds
 			LOG_WARN(
 				"background_task_perf",
