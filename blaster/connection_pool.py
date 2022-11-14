@@ -26,6 +26,12 @@ def release_to_pool(conn, pool_name):
 
 # decorator that supplies argument from a given pool and puts back after use
 def use_connection_pool(**pool_args):
+    # check and register None pool at load time, 
+    # instead of checking runtime, to avoid runtime crashes
+    for pool_arg, pool_name in pool_args.items():
+        if(pool_name not in _pool_item_generators):
+            register_pool_item_generator(pool_name, lambda: None)
+
     def use_db_connection(func):
         def wrapper(*args, **kwargs):
             for pool_arg, pool_name in pool_args.items():

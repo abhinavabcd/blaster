@@ -19,7 +19,8 @@ from gevent.threading import Thread
 from gevent import time
 from .logging import LOG_APP_INFO, LOG_WARN, LOG_SERVER, LOG_ERROR
 
-_VERSION_ = 101
+_has_load_errors = False
+
 MONGO_DEBUG_LEVEL = BLASTER_DEBUG_LEVEL
 EVENT_BEFORE_DELETE = -2
 EVENT_AFTER_DELETE = -1
@@ -1770,7 +1771,7 @@ def initialize_model(_Model):
 					f"{json.dumps(_pymongo_indexes_to_create[_index])})"
 				)
 			)
-		raise Exception("Missing indexes. Check error log for missing_mongo_indexes and create them on db before rollout")
+			_has_load_errors = True
 
 	# for pymongo_index, mongo_index_args in _pymongo_indexes_to_create.items():
 	# 	IS_DEV \
@@ -1849,6 +1850,9 @@ def initialize_mongo(db_nodes, default_db_name=None):
 		if(not getattr(cls, "_db_name_", None)):
 			cls._db_name_ = default_db_name
 		initialize_model(cls)
+	
+	if(_has_load_errors):
+		raise Exception("initialize_mongo has errors: Check error logs")
 
 
 # Initially intended to be < 500 line and more for educating
