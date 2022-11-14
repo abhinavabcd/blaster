@@ -2,9 +2,10 @@ from os import environ
 import sys, os
 import json
 import logging
-from .utils import events
 import inspect
-
+## NOTE: don't import anything from blaster library,
+## they may depend on config and won't load correctly.
+## keep it isolated as much as possible
 
 # default env variables
 IS_PROD = environ.get("IS_PROD") == "1"
@@ -20,13 +21,11 @@ _this_ = sys.modules[__name__]
 
 class Config:
     _config = None
-    event_prefix = None
     frozen_keys = None
-    def __init__(self, event_prefix=None):
+    def __init__(self):
         self.frozen_keys = {k:v for k,v in vars(_this_).items() if not k.startswith("_")}
         self._config = dict(self.frozen_keys)
-        self.event_prefix = event_prefix
-
+    
     def load(self, *paths):
         import yaml
         for path in paths or ["./"]:
@@ -62,8 +61,6 @@ class Config:
             # don't set frozen keys
             return
         self._config[key] = val
-        # broadcast
-        self.event_prefix and val != None and events.broadcast_event(self.event_prefix + key, val)
 
     def __getattr__(self, key):
         if(key not in self._config):
@@ -79,7 +76,7 @@ class Config:
 # hack: customized config module,
 # that doesn't crash for missing config variables, 
 # they will be just None.
-config = Config(event_prefix="CONFIG_")
+config = Config()
 
 # more variables from env
 if(gcloud_credential_file:= environ.get("GOOGLE_APPLICATION_CREDENTIALS")):

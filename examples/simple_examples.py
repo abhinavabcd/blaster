@@ -4,7 +4,7 @@ Created on 22-Aug-2017
 @author: abhinav
 '''
 import blaster
-from blaster.base import start_server, route,\
+from blaster.server import start_server, route,\
     Request, static_file_handler
 import os
 

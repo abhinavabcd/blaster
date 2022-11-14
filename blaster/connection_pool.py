@@ -48,7 +48,6 @@ def use_connection_pool(**pool_args):
 # AWS session/clients
 boto_session = None
 
-@events.register_listener("CONFIG_AWS_CREDENTIALS")
 def init_aws_clients(aws_credentials):
     import boto3
     global boto_session
@@ -80,7 +79,6 @@ def get_ses_conn():
 ## gcloud clients
 gcloud_credentials = None
 
-@events.register_listener("CONFIG_GCLOUD_CREDENTIALS")
 def init_gcloud_clients(_gcloud_credentials):
     global gcloud_credentials
     from google.oauth2 import service_account

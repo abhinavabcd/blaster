@@ -10,7 +10,7 @@ import pickle
 import traceback
 import ujson as json
 import gevent
-from ..base import is_server_running, route, Request
+from ..server import route, Request, is_server_running
 from ..tools import background_task, _create_signature, get_random_id, retry
 from ..connection_pool import use_connection_pool
 from ..utils import events

@@ -6,7 +6,6 @@ Created on 04-Nov-2017
 
 from gevent.threading import Thread
 from gevent.queue import Queue
-import json
 import os
 import sys
 import subprocess 
@@ -22,7 +21,6 @@ import heapq
 from gevent import sleep
 from functools import reduce as _reduce
 from gevent.lock import BoundedSemaphore
-from collections import namedtuple
 from datetime import timezone
 from datetime import datetime
 from datetime import timedelta

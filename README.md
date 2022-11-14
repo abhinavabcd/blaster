@@ -46,7 +46,7 @@ Example 1: (PasteBin)
 ```python
 
 import blaster # should be first line, does the gevent monkey patch
-from blaster.base import route
+from blaster.server import route
 from blaster.schema import Object
 
 class CreatePasteRequest(Object):
