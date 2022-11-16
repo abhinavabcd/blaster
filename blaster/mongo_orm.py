@@ -4,6 +4,7 @@ import types
 import pymongo
 from contextlib import ExitStack
 import metrohash
+from typing import TypeVar, Iterator
 # from pymongo.read_concern import ReadConcern
 # from pymongo.write_concern import WriteConcern
 from bson.objectid import ObjectId
@@ -19,7 +20,7 @@ from gevent.threading import Thread
 from gevent import time
 from .logging import LOG_APP_INFO, LOG_WARN, LOG_SERVER, LOG_ERROR
 
-_has_load_errors = False
+_loading_errors = {}
 
 MONGO_DEBUG_LEVEL = BLASTER_DEBUG_LEVEL
 EVENT_BEFORE_DELETE = -2
@@ -243,6 +244,8 @@ def _with_transaction(collection, _transaction, exit_stack):
 			exit_stack.enter_context(session.start_transaction())
 	return session
 
+ModelType = TypeVar('ModelType', bound='Model') # use string
+
 class Model(object):
 	# ###class level###
 	_attrs = None
@@ -295,7 +298,7 @@ class Model(object):
 	# YourTable.get({"p": "q", "r": "s"}) # this will kick in cache use
 	# YourTable.get(SOMEID) # this will kick in cache use
 	@classmethod
-	def get(cls, _pk=None, use_cache=True, **kwargs):
+	def get(cls: ModelType, _pk=None, use_cache=True, **kwargs) -> ModelType:
 		if(_pk != None):
 			is_single_item = False
 			_pks = None
@@ -850,7 +853,7 @@ class Model(object):
 		read_preference=ReadPreference.PRIMARY,
 		force_primary=False,
 		**kwargs
-	):
+	) -> Iterator[ModelType]:
 		queries = None
 		# split or queries to separate it to shards
 		if(not isinstance(_query, list)):
@@ -1771,7 +1774,7 @@ def initialize_model(_Model):
 					f"{json.dumps(_pymongo_indexes_to_create[_index])})"
 				)
 			)
-			_has_load_errors = True
+			_loading_errors["missing_mongo_indexes"] = True
 
 	# for pymongo_index, mongo_index_args in _pymongo_indexes_to_create.items():
 	# 	IS_DEV \
@@ -1851,8 +1854,8 @@ def initialize_mongo(db_nodes, default_db_name=None):
 			cls._db_name_ = default_db_name
 		initialize_model(cls)
 	
-	if(_has_load_errors):
-		raise Exception("initialize_mongo has errors: Check error logs")
+	if(_loading_errors):
+		raise Exception("initialize_mongo has errors: Check error logs: " + str(_loading_errors))
 
 
 # Initially intended to be < 500 line and more for educating

@@ -949,6 +949,11 @@ class App:
 					buffered_socket.send(b'\r\n')
 
 			if(body == I_AM_HANDLING_THE_SOCKET):
+				LOG_SERVER(
+					"http_socket", request_type=request_type,
+					path=request_path, wallclockms=int(1000 * time.time()) - cur_millis
+				)
+
 				return I_AM_HANDLING_THE_SOCKET
 
 			else:
@@ -962,18 +967,19 @@ class App:
 					body = body.encode()
 
 				# close headers and send the body data
+				content_length = 0
 				if(body):
 					# finalize all the headers
-					buffered_socket.send(b'Content-Length: ', str(len(body)), b'\r\n\r\n')
+					buffered_socket.send(b'Content-Length: ', str(content_length:= len(body)), b'\r\n\r\n')
 					buffered_socket.send(body)
 				else:
 					buffered_socket.send(b'Content-Length: 0', b'\r\n\r\n')
 
-			LOG_SERVER(
-				"http", response_status=status, request_type=request_type,
-				path=request_path,
-				wallclockms=int(1000 * time.time()) - cur_millis
-			)
+				LOG_SERVER(
+					"http", response_status=status, request_type=request_type,
+					path=request_path, content_length=content_length,
+					wallclockms=int(1000 * time.time()) - cur_millis
+				)
 
 		except Exception as ex:
 			stacktrace_string = traceback.format_exc()

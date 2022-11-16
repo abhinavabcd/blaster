@@ -1701,7 +1701,18 @@ def all_subclasses(cls):
 		[s for c in cls.__subclasses__() for s in all_subclasses(c)]
 	)
 
-
+'''print debugging info for networks request called with requests'''
+def debug_requests():
+	import logging
+	from http.client import HTTPConnection # py3
+	'''Switches on logging of the requests module.'''
+	HTTPConnection.debuglevel = 1
+	logging.basicConfig()
+	logging.getLogger().setLevel(logging.DEBUG)
+	requests_log = logging.getLogger("requests.packages.urllib3")
+	requests_log.setLevel(logging.DEBUG)
+	requests_log.propagate = True
+	
 '''
 @Test
 def func():

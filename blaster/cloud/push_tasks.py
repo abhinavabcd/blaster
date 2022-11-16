@@ -75,20 +75,6 @@ def gcloud_task(request:Request):
     exec_push_task(request._post_data, auth=GCLOUD_TASKS_AUTH_SECRET)
     return "OK"
 
-# wrapper fun to mark a function as a push_task
-def push_task(func):
-    if(isinstance(func, str)):
-        #named push task
-        def decorator(func2):
-            push_tasks[func] = func2
-            return func2
-
-        return decorator
-    else:
-        # grab original function
-        push_tasks[func.__name__] = func
-        return func
-
 
 @use_connection_pool(sqs_client="sqs")
 def post_task_to_sqs(push_tasks_sqs_url, message_body, sqs_client=None):
@@ -164,8 +150,6 @@ def post_a_task(func, *args, **kwargs):
         )
         func and func(*message_body.get("args", []), **message_body.get("kwargs", {}))
         return None
-
-    return
 
 
 def run_later(func):
