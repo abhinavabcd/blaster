@@ -30,8 +30,12 @@ import base64
 import hashlib
 import re
 import six
-
+import json
 import traceback
+import contextlib
+from io import BytesIO, StringIO
+import requests
+from http.client import HTTPConnection # py3
 
 from .websocket._core import WebSocket
 from .config import IS_DEV
@@ -1701,10 +1705,10 @@ def all_subclasses(cls):
 		[s for c in cls.__subclasses__() for s in all_subclasses(c)]
 	)
 
+
 '''print debugging info for networks request called with requests'''
-def debug_requests():
+def debug_requests_on():
 	import logging
-	from http.client import HTTPConnection # py3
 	'''Switches on logging of the requests module.'''
 	HTTPConnection.debuglevel = 1
 	logging.basicConfig()
@@ -1712,49 +1716,51 @@ def debug_requests():
 	requests_log = logging.getLogger("requests.packages.urllib3")
 	requests_log.setLevel(logging.DEBUG)
 	requests_log.propagate = True
+
+def debug_requests_off():
+	'''Switches off logging of the requests module, might be some side-effects'''
+	import logging
+	HTTPConnection.debuglevel = 0
+
+	root_logger = logging.getLogger()
+	root_logger.setLevel(logging.WARNING)
+	root_logger.handlers = []
+	requests_log = logging.getLogger("requests.packages.urllib3")
+	requests_log.setLevel(logging.WARNING)
+	requests_log.propagate = False
+
+@contextlib.contextmanager
+def debug_requests():
+    '''Use with 'with'!'''
+    debug_requests_on()
+    yield
+    debug_requests_off()
+
+def cached_request(
+	url, ignore_cache_read=False, cache_folder="/tmp/",
+	as_string_buffer=False, _json=None, data=None, headers=None
+):
+	cache_hash = url
+	if(_json):
+		cache_hash += json.dumps(_json)
+	elif(data):
+		cache_hash += json.dumps(data)	
+	cache_hash = hashlib.md5(cache_hash.encode("utf-8")).hexdigest()
+	cache_file_path = cache_folder + cache_hash
+	if(ignore_cache_read or not os.path.isfile(cache_file_path)):
+		if(_json or data):
+			resp = requests.post(url, json=_json, data=data, headers=headers, stream=True)
+		else:
+			resp = requests.get(url, headers=headers, stream=True)
+		try:
+			with open(cache_file_path, "wb") as cache_file:
+				for chunk in resp.iter_content():
+					cache_file.write(chunk)
+		except:
+			os.remove(cache_file_path)
 	
-'''
-@Test
-def func():
-	return xyz
-
-@Test("name")
-def func2():
-	assert(True==True)
-
-Test.run(__name__)
-Test.run(__name__, ["name"])
-
-'''
-# _all_test_funcs_ = {}
-
-
-# def Test(func):
-# 	if(callable(func)):
-# 		if(func.__module__ not in _all_test_funcs_):
-# 			_all_test_funcs_[func.__module__] = {}
-# 		_all_test_funcs_[func.__module__][func.__name__] = func
-# 		return func
-# 	else:
-# 		# func -> string/name
-# 		def wrapper(func2):
-# 			if(func.__module__ not in _all_test_funcs_):
-# 				_all_test_funcs_[func2.__module__] = {}
-# 			_all_test_funcs_[func2.__module__][func] = func2
-# 			return func2
-# 		return wrapper
-
-# def _run_tests_(module, names=None):
-# 	for _name, _func in _all_test_funcs_[module].items():
-# 		if(names and _name not in names):
-# 			continue
-# 		print("Running {} {}".format(module, _name))
-# 		try:
-# 			_func()
-# 		except Exception as ex:
-# 			traceback.print_exc()
-# 			print("Exception {}".format(str(ex)))
-# 			continue
-# 		print("OK")
-
-# Test.run = _run_tests_
+	bytes_buffer = BytesIO(open(cache_file_path, "rb").read())
+	if(as_string_buffer):
+		return StringIO(bytes_buffer.read().decode())
+	else:
+		return bytes_buffer

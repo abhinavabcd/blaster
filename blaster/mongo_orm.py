@@ -1,3 +1,4 @@
+from os import environ
 import json
 import heapq
 import types
@@ -15,14 +16,15 @@ from pymongo.errors import DuplicateKeyError
 from pymongo import ReturnDocument, ReadPreference
 from .tools import ExpiringCache, all_subclasses,\
 	cur_ms, list_diff2, batched_iter
-from .config import DEBUG_LEVEL as BLASTER_DEBUG_LEVEL, IS_DEV
+from .config import IS_DEV
 from gevent.threading import Thread
 from gevent import time
 from .logging import LOG_APP_INFO, LOG_WARN, LOG_SERVER, LOG_ERROR
 
 _loading_errors = {}
 
-MONGO_DEBUG_LEVEL = BLASTER_DEBUG_LEVEL
+MONGO_DEBUG_LEVEL =  int(environ.get("MONGO_ORM_DEBUG_LEVEL") or 1)
+
 EVENT_BEFORE_DELETE = -2
 EVENT_AFTER_DELETE = -1
 EVENT_BEFORE_UPDATE = 1
@@ -432,16 +434,16 @@ class Model(object):
 					# else:
 						# already in db, so let's wait for application to crash
 			if(self._initializing):
-				if(not self.__is_new):
-					if(_attr_obj_type == dict):
-						if(isinstance(v, dict)):
-							v = MongoDict(self, k, v)
+				# while initializing it, we tranform db data to objects fields
+				if(_attr_obj_type == dict):
+					if(isinstance(v, dict)):
+						v = MongoDict(self, k, v)
+				elif(_attr_obj_type == list):
+					if(isinstance(v, list)):
+						v = MongoList(self, k, v)
 
-					elif(_attr_obj_type == list):
-						if(isinstance(v, list)):
-							v = MongoList(self, k, v)
 			else: # initialized object
-				# check with validator					
+				# check with validator	
 				_attr_validator = _attr_obj._validator
 				if(_attr_validator):
 					v = _attr_validator(_attr_obj, v, self)
@@ -493,28 +495,26 @@ class Model(object):
 	def __check_and_set_initial_defaults(self, doc):
 		for attr_name, attr_obj in self.__class__._attrs_.items():
 			_default = getattr(attr_obj, "default", _OBJ_END_)
-			# if the value is not the document and have a default do the $set
+			# if the value is not the document initialise defaults
 			if(attr_name not in doc):
 				# if there is a default value
 				if(_default != _OBJ_END_):
 					if(isinstance(_default, types.FunctionType)):
 						_default = _default()
 					if(attr_obj._type == dict):
-						self._set_query_updates[attr_name] = _default = dict(_default)  # copy
+						_default = dict(_default)  # copy
 					elif(attr_obj._type == list):
-						self._set_query_updates[attr_name] = _default = list(_default)  # copy
-					else:
-						self._set_query_updates[attr_name] = _default  # copy
+						_default = list(_default)  # copy
+					# set that attr so it's set also in db on next update
+					setattr(self, attr_name, _default)
 				else:
 					# default isn't given
-					# we create 'save on write defaults
+					# we create save on write defaults for dict/list objects
 					if(attr_obj._type == dict):
-						_default = MongoDict(self, attr_name, {})  # copy
+						self.__dict__[attr_name] = MongoDict(self, attr_name, {})  # copy
 					elif(attr_obj._type == list):
-						_default = MongoList(self, attr_name, [])  # copy
+						self.__dict__[attr_name] = MongoList(self, attr_name, [])  # copy
 
-				if(_default != _OBJ_END_):
-					setattr(self, attr_name, _default)
 
 	# when retrieving objects from db
 	# creates a new Model object

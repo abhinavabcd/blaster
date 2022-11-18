@@ -141,9 +141,9 @@ class Request:
 
 	# instance level
 	sock = None
-	_get = None
-	_post = None
-	_post_data = None
+	_params = None
+	_body = None
+	_body_raw = None
 	_cookies = None
 	_headers = None
 	# cookies to send to client
@@ -168,7 +168,7 @@ class Request:
 		return Request._after_hooks
 
 	def __init__(self, buffered_socket):
-		self._get = SanitizedDict()  # empty params by default
+		self._params = SanitizedDict()  # empty params by default
 		self._headers = HeadersDict()
 		self.sock = buffered_socket
 		self.ctx = DummyObject()
@@ -177,18 +177,18 @@ class Request:
 	def get(self, key, default=None, **kwargs):
 		val = _OBJ_END_
 		# try post params first
-		if(self._post):
-			val = self._post.get(key, default=_OBJ_END_, **kwargs)
+		if(self._body):
+			val = self._body.get(key, default=_OBJ_END_, **kwargs)
 		# try get param next
-		if(val == _OBJ_END_ and self._get):
-			val = self._get.get(key, default=_OBJ_END_, **kwargs)
+		if(val == _OBJ_END_ and self._params):
+			val = self._params.get(key, default=_OBJ_END_, **kwargs)
 
 		if(val == _OBJ_END_):
 			return default
 		return val
 
 	def __setitem__(self, key, val):
-		self._get[key] = val
+		self._params[key] = val
 
 	def __getitem__(self, key):
 		ret = self.get(key, default=_OBJ_END_)
@@ -202,16 +202,16 @@ class Request:
 			raise AttributeError("{} not found".format(key))
 		return ret
 
-	def GET(self, key=None, **kwargs):
+	def PARAMS(self, key=None, **kwargs):
 		if(key == None):
-			return self._get
-		return self._get.get(key, **kwargs)
+			return self._params
+		return self._params.get(key, **kwargs)
 
-	def POST(self, key=None, **kwargs):
+	def BODY(self, key=None, **kwargs):
 		if(key == None):
-			return self._post
-		if(self._post):
-			return self._post.get(key, **kwargs)
+			return self._body
+		if(self._body):
+			return self._body.get(key, **kwargs)
 		return None
 
 	def HEADERS(self, key=None, default=None):
@@ -219,31 +219,34 @@ class Request:
 			return self._headers
 		return self._headers.get(key, default=default)
 
-	def COOKIES(self, key, cookie_value=_OBJ_END_):
-		ret = self._cookies.get(key)
-		if(cookie_value != _OBJ_END_):
-			if(self._cookies_to_set == None):
-				self._cookies_to_set = {}
-			if(isinstance(cookie_value, dict)):
-				_cookie_val = str(cookie_value.pop("value", "1"))
-				if(cookie_value):
-					_cookie_val += ";"
-					# other key=val atrributes of cookie
-					for k, v in cookie_value.items():
-						_cookie_val += (" " + k)
-						if(v is not True):
-							# if mentioned as True just the key
-							# is suffice like httpsOnly, secureOnly
-							_cookie_val += "={};".format(v)
-				cookie_value = _cookie_val
-			if(isinstance(cookie_value, str)):
-				self._cookies_to_set[key] = cookie_value
-		return ret
+	def COOKIES(self, key=None, default=None):
+		if(key == None):
+			return self._cookies					
+		return self._cookies.get(key, default)
+		
+	def SET_COOKIE(self, key, cookie_value):
+		if(self._cookies_to_set == None):
+			self._cookies_to_set = {}
+		if(isinstance(cookie_value, dict)):
+			_cookie_val = str(cookie_value.pop("value", "1"))
+			if(cookie_value):
+				_cookie_val += ";"
+				# other key=val atrributes of cookie
+				for k, v in cookie_value.items():
+					_cookie_val += (" " + k)
+					if(v is not True):
+						# if mentioned as True just the key
+						# is suffice like httpsOnly, secureOnly
+						_cookie_val += "={};".format(v)
+			cookie_value = _cookie_val
+		if(isinstance(cookie_value, str)):
+			self._cookies_to_set[key] = cookie_value
+		
 
 	def parse_request_body(self, post_data_bytes, headers):
 		if(not post_data_bytes):
 			return None
-		self._post = _post_params = SanitizedDict()
+		self._body = _body = SanitizedDict()
 		content_type_header = headers.get("Content-Type", "")
 		if(headers and content_type_header.startswith("multipart/form-data")):
 			for part in decoder.MultipartDecoder(post_data_bytes, content_type_header).parts:
@@ -262,9 +265,9 @@ class Request:
 					# if no additional headers, and no other attributes,
 					# it's just a plain input field
 					if(not part.headers and not attrs):
-						_post_params[name] = part.text
+						_body[name] = part.text
 					else:  # could be a file or other type of data, preserve all data
-						_post_params[name] = {
+						_body[name] = {
 							"attrs": attrs,
 							"data": part.content,
 							"headers": part.headers
@@ -275,9 +278,9 @@ class Request:
 				post_data_str[0] == '{'
 				or content_type_header == "application/json"
 			):
-				_post_params.update(json.loads(post_data_str))
+				_body.update(json.loads(post_data_str))
 			else:  # urlencoded form
-				_post_params.update(parse_qs_modified(post_data_str))
+				_body.update(parse_qs_modified(post_data_str))
 
 		return self
 
@@ -313,19 +316,19 @@ class Request:
 		elif(_type == Request):  # request_params: Request
 			return lambda req: req
 		elif(_type == Query):  # query: Query
-			return lambda req: req._get
+			return lambda req: req._params
 		elif(_type == Headers):  # headers: Headers
 			return lambda req: req._headers
 		elif(_type == Body):  # headers: Headers
-			return lambda req: req._post
+			return lambda req: req._body
 		elif(isinstance(_type, Query)):  # Query(id=str, abc=str)
-			return lambda req: _type.from_dict(req._get)
+			return lambda req: _type.from_dict(req._params)
 
 		elif(isinstance(_type, Headers)):  # Headers('user-agent')
 			return lambda req: _type.from_dict(req._headers)
 
 		elif(isinstance(_type, Body)):  # Headers('user-agent')
-			return lambda req: _type.from_dict(req._post)
+			return lambda req: _type.from_dict(req._body)
 
 		# type should be class at this point
 		# if has an arg injector, use it
@@ -334,10 +337,10 @@ class Request:
 			return Request.wrap_arg_hook_for_defaults(has_arg_creator_hook, name, default)
 
 		elif(isinstance(_type, type) and issubclass(_type, Body)):
-			return lambda req: _type.from_dict(req._post)
+			return lambda req: _type.from_dict(req._body)
 
 		elif(isinstance(_type, type) and issubclass(_type, Query)):  # :LoginRequestQuery
-			return lambda req: _type.from_dict(req._get)
+			return lambda req: _type.from_dict(req._params)
 
 		elif(
 			isinstance(_type, Object)
@@ -357,7 +360,7 @@ class Request:
 			return _no_type_arg
 
 	def to_dict(self):
-		return {"get": self._get, "post": self._post}
+		return {"get": self._params, "post": self._body}
 
 
 # contains all running apps
@@ -773,7 +776,7 @@ class App:
 			query_start_index = request_path.find("?")
 			if(query_start_index != -1):
 				query_string = request_path[query_start_index + 1:]
-				request_params._get.update(parse_qs_modified(query_string))
+				request_params._params.update(parse_qs_modified(query_string))
 
 				# strip query string from path
 				request_path \
@@ -860,7 +863,7 @@ class App:
 						decoded_cookies[_kv[0]] = _kv[1]
 			request_params._cookies = decoded_cookies
 			# process cookies end
-			request_params._post_data = post_data
+			request_params._body_data = post_data
 			request_params.parse_request_body(post_data, headers)
 
 			handler_args = []
@@ -870,7 +873,7 @@ class App:
 			path_params = request_path_match.groupdict()
 			for path_param, path_param_value in path_params.items():
 				if(path_param_value):
-					request_params._get[path_param] = path_param_value
+					request_params._params[path_param] = path_param_value
 
 			# set a reference to handler
 			request_params.handler = handler
