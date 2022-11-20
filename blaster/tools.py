@@ -44,7 +44,7 @@ from .utils import events
 from .logging import LOG_APP_INFO, LOG_WARN, LOG_ERROR
 
 
-_this_ = sys.modules[__name__]
+INT64_MAX = 9223372036854775807
 _OBJ_END_ = object()
 
 def cur_ms():

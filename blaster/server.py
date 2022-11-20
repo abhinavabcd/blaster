@@ -3,13 +3,6 @@ Created on 22-Aug-2017
 
 @author: abhinav
 '''
-
-# argparse==1.2.1
-# gevent==1.2.1
-# greenlet==0.4.12
-# protobuf==3.2.0
-# boto3==1.4.4
-
 import os
 import gevent
 import ujson as json
@@ -24,8 +17,7 @@ from gevent.socket import socket as GeventSocket
 from gevent.server import StreamServer
 from requests_toolbelt.multipart import decoder
 
-from . import config as blaster_config, req_ctx
-from .config import IS_DEV
+from . import req_ctx
 from .tools import SanitizedDict, DummyObject,\
 	set_socket_fast_close_options, BufferedSocket, ltrim
 from .utils import events
@@ -33,6 +25,12 @@ from .utils.data_utils import FILE_EXTENSION_TO_MIME_TYPE
 from .logging import LOG_ERROR, LOG_SERVER
 from .schema import Int, Object, Required, Str, schema as schema_func
 from .websocket.server import WebSocketServerHandler
+from .config import IS_DEV
+
+if(IS_DEV):
+	# dev specific config
+	from .config import DEV_FORCE_ACCESS_CONTROL_ALLOW_ORIGIN,\
+	DEV_FORCE_ACCESS_CONTROL_ALLOW_ORIGIN_ALL
 
 
 _is_server_running = True
@@ -863,7 +861,7 @@ class App:
 						decoded_cookies[_kv[0]] = _kv[1]
 			request_params._cookies = decoded_cookies
 			# process cookies end
-			request_params._body_data = post_data
+			request_params._body_raw = post_data
 			request_params.parse_request_body(post_data, headers)
 
 			handler_args = []
@@ -937,6 +935,12 @@ class App:
 					# send all basic headers
 					for key, val in response_headers.items():
 						buffered_socket.send(key, b': ', val, b'\r\n')
+
+				if(IS_DEV):
+					if(DEV_FORCE_ACCESS_CONTROL_ALLOW_ORIGIN_ALL):
+						buffered_socket.send(b'Access-Control-Allow-Origin: *\r\n')
+					elif(DEV_FORCE_ACCESS_CONTROL_ALLOW_ORIGIN):
+						buffered_socket.send(b'Access-Control-Allow-Origin: ', headers.get("origin", "*"), b'\r\n')
 
 				# send any new cookies set
 				if(request_params._cookies_to_set):
@@ -1179,10 +1183,4 @@ def _get_web_socket_handler(request_params):
 
 Request.set_arg_type_hook(WebSocketServerHandler, _get_web_socket_handler)
 
-
-
-# DEV SPECIFIC SETTINGS
-if(IS_DEV):
-	if(blaster_config.DEV_FORCE_ACCESS_CONTROL_ALLOW_ORIGIN):
-		default_stream_headers["Access-Control-Allow-Origin"] = '*'
 

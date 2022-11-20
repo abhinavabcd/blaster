@@ -629,23 +629,25 @@ class Model(object):
 	def update(
 		self, _update_query, conditions=None,
 		after_mongo_update=None, _transaction=None,
+		include_pending_updates=True,
 		**kwargs
 	):
 		cls = self.__class__
 
 		cls._trigger_event(EVENT_BEFORE_UPDATE, self)
 
-		if(self._set_query_updates):
-			_in_query = _update_query.get("$set") or {}
-			_to_set = dict(self._set_query_updates)
-			_to_set.update(_in_query)  # overwrite from query
-			_update_query["$set"] = _to_set
-		if(self._other_query_updates):
-			for _ukey, _uval in self._other_query_updates.items():
-				_to_update = dict(_uval)
-				_in_query = _update_query.get(_ukey) or {}  # from update query
-				_to_update.update(_in_query)  # overwrite
-				_update_query[_ukey] = _to_update
+		if(include_pending_updates):
+			if(self._set_query_updates):
+				_in_query = _update_query.get("$set") or {}
+				_to_set = dict(self._set_query_updates)
+				_to_set.update(_in_query)  # overwrite from query
+				_update_query["$set"] = _to_set
+			if(self._other_query_updates):
+				for _ukey, _uval in self._other_query_updates.items():
+					_to_update = dict(_uval)
+					_in_query = _update_query.get(_ukey) or {}  # from update query
+					_to_update.update(_in_query)  # overwrite
+					_update_query[_ukey] = _to_update
 
 		if(not _update_query):
 			return True  # nothing to update, hence true
@@ -833,9 +835,10 @@ class Model(object):
 				self.reset_and_update_cache(updated_doc)
 				# waint on threads
 
-				# cleanup
-				self._set_query_updates.clear()
-				self._other_query_updates.clear()
+				# cleanup if pending updates already applied
+				if(include_pending_updates):
+					self._set_query_updates.clear()
+					self._other_query_updates.clear()
 
 				# triggered after update event
 				cls._trigger_event(EVENT_AFTER_UPDATE, self)
@@ -1252,7 +1255,7 @@ class Model(object):
 		if(not self.__is_new and not committed):  # try updating
 			# automatically picks up _set_query_updates inside .update function
 			is_committed = self.update({}, conditions=conditions)
-			if(not is_committed):
+			if(not is_committed and not conditions):
 				# if it's used for creating a new object, but we couldn't update it
 				raise Exception(
 					"MONGO: Couldn't commit, either a concurrent update modified this or query has issues",
@@ -1327,7 +1330,8 @@ class Model(object):
 							{"locked": None},
 							{"locked": {"$lt": cur_timestamp}}  # locked before 2 minutes
 						]
-					}
+					},
+					include_pending_updates=False
 				)
 			):
 				self.__locked_until = locked_until
@@ -1353,11 +1357,13 @@ class Model(object):
 
 		self.update(
 			{"$unset": {"locked": ""}},
-			conditions=None if force else {"locked": self.__locked_until}
+			conditions=None if force else {"locked": self.__locked_until}, # if locked by us
+			include_pending_updates=False
 		)
 		self.__locked_until = None
 
-
+# decorator to prevent concurrent updates
+# uses the first argument to lock
 def with_lock(func):
 	def wrapper(self, *args, **kwargs):
 		try:
