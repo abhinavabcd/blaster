@@ -183,7 +183,7 @@ def LOG(level, log_type, **kwargs):
 			"log_level": log_level_name,
 			"app": LOG_APP_NAME,
 			"version": LOG_APP_VERSION,
-			"timestamp": int(1000 * time.time()),
+			"timestamp": req_ctx.timestamp or int(1000 * time.time()),
 			"payload": kwargs
 		}
 		if(client:=req_ctx.client_name):

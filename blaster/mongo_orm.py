@@ -1753,8 +1753,8 @@ def initialize_model(_Model):
 
 	# check unused indexes
 	existing_indexes = {
-		tuple([(x, int(y)) for x, y in _index["key"]]): _index # sometimes it's float so convert to int
-		for _, _index in existing_indexes.items()
+		tuple([(x, int(y)) for x, y in _index["key"]]): (_name, _index) # sometimes it's float so convert to int
+		for _name, _index in existing_indexes.items()
 	}  # key: ((_id, 1)).., value: {uqniue: False} or None
 
 	# remove default for comparision
@@ -1766,9 +1766,11 @@ def initialize_model(_Model):
 	)
 	for _index_keys in _delete_indexes:
 		LOG_WARN(
-			"mongo_indexes", desc="index not declared in orm, delete it on db?",
-			collection=_Model._collection_name_with_shard_,
-			index=json.dumps({x:y for x,y in _index_keys}),
+			"mongo_indexes",
+			desc=(
+				f"index not declared in orm, delete it on db? "
+				f'db.{_Model._collection_name_with_shard_}.dropIndex("{existing_indexes[_index_keys][0]}")'
+			)
 		)
 	if(_new_indexes):
 		for _index in _new_indexes:
