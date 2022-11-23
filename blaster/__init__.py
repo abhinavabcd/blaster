@@ -15,15 +15,16 @@ req_ctx = __ReqCtx()
 # END gevent local
 
 
-import sys, signal
-from .utils import events
+import sys
 
 ## override config module, hack
 from .config import config
 sys.modules["blaster.config"] = config
 
+## cleanup handlers
+import signal
 from .utils import events
-## Exit strategy
+
 def blaster_exit():
 	# send exit signals
 	# stage 0 -> stop creating new things

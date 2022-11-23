@@ -1,5 +1,4 @@
 from collections import deque
-from .utils import events
 from .config import IS_DEV, \
     AWS_CREDENTIALS, GCLOUD_CREDENTIALS
 # import umysql

@@ -25,7 +25,7 @@ from .utils.data_utils import FILE_EXTENSION_TO_MIME_TYPE
 from .logging import LOG_ERROR, LOG_SERVER
 from .schema import Int, Object, Required, Str, schema as schema_func
 from .websocket.server import WebSocketServerHandler
-from .config import IS_DEV
+from .config import IS_DEV, BLASTER_HTTP_TIMEOUT_WARN_THRESHOLD
 
 if(IS_DEV):
 	# dev specific config
@@ -52,8 +52,10 @@ REUSE_SOCKET_FOR_HTTP = object()
 _OBJ_END_ = object()
 
 # some random constants
-HTTP_MAX_REQUEST_BODY_SIZE = 1 * 1024 * 1024  # 1 mb
-HTTP_MAX_HEADERS_DATA_SIZE = 16 * 1024  # 16kb
+_1_KB_ = 1024
+_1_MB_ = 1024 * _1_KB_
+HTTP_MAX_REQUEST_BODY_SIZE = 2 * _1_MB_  # 1 mb
+HTTP_MAX_HEADERS_DATA_SIZE = 16 * _1_KB_  # 16kb
 
 
 def get_chunk_size_from_header(chunk_header):
@@ -982,11 +984,20 @@ class App:
 				else:
 					buffered_socket.send(b'Content-Length: 0', b'\r\n\r\n')
 
+				_wallclock_ms = int(1000 * time.time()) - cur_millis
 				LOG_SERVER(
 					"http", response_status=status, request_type=request_type,
 					path=request_path, content_length=content_length,
-					wallclockms=int(1000 * time.time()) - cur_millis
+					wallclockms=_wallclock_ms
 				)
+				if(_wallclock_ms > BLASTER_HTTP_TIMEOUT_WARN_THRESHOLD):
+					LOG_ERROR(
+						"http_took_long", response_status=status, request_type=request_type,
+						path=request_path, content_length=content_length,
+						body_len=request_params._body_raw and len(request_params._body_raw),
+						request_params_str=str(request_params.to_dict())[:16 * _1_KB_],
+						wallclockms=_wallclock_ms
+					)
 
 		except Exception as ex:
 			stacktrace_string = traceback.format_exc()

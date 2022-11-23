@@ -83,3 +83,7 @@ if(gcloud_credential_file:= environ.get("GOOGLE_APPLICATION_CREDENTIALS")):
         config.GCLOUD_CREDENTIALS = json.loads(open(gcloud_credential_file).read())
     except Exception as ex: 
         print(ex)
+
+# BLASTER SPECIFIC CONFIGS, that can be overridden
+config.BLASTER_HTTP_TIMEOUT_WARN_THRESHOLD = 5000
+config.MONGO_WARN_THRESHOLD_MANY_RESULTS_FETCHED = 2000

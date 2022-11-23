@@ -16,7 +16,7 @@ from pymongo.errors import DuplicateKeyError
 from pymongo import ReturnDocument, ReadPreference
 from .tools import ExpiringCache, all_subclasses,\
 	cur_ms, list_diff2, batched_iter
-from .config import IS_DEV
+from .config import IS_DEV, MONGO_WARN_THRESHOLD_MANY_RESULTS_FETCHED
 from gevent.threading import Thread
 from gevent import time
 from .logging import LOG_APP_INFO, LOG_WARN, LOG_SERVER, LOG_ERROR
@@ -964,10 +964,12 @@ class Model(object):
 			query_result_iters = None
 			query_count_funcs = None
 			buffer = None
+			results_returned = 0
 
 			def __init__(self):
 				self.query_result_iters = []
 				self.query_count_funcs = []
+				self.results_returned = 0
 
 			def add(self, query_result_iter, query_count_func=None):
 				self.query_result_iters.append(query_result_iter)
@@ -991,8 +993,8 @@ class Model(object):
 					pass
 
 			def __iter__(self):
-				if(len(self.query_result_iters) == 1):
-					return self.query_result_iters[0]
+				# if(len(self.query_result_iters) == 1):
+				# 	return self.query_result_iters[0]
 				# else we sort results for each if there is a sorting key given
 				self.buffer = []
 				heapq.heapify(self.buffer)
@@ -1007,6 +1009,13 @@ class Model(object):
 					self.push_query_iter_into_heap(_query_result_iter)
 				except IndexError:
 					raise StopIteration
+
+				self.results_returned += 1
+				if(self.results_returned % MONGO_WARN_THRESHOLD_MANY_RESULTS_FETCHED == 0):
+					LOG_WARN(
+						"mongo_results_many",
+						desc=f"scanned {cls._collection_name_with_shard_}/{cls.__name__} {_queries}: {self.results_returned}"
+					)
 
 				return _ret
 
@@ -1768,7 +1777,7 @@ def initialize_model(_Model):
 		LOG_WARN(
 			"mongo_indexes",
 			desc=(
-				f"index not declared in orm, delete it on db? "
+				f"index {_index_keys} not declared in orm, delete it on db? "
 				f'db.{_Model._collection_name_with_shard_}.dropIndex("{existing_indexes[_index_keys][0]}")'
 			)
 		)
