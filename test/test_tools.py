@@ -1,4 +1,5 @@
 import unittest
+from blaster import tools
 from blaster.tools import get_time_overlaps, retry,\
 	SanitizedDict, SanitizedList
 from datetime import datetime
@@ -126,6 +127,17 @@ class TestTools(unittest.TestCase):
 		print(parse_string_to_units("rs -1.9"))
 		print(parse_currency_string("INR 2000"))
 
+	def remove_duplicates(self):
+		l2 = tools.remove_duplicates([1, 2, 3, 5, 3])
+		self.assertEqual(l2, [1, 2, 3, 5])
+
+		l2 = tools.remove_duplicates(["a", "a", "b", "c", "a", "b"])
+		self.assertEqual(l2, ["a", "b", "c"])
+
+		l2 = tools.remove_duplicates([{"a": 1}, {"a":1}, {"a": 2}, {"a": 2}], key=lambda x:x.get("a"))
+		self.assertEqual(l2, [{"a": 1}, {"a": 2}])
+		
+		
 
 if __name__ == "__main__":
 	unittest.main()

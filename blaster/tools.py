@@ -598,16 +598,21 @@ def get_mysql_rows_as_dict(res):
 ########################
 
 
-def remove_duplicates(lst):
+def remove_duplicates(lst, key=None):
 	exists = set()
 	ret = []
 	for i in lst:
-		if(i in exists):
-			continue
-		exists.add(i)
+		if(key):
+			if((key_val:= key(i)) in exists):
+				continue
+			exists.add(key_val)
+		else:
+			if(i in exists):
+				continue
+			exists.add(i)
+		# i doesn't exist
 		ret.append(i)
 	return ret
-
 
 def get_shard_id(_id):
 	return (int(_id) & (((1 << 12) - 1) << 11)) >> 11

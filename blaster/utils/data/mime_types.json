@@ -2715,12 +2715,12 @@
         "mime_type": "image/pjpeg",
         "description": "PJPEG files refer to images wherein the Progressive JPEG format (hence JPEG) is used for bitmap images."
     },
-    ".jpeg": {
-        "mime_type": "image/pjpeg",
+    ".jpg": {
+        "mime_type": "image/jpeg",
         "description": "PJPEG files refer to images wherein the Progressive JPEG format (hence JPEG) is used for bitmap images."
     },
-    ".jpg": {
-        "mime_type": "image/pjpeg",
+    ".jpeg": {
+        "mime_type": "image/jpeg",
         "description": "PJPEG files refer to images wherein the Progressive JPEG format (hence JPEG) is used for bitmap images."
     },
     ".pjpg": {

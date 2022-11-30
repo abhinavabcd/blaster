@@ -16,7 +16,7 @@ from pymongo.errors import DuplicateKeyError
 from pymongo import ReturnDocument, ReadPreference
 from .tools import ExpiringCache, all_subclasses,\
 	cur_ms, list_diff2, batched_iter
-from .config import IS_DEV, MONGO_WARN_THRESHOLD_MANY_RESULTS_FETCHED
+from .config import IS_DEV, MONGO_WARN_THRESHOLD_MANY_RESULTS_FETCHED, MONGO_WARN_MAX_QUERY_TIME_SECONDS
 from gevent.threading import Thread
 from gevent import time
 from .logging import LOG_APP_INFO, LOG_WARN, LOG_SERVER, LOG_ERROR
@@ -40,7 +40,6 @@ _OBJ_END_ = object()
 
 _NOT_EXISTS_QUERY = {"$exists": False}  # just a constant
 
-_WARN_MAX_QUERY_TIME = 3
 
 # utility to print collection name + node for logging
 def COLLECTION_NAME(collection):
@@ -1041,11 +1040,11 @@ class Model(object):
 			if(limit):
 				ret = ret.limit(limit)
 
-			if((_elapsed_time:= (time.time() - _start_time)) > _WARN_MAX_QUERY_TIME):
+			if((_elapsed_time:= (time.time() - _start_time)) > MONGO_WARN_MAX_QUERY_TIME_SECONDS):
 				query_plan = ret.explain()["queryPlanner"]
 				LOG_WARN(
 					"mongo_perf",
-					desc="query took longer than {} seconds".format(_WARN_MAX_QUERY_TIME),
+					desc=f"query took longer than {MONGO_WARN_MAX_QUERY_TIME_SECONDS} seconds",
 					elapsed_millis=int(_elapsed_time * 1000),
 					plan_type=query_plan["winningPlan"]["stage"],
 					query=query_plan["parsedQuery"]

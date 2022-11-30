@@ -13,17 +13,8 @@ from ...tools import retry, background_task
 @use_connection_pool(ses_client="ses")
 def send_email(
     sender, to_list, subject,
-    body_text=None, body_html=None, ses_client=None
+    body_text=None, body_html=None, cc_list=None, bcc_list=None, ses_client=None
 ):
-    """
-        Send email.
-        Note: The emails of sender and receiver should be verified.
-        PARAMS
-        @sender: sender's email, string
-        @to: list of receipient emails eg ['a@b.com', 'c@d.com']
-        @subject: subject of the email
-        @body: body of the email
-    """
     try:
         body_data = {}
         if(body_text):
@@ -39,7 +30,9 @@ def send_email(
         response = ses_client.send_email(
             Source=sender,
             Destination={
-                'ToAddresses': to_list
+                "ToAddresses": to_list or [sender],
+                "CcAddresses": cc_list or [],
+                "BccAddresses": bcc_list or []
             },
             Message={
                 'Subject': {
