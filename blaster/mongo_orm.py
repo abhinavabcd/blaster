@@ -3,6 +3,7 @@ import json
 import heapq
 import types
 import pymongo
+from functools import cmp_to_key
 from contextlib import ExitStack
 import metrohash
 from typing import TypeVar, Iterator
@@ -1601,8 +1602,20 @@ def initialize_model(_Model):
 			_index_keys.append((_attr_name, _ordering))
 		_indexes_list.append((tuple(_index_keys), _index_properties))
 
-	# sort shortest first and grouped by keys first
-	_indexes_list.sort(key=lambda x: tuple(k[0] for k in x[0]))
+	# sort shortest first and grouped by shard keys first
+	def index_cmp(index_a, index_b):
+		index_a = index_a[0] # just the index keys
+		index_b = index_b[0] # just the index keys
+
+		if((_diff:= len(index_a) - len(index_b)) != 0):
+			return _diff # shorter wins
+		
+		if(index_a[0] != index_b[0]): # cmp by shard key
+			return -1 if index_a[0] < index_b[0] else 1
+		return 0		
+
+	_indexes_list.sort(key=cmp_to_key(index_cmp))
+
 	for _index_keys, _index_properties in _indexes_list:
 		# mix with defaults
 		_index_properties = {"unique": True, **_index_properties}
