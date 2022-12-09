@@ -1,7 +1,8 @@
 import unittest
 from blaster import tools
+import time
 from blaster.tools import get_time_overlaps, retry,\
-	SanitizedDict, SanitizedList
+	SanitizedDict, SanitizedList, ExpiringCache
 from datetime import datetime
 from blaster.utils.data_utils import parse_string_to_units,\
 	parse_currency_string
@@ -137,7 +138,25 @@ class TestTools(unittest.TestCase):
 		l2 = tools.remove_duplicates([{"a": 1}, {"a":1}, {"a": 2}, {"a": 2}], key=lambda x:x.get("a"))
 		self.assertEqual(l2, [{"a": 1}, {"a": 2}])
 		
+	def test_expiring_cache(self):
+		c = ExpiringCache(10, ttl=1000)
+		c.set(1, 2)
+		c.set(2, 2)
+		time.sleep(1)
+		c.set(3, 3)
+		self.assertIsNone(c.get(1))
+		self.assertIsNone(c.get(2))
+		self.assertEqual(c.get(3), 3)
+		time.sleep(1) # all items expired
+		self.assertIsNone(c.get(3))
+		for i in range(9):
+			time.sleep(0.2)
+			c.set(i, i) 
+		# when last item is added, it expired first 4 items
+		self.assertEqual(len(c.to_son()), 5)
+
 		
+
 
 if __name__ == "__main__":
 	unittest.main()

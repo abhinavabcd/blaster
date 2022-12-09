@@ -120,39 +120,28 @@ class ExpiringCache:
 				self.set(k, v)
 
 	def get(self, key, default=None):
-		try:
-			# remove and reinsert into
-			# ordered dict to move to recent
-			cur_timestamp = cur_ms()
-			timestamp_and_value = self.cache.get(key)
-			if(not timestamp_and_value):
-				return default
-
-			timestamp, value = timestamp_and_value
-			if(cur_timestamp < timestamp + self.ttl):
-				return value
-			else:
-				# remove if expired
-				self.cache.pop(key, None)
-
+		timestamp_and_value = self.cache.get(key, _OBJ_END_)
+		if(timestamp_and_value == _OBJ_END_):
 			return default
-		except KeyError:
-			return default
+		if(timestamp_and_value[0] > cur_ms()):
+			return timestamp_and_value[1]
+		self.cache.pop(key, None) # expired object
+		return default
 
 	def set(self, key, value):
 		removed_entries = []
-		try:
-			self.cache.pop(key)
-		except KeyError:
-			# new entry so cleanup space if it's beyond capacity
-			cur_timestamp = cur_ms()
-			while(len(self.cache) >= self.capacity):
-				_key, (timestamp, _value) = self.cache.popitem(last=False)
-				if(cur_timestamp < timestamp + self.ttl):
-					removed_entries.append((_key, _value))
+		cur_timestamp = cur_ms()
+		while(len(self.cache) >= self.capacity):
+			removed_entries.append(self.cache.popitem(last=False))
+		keys_to_remove = []
+		for _key, val in self.cache.items():
+			if(val[0] < cur_timestamp):
+				keys_to_remove.append(_key)
 
-		self.cache[key] = (cur_ms(), value)
+		for _key in keys_to_remove:
+			removed_entries.append(self.cache.pop(_key))
 
+		self.cache[key] = (cur_timestamp + self.ttl, value)
 		return removed_entries
 
 	def __setitem__(self, key, value):
@@ -162,7 +151,7 @@ class ExpiringCache:
 		return self.get(key, default)
 
 	def exists(self, key):
-		return self.cache.get(key, _OBJ_END_) != _OBJ_END_
+		return key in self.cache
 
 	def delete(self, key):
 		return self.cache.pop(key, None)
@@ -174,8 +163,8 @@ class ExpiringCache:
 		ret = {}
 		cur_timestamp = cur_ms()
 		for key, _val in self.cache.items():
-			timestamp, val = _val
-			if(cur_timestamp < timestamp + self.ttl):
+			expires_at, val = _val
+			if(cur_timestamp < expires_at):
 				ret[key] = val.to_son() if hasattr(val, "to_son") else val
 		return ret
 
