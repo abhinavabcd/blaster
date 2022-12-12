@@ -150,6 +150,7 @@ class Request:
 	_cookies_to_set = None
 	# url data, doesn't contain query string
 	path = None
+	ctx = None
 
 	@classmethod
 	def before(cls, func=None):
@@ -167,11 +168,23 @@ class Request:
 			return func
 		return Request._after_hooks
 
-	def __init__(self, buffered_socket):
+	@functools.cached_property
+	def ip_port(self):
+		_remote_peer_data = self.sock.getpeername()
+		_remote_ip, _remote_port = _remote_peer_data[0], _remote_peer_data[1]
+
+		if(_forwarded_ip:= self._headers.get("X-Forwarded-For")):
+			_remote_ip = _forwarded_ip.strip()
+		if(_forwarded_port:= self._headers.get("X-Forwarded-Port")):
+			_remote_port = _forwarded_port.strip()
+
+		return (_remote_ip, _remote_port)
+
+	def __init__(self, buffered_socket, ctx):
 		self._params = SanitizedDict()  # empty params by default
 		self._headers = HeadersDict()
 		self.sock = buffered_socket
-		self.ctx = DummyObject()
+		self.ctx = ctx
 
 	# searches in post and get
 	def get(self, key, default=None, **kwargs):
@@ -321,14 +334,16 @@ class Request:
 			return lambda req: req._headers
 		elif(_type == Body):  # headers: Headers
 			return lambda req: req._body
+		elif(isinstance(_type, (Int, str))):
+			return lambda req: _type.validate(req.get(name), default=default)
 		elif(isinstance(_type, Query)):  # Query(id=str, abc=str)
-			return lambda req: _type.from_dict(req._params)
+			return lambda req: _type.from_dict(req._params, default=default)
 
 		elif(isinstance(_type, Headers)):  # Headers('user-agent')
-			return lambda req: _type.from_dict(req._headers)
+			return lambda req: _type.from_dict(req._headers, default=default)
 
-		elif(isinstance(_type, Body)):  # Headers('user-agent')
-			return lambda req: _type.from_dict(req._body)
+		elif(isinstance(_type, Body)):
+			return lambda req: _type.from_dict(req._body, default=default)
 
 		# type should be class at this point
 		# if has an arg injector, use it
@@ -337,16 +352,16 @@ class Request:
 			return Request.wrap_arg_hook_for_defaults(has_arg_creator_hook, name, default)
 
 		elif(isinstance(_type, type) and issubclass(_type, Body)):
-			return lambda req: _type.from_dict(req._body)
+			return lambda req: _type.from_dict(req._body, default=default)
 
-		elif(isinstance(_type, type) and issubclass(_type, Query)):  # :LoginRequestQuery
-			return lambda req: _type.from_dict(req._params)
+		elif(isinstance(_type, type) and issubclass(_type, Query)):
+			return lambda req: _type.from_dict(req._params, default=default)
 
 		elif(
 			isinstance(_type, Object)
 			or (isinstance(_type, type) and issubclass(_type, Object))
 		):
-			return lambda req: _type.from_dict(req)
+			return lambda req: _type.from_dict(req, default=default)
 
 		else:
 			def _no_type_arg(req):
@@ -532,7 +547,9 @@ class App:
 					# name, type, default, validator
 					kwargs.append((arg_name, _type, _def.default))
 					if(_type):
-						kwarg_generators.append((arg_name, Request.arg_generator(arg_name, _type, _def.default)))
+						kwarg_generators.append(
+							(arg_name, Request.arg_generator(arg_name, _type, _def.default))
+						)
 
 			handler["args"] = args
 			handler["kwargs"] = kwargs
@@ -750,7 +767,7 @@ class App:
 		if(not request_line):
 			return
 		post_data = None
-		request_params = req_ctx.req = Request(buffered_socket)
+		request_params = req_ctx.req = Request(buffered_socket, req_ctx)
 		cur_millis = req_ctx.timestamp = int(1000 * time.time())
 		request_type = None
 		request_path = None
@@ -1179,7 +1196,7 @@ def static_file_handler(
 def proxy_file_handler(url_path, proxy_url):
 	import requests
 	def file_handler(req:Request, path):
-		ret = requests.get(proxy_url + path, headers=dict(req._headers))
+		ret = requests.get(proxy_url + path, headers=dict(req._headers), verify=False)
 		return {"Content-Type": ret.headers["Content-Type"]}, ret.text
 	return url_path + "{*path}", file_handler
 

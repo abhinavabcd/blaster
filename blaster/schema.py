@@ -10,6 +10,8 @@ from blaster.tools import DummyObject
 # bare minimum validations and schema generators
 _OBJ_END_ = object()
 
+def raise_exception(msg):
+    raise Exception(msg)
 
 def TYPE_ERR(msg):
     raise TypeError(msg)
@@ -54,18 +56,21 @@ class Number:
         if(self.one_of):
             _schema["enum"] = list(self.one_of)
 
-    def validate(self, e):
+    def validate(self, e, default=_OBJ_END_):
         if(e == None):
             if(self._default != _OBJ_END_):
                 return self._default
+            if(default != _OBJ_END_):
+                return default
             raise TypeError("should be int")
+        e = self._type(e)
         if(self._min != _OBJ_END_ and e < self._min):
             raise TypeError("should be minlen {:d}".format(self._min))
         if(self._max != _OBJ_END_ and e > self._max):
             raise TypeError("more than maxlen {:d}".format(self._max))
         if(self.one_of and e not in self.one_of):
             raise TypeError("should be one of {:d}".format(str(self.one_of)))
-        return self._type(e)
+        return e
 
 class Int(Number):
     def __init__(self, *args, **kwargs):
@@ -113,10 +118,12 @@ class Str:
         if(_fmt):
             _schema["format"] = _fmt
 
-    def validate(self, e):
+    def validate(self, e, default=_OBJ_END_):
         if(e == None):
             if(self._default != _OBJ_END_):
                 return self._default
+            if(default != _OBJ_END_):
+                return default
             raise TypeError("should be string")
         if(not isinstance(e, str)):
             e = str(e)
@@ -194,10 +201,12 @@ class _Dict:
             "additionalProperties": schema(val_type)[0]
         }
 
-    def validate(self, e):
+    def validate(self, e, default=_OBJ_END_):
         if(e == None):
             if(self._default != _OBJ_END_):
                 return self._default
+            if(default != _OBJ_END_):
+                return default
 
         if(not isinstance(e, dict)):
             return e
@@ -281,14 +290,24 @@ class Object:
                 "schema": cls._properties[k]
             })
 
-    def from_dict(self, _dict: dict):
-        return self.__class__.from_dict(_dict)
+    def from_dict(self, _dict: dict, default=_OBJ_END_):
+        return self.__class__.from_dict(_dict, default=default)
 
     @classmethod
-    def from_dict(cls, _dict: dict):
+    def from_dict(cls, _dict: dict, default=_OBJ_END_):
         ret = cls()
-        for _k, (k, _validator) in cls._dict_key_to_object_key.items():
-            setattr(ret, k, _validator(_dict.get(_k)))
+        for _k, (k, _validator, _default) in cls._dict_key_to_object_key.items():
+            if((_v:= _dict.get(_k, _OBJ_END_)) != _OBJ_END_):
+                # value exists
+                setattr(ret, k, _validator(_v))  
+            elif(_default != _OBJ_END_):
+                # key doesn't exists, if default exists it's set,
+                # else raises error with missing key
+                setattr(ret, k, _default)
+            elif(default != _OBJ_END_):
+                return default
+            else:
+                raise Exception(f"missing key: {_k}/{k}")
         return ret
         
     def to_dict(self):
@@ -451,10 +470,13 @@ def schema(x):
                 _properties[k], _validations[k] = _schema_and_validation
                 if(_default != _OBJ_END_):  # ? and not isinstance(_type, type)):
                     is_required = False
+                    
                 is_required and _required.add(k)
                 # keep track of propeties
                 x._property_types[k] = _type
-                x._dict_key_to_object_key[getattr(_type, "_name", None) or k] = (k, _validations[k])
+                dict_key = getattr(_type, "_name", None) or k
+                x._dict_key_to_object_key[dict_key] \
+                    = (k, _validations[k], _default)
         # create schema
         x._schema_ = ret = schema.defs[x.__name__] = {
             "type": "object",

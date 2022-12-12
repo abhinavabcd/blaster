@@ -27,6 +27,7 @@ class AModel(Model):
     d = Attribute(str)
     e = Attribute(str)
     f = Attribute(str)
+    g = Attribute(list)
 
     INDEX(
         (a, b),
@@ -152,11 +153,37 @@ class TestBasics(unittest.TestCase):
             AModel.get_collection(11).find_one({"a": 11})["c"],
             "31"
         )
+class TestListAndDict(unittest.TestCase):
+    def test_mongo_list(self):
+        a = AModel(a=11).commit()
+        a.g.append(1)
+        a.commit()
+        a.g.append(2)
+        a.g.append(3)
+        a.commit()
+        self.assertListEqual(a.g, [1, 2, 3])
+        a.g.insert(0, 0)
+        a.commit()
+        self.assertListEqual(a.g, [0, 1, 2, 3])
+        a.g.append(4)
+        a.commit()
+        self.assertListEqual(a.g, [0, 1, 2, 3, 4])
+        try:
+            a.g.append(4)
+            a.g.insert(0, -1)            
+        except Exception:
+            print("Exception raised - OK")
+        a = AModel.get(a=11, use_cache=False)
+        self.assertListEqual(a.g, [0, 1, 2, 3, 4])
 
+        a.g.append(5)
+        a.g.append(6)
+        a.g.append(7)
+        a.g.append(8)
+        a.commit()
+        self.assertListEqual(a.g, [0, 1, 2, 3, 4, 5, 6, 7, 8])
+        a = AModel.get(a=11, use_cache=False)
         
-
-
-
         
 class TestSnippets(unittest.TestCase):
     def test_1(self):

@@ -24,7 +24,8 @@ from .logging import LOG_APP_INFO, LOG_WARN, LOG_SERVER, LOG_ERROR
 
 _loading_errors = {}
 
-MONGO_DEBUG_LEVEL =  int(environ.get("MONGO_ORM_DEBUG_LEVEL") or 1)
+MONGO_DEBUG_LEVEL =  int(environ.get("BLASTER_MONGO_ORM_DEBUG_LEVEL") or 0)
+MONGO_RUNNING_IN_TEST_MODE = IS_DEV and int(environ.get("BLASTER_MONGO_RUNNING_IN_TEST_MODE") or 0)
 
 EVENT_BEFORE_DELETE = -2
 EVENT_AFTER_DELETE = -1
@@ -140,17 +141,19 @@ class MongoList(list):
 			return dict(ret)
 		return ret
 
-	def insert(self, pos, arr):
-		if(not isinstance(arr, list)):
-			arr = [arr]
-		for i in reversed(arr):
-			super().insert(pos, i)
-
+	def insert(self, pos, item):
 		if(not self._initializing):
 			_push = self._model_obj._other_query_updates.get("$push")
 			if(_push == None):
 				self._model_obj._other_query_updates["$push"] = _push = {}
-			_push[self.path] = {"$position": pos, "$each": arr}
+			
+			_push_path_values = _push.get(self.path)
+			if(not _push_path_values):
+				_push[self.path] = _push_path_values = {"$position": pos, "$each": [item]}
+			elif(_push_path_values.get("$position") == pos):
+				_push_path_values["$each"].append(item)
+			else:
+				raise Exception("You may be concurrently updating the list with insert/append. Commit it and update")
 
 	def append(self, item):
 		if(self._initializing):
@@ -165,7 +168,12 @@ class MongoList(list):
 			_push = self._model_obj._other_query_updates.get("$push")
 			if(_push == None):
 				_push = self._model_obj._other_query_updates["$push"] = {}
-			_push[self.path] = item
+
+			_push_path_values = _push.get(self.path)
+			if(not _push_path_values):
+				_push[self.path] = _push_path_values = {"$each": [item]}
+			else:
+				_push_path_values["$each"].append(item)
 
 	def extend(this, items):
 		for i in items:
@@ -668,13 +676,13 @@ class Model(object):
 
 				# get the shard where current object is
 				primary_shard_key = original_doc[cls._shard_key_]
-				primary_collection = cls.get_collection(primary_shard_key)
+				primary_shard_collection = cls.get_collection(primary_shard_key)
 				# query and update the document
 				IS_DEV \
 					and MONGO_DEBUG_LEVEL > 1 \
 					and LOG_SERVER(
 						"MONGO", description="update before and query",
-						model=cls.__name__, collection=COLLECTION_NAME(primary_collection),
+						model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
 						query="_query", original_doc=str(original_doc),
 						update_query=str(_update_query)
 					)
@@ -689,15 +697,19 @@ class Model(object):
 				_to_set = _update_query.get("$set", _OBJ_END_)
 				if(_to_set == _OBJ_END_):
 					_update_query["$set"] = _to_set = {}
-				_to_set["_"] = max(original_doc.get("_", 0) + 1, int(time.time()* 1000))
+
+				_to_set["_"] = max(
+					original_doc.get("_", 0) + 1,
+					int(time.time()* 1000)
+				)
 
 				# 1: try updating
-				updated_doc = primary_collection.find_one_and_update(
+				updated_doc = primary_shard_collection.find_one_and_update(
 					_query,
 					_update_query,
 					return_document=ReturnDocument.AFTER,
 					session=(
-						_with_transaction(primary_collection, _transaction, stack)
+						_with_transaction(primary_shard_collection, _transaction, stack)
 						if _transaction != None
 						else None
 					),
@@ -708,7 +720,7 @@ class Model(object):
 					and MONGO_DEBUG_LEVEL > 1\
 					and LOG_SERVER(
 						"MONGO", description="after update",
-						model=cls.__name__, collection=COLLECTION_NAME(primary_collection),
+						model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
 						updated_doc=str(updated_doc)
 					)
 
@@ -718,7 +730,7 @@ class Model(object):
 					# is this because of more conditions given by user?
 					_update_retry_count and time.sleep(0.03 * _update_retry_count)
 					# 1. fetch from db again
-					_doc_in_db = primary_collection.find_one({"_id": self._id})
+					_doc_in_db = primary_shard_collection.find_one({"_id": self._id})
 					if(not _doc_in_db):  # moved out of shard or pk changed
 						return False
 					# 2. update our local copy
@@ -738,12 +750,12 @@ class Model(object):
 				_new_primary_shard_key = updated_doc.get(cls._shard_key_)
 				if(_new_primary_shard_key != primary_shard_key):
 					# primary shard key has changed
-					new_primary_collection = cls.get_collection(_new_primary_shard_key)
-					if(new_primary_collection != primary_collection):
+					new_primary_shard_collection = cls.get_collection(_new_primary_shard_key)
+					if(new_primary_shard_collection != primary_shard_collection):
 						# migrate to new shard
 						# will crash if duplicate _id key
-						new_primary_collection.insert_one(updated_doc)
-						primary_collection.delete_one({"_id": self._id})
+						new_primary_shard_collection.insert_one(updated_doc)
+						primary_shard_collection.delete_one({"_id": self._id})
 
 				# 1. propagate the updates to secondary shards
 				for _secondary_shard_key, _shard in cls._secondary_shards_.items():
@@ -1013,7 +1025,7 @@ class Model(object):
 				self.results_returned += 1
 				if(self.results_returned % MONGO_WARN_THRESHOLD_MANY_RESULTS_FETCHED == 0):
 					LOG_WARN(
-						"mongo_results_many",
+						"mongo_results_scan_many",
 						desc=f"scanned {cls._collection_name_with_shard_}/{cls.__name__} {_queries}: {self.results_returned}"
 					)
 
@@ -1186,14 +1198,15 @@ class Model(object):
 				raise Exception("Need to specify _id")
 
 			self._set_query_updates["_"] = int(time.time() * 1000)
-			primary_collection = cls.get_collection(
+			
+			primary_shard_collection = cls.get_collection(
 				getattr(self, shard_key_name)
 			)
 			IS_DEV \
 				and MONGO_DEBUG_LEVEL > 1 \
 				and LOG_SERVER(
 					"MONGO", description="new object values",
-					model=cls.__name__, collection=COLLECTION_NAME(primary_collection),
+					model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
 					set_query=str(self._set_query_updates)
 				)
 			try:
@@ -1201,10 +1214,10 @@ class Model(object):
 				with ExitStack() as stack:
 					_transaction = _transaction if _transaction != None else {}
 
-					self._insert_result = primary_collection.insert_one(
+					self._insert_result = primary_shard_collection.insert_one(
 						self._set_query_updates,
 						session=(
-							_with_transaction(primary_collection, _transaction, stack)
+							_with_transaction(primary_shard_collection, _transaction, stack)
 							if cls._secondary_shards_ 
 							else None 
 						)
@@ -1246,14 +1259,14 @@ class Model(object):
 					raise(ex)  # re reaise
 
 				# get original doc from mongo shard
-				doc_in_db = primary_collection.find_one(self.pk())
+				doc_in_db = primary_shard_collection.find_one(self.pk())
 				self.reset_and_update_cache(doc_in_db)
 				IS_DEV \
 					and MONGO_DEBUG_LEVEL > 1 \
 					and LOG_SERVER(
 						"MONGO", description="created a duplicate, refetching and updating",
 						model=cls.__name__,
-						collection=COLLECTION_NAME(primary_collection),
+						collection=COLLECTION_NAME(primary_shard_collection),
 						pk=str(self.pk())
 					)
 
@@ -1793,7 +1806,18 @@ def initialize_model(_Model):
 				f'db.{_Model._collection_name_with_shard_}.dropIndex("{existing_indexes[_index_keys][0]}")'
 			)
 		)
-	if(_new_indexes):
+
+	if(MONGO_RUNNING_IN_TEST_MODE):
+		# create indexes in test mode automatically
+		for pymongo_index, mongo_index_args in _pymongo_indexes_to_create.items():
+			print(
+				"\n\n#MONGO: creating_indexes automatically in test mode", _Model, pymongo_index, mongo_index_args
+			)
+			# in each node create indexes
+			for db_node in _Model._db_nodes_:
+				db_node.get_collection(_Model).create_index(pymongo_index, **mongo_index_args)
+
+	if(_new_indexes and not MONGO_RUNNING_IN_TEST_MODE):
 		for _index in _new_indexes:
 			LOG_ERROR(
 				"missing_mongo_indexes",
@@ -1804,16 +1828,6 @@ def initialize_model(_Model):
 				)
 			)
 			_loading_errors["missing_mongo_indexes"] = True
-
-	# for pymongo_index, mongo_index_args in _pymongo_indexes_to_create.items():
-	# 	IS_DEV \
-	# 		and MONGO_DEBUG_LEVEL > 1 \
-	# 		and print(
-	# 			"\n\n#MONGO: creating_indexes", _Model, pymongo_index, mongo_index_args
-	# 		)
-	# 	# in each node create indexes
-	# 	for db_node in _Model._db_nodes_:
-	# 		db_node.get_collection(_Model).create_index(pymongo_index, **mongo_index_args)
 
 	# create secondary shards
 	for _secondary_shard_key in list(_Model._secondary_shards_.keys()): # iterate on copy

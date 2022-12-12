@@ -188,6 +188,8 @@ def LOG(level, log_type, **kwargs):
 		}
 		if(client:=req_ctx.client_name):
 			_log["client"] = client
+		if(req:= req_ctx.req):
+			_log["ip"] = req.ip_port[0]
 
 		log_queue.put(_log)
 
