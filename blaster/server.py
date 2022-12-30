@@ -29,8 +29,7 @@ from .config import IS_DEV, BLASTER_HTTP_TIMEOUT_WARN_THRESHOLD
 
 if(IS_DEV):
 	# dev specific config
-	from .config import DEV_FORCE_ACCESS_CONTROL_ALLOW_ORIGIN,\
-	DEV_FORCE_ACCESS_CONTROL_ALLOW_ORIGIN_ALL
+	from .config import DEV_FORCE_ACCESS_CONTROL_ALLOW_ORIGIN
 
 
 _is_server_running = True
@@ -132,6 +131,12 @@ class Body(Object):
 # custom argument hooks
 _argument_creator_hooks = {}
 
+class MissingBlasterArgumentException(Exception):
+	def __init__(self, arg_name, arg_type, *args: object) -> None:
+		self.arg_name = arg_name
+		self.arg_type = arg_type
+		super().__init__(*args)
+
 class Request:
 	# class level
 	_before_hooks = []
@@ -149,6 +154,7 @@ class Request:
 	# cookies to send to client
 	_cookies_to_set = None
 	# url data, doesn't contain query string
+	request_type = None
 	path = None
 	ctx = None
 
@@ -311,14 +317,14 @@ class Request:
 			_argument_creator_hooks[_type] = hook
 
 	@staticmethod
-	def wrap_arg_hook_for_defaults(arg_type_hook, name, default):
+	def wrap_arg_hook_for_defaults(arg_type_hook, name, _type, default):
 		def wrapper(req):
 			ret = arg_type_hook(req)
 			if(ret != None):
 				return ret
 			elif(default != _OBJ_END_):
 				return default
-			raise TypeError("need {} with this request".format(name))
+			raise MissingBlasterArgumentException(name, _type)
 		return wrapper
 
 	# create the value of the argument based on type, default
@@ -326,7 +332,7 @@ class Request:
 	def arg_generator(cls, name, _type, default):
 		if(_type in (str, int, float)):
 			return lambda req: (_val:= req.get(name, default)) and _type(_val)
-		elif(_type == Request):  # request_params: Request
+		elif(_type == Request):  # req: Request
 			return lambda req: req
 		elif(_type == Query):  # query: Query
 			return lambda req: req._params
@@ -349,7 +355,7 @@ class Request:
 		# if has an arg injector, use it
 		has_arg_creator_hook = _argument_creator_hooks.get(_type)
 		if(has_arg_creator_hook):
-			return Request.wrap_arg_hook_for_defaults(has_arg_creator_hook, name, default)
+			return Request.wrap_arg_hook_for_defaults(has_arg_creator_hook, name, _type, default)
 
 		elif(isinstance(_type, type) and issubclass(_type, Body)):
 			return lambda req: _type.from_dict(req._body, default=default)
@@ -368,7 +374,7 @@ class Request:
 				ret = req.get(name, default=_OBJ_END_)
 				if(ret == _OBJ_END_):
 					if(default == _OBJ_END_):
-						# error
+						# Unknown field type
 						raise TypeError("{:s} field is required".format(name))
 					return default
 				return ret
@@ -388,16 +394,16 @@ class App:
 	request_handlers = None
 	name = None
 	stream_server = None
-	server_error_page = None
+	server_exception_handlers = None
 
-	def __init__(self, server_error_page=None, **kwargs):
+	def __init__(self, server_exception_handlers=None, **kwargs):
 		self.info = {
 			k: kwargs.get(k, "-") for k in {"title", "description", "version"}
 		}
 		self.route_handlers = []
 		self.request_handlers = []
 		# error
-		self.server_error_page = server_error_page
+		self.server_exception_handlers = server_exception_handlers or []
 
 	def route(
 		self,
@@ -767,7 +773,7 @@ class App:
 		if(not request_line):
 			return
 		post_data = None
-		request_params = req_ctx.req = Request(buffered_socket, req_ctx)
+		req = req_ctx.req = Request(buffered_socket, req_ctx)
 		cur_millis = req_ctx.timestamp = int(1000 * time.time())
 		request_type = None
 		request_path = None
@@ -775,9 +781,11 @@ class App:
 		try:
 			request_line = request_line.decode("utf-8")
 			request_type, _request_line = request_line.split(" ", 1)
+			# set request type
+			req.request_type = request_type 
 			_http_protocol_index = _request_line.rfind(" ")
 			request_path \
-				= request_params.path \
+				= req.path \
 				= _request_line[: _http_protocol_index]
 			# special issue, seeing request path will full domain name
 			if(request_path.startswith("http")):
@@ -793,11 +801,11 @@ class App:
 			query_start_index = request_path.find("?")
 			if(query_start_index != -1):
 				query_string = request_path[query_start_index + 1:]
-				request_params._params.update(parse_qs_modified(query_string))
+				req._params.update(parse_qs_modified(query_string))
 
 				# strip query string from path
 				request_path \
-					= request_params.path \
+					= req.path \
 					= request_path[:query_start_index]
 
 			# find the handler
@@ -806,18 +814,9 @@ class App:
 				request_path_match = regex.match(request_path)
 
 				if(request_path_match != None):
-					handler = method_handlers.get(request_type)
-					if(not handler):
-						# perform GET call by default
-						LOG_SERVER(
-							"handler_method_not_found",
-							request_type=request_type,
-							msg="performing GET by default"
-						)
-						if(request_type != "GET"):
-							handler = method_handlers.get("GET")
-					if(handler):
-						# found a handler
+					# check if handler has request type handler
+					if(handler:= method_handlers.get(request_type)):
+						# found the handler
 						break
 
 			if(not handler):
@@ -825,7 +824,7 @@ class App:
 				raise Exception("Method not found")
 
 			# parse the headers
-			headers = request_params._headers
+			headers = req._headers
 			max_headers_data_size \
 				= handler.get("max_headers_data_size") or HTTP_MAX_HEADERS_DATA_SIZE
 			_headers_data_size = 0
@@ -878,10 +877,10 @@ class App:
 					_kv = i.strip().split("=", 1)
 					if(len(_kv) > 1):
 						decoded_cookies[_kv[0]] = _kv[1]
-			request_params._cookies = decoded_cookies
+			req._cookies = decoded_cookies
 			# process cookies end
-			request_params._body_raw = post_data
-			request_params.parse_request_body(post_data, headers)
+			req._body_raw = post_data
+			req.parse_request_body(post_data, headers)
 
 			handler_args = []
 			handler_kwargs = {}
@@ -890,23 +889,23 @@ class App:
 			path_params = request_path_match.groupdict()
 			for path_param, path_param_value in path_params.items():
 				if(path_param_value):
-					request_params._params[path_param] = path_param_value
+					req._params[path_param] = path_param_value
 
 			# set a reference to handler
-			request_params.handler = handler
+			req.handler = handler
 
 			for _arg_generator in handler["arg_generators"]:
-				handler_args.append(_arg_generator(request_params))
+				handler_args.append(_arg_generator(req))
 
 			for name, _kwarg_generator in handler["kwarg_generators"]:
-				handler_kwargs[name] = _kwarg_generator(request_params)
+				handler_kwargs[name] = _kwarg_generator(req)
 
 			before_handling_hooks = handler.get("before")
 			after_handling_hooks = handler.get("after")
 
 			response_from_handler = None
 			for before_handling_hook in before_handling_hooks:  # pre processing
-				response_from_handler = before_handling_hook(request_params)
+				response_from_handler = before_handling_hook(req)
 				if(response_from_handler):
 					break
 
@@ -915,7 +914,7 @@ class App:
 				response_from_handler = func(*handler_args, **handler_kwargs)
 
 				for after_handling_hook in after_handling_hooks:  # post processing
-					response_from_handler = after_handling_hook(request_params, response_from_handler)
+					response_from_handler = after_handling_hook(req, response_from_handler)
 
 				# check and respond to keep alive
 				resuse_socket_for_next_http_request \
@@ -926,12 +925,14 @@ class App:
 
 			status, response_headers, body = App.response_body_to_parts(response_from_handler)
 
+			# resp.1 Send status line
 			if(status or (body != I_AM_HANDLING_THE_SOCKET)):
 				# we will send the status, either default
 				# or given from response
 				status = str(status) if status else '200 OK'
 				buffered_socket.send(b'HTTP/1.1 ', status, b'\r\n')
 
+			# resp.2 Send headers
 			if(response_headers or (body != I_AM_HANDLING_THE_SOCKET)):
 				# we will be sending headers of this request
 				# either default or given by response
@@ -955,15 +956,22 @@ class App:
 					for key, val in response_headers.items():
 						buffered_socket.send(key, b': ', val, b'\r\n')
 
+				# perform any dev specific things
 				if(IS_DEV):
-					if(DEV_FORCE_ACCESS_CONTROL_ALLOW_ORIGIN_ALL):
-						buffered_socket.send(b'Access-Control-Allow-Origin: *\r\n')
-					elif(DEV_FORCE_ACCESS_CONTROL_ALLOW_ORIGIN):
-						buffered_socket.send(b'Access-Control-Allow-Origin: ', headers.get("origin", "*"), b'\r\n')
+					if(DEV_FORCE_ACCESS_CONTROL_ALLOW_ORIGIN):
+						allowed_origins = headers.get("origin", "*")
+						if(isinstance(DEV_FORCE_ACCESS_CONTROL_ALLOW_ORIGIN, str)):
+							allowed_origins = DEV_FORCE_ACCESS_CONTROL_ALLOW_ORIGIN
+
+						buffered_socket.send(
+							b'Access-Control-Allow-Origin: ', allowed_origins, b'\r\n'
+						)
+						buffered_socket.send(b'Access-Control-Allow-Headers: *\r\n')
+						buffered_socket.send(b'Access-Control-Allow-Methods: *\r\n')
 
 				# send any new cookies set
-				if(request_params._cookies_to_set):
-					for cookie_name, cookie_val in request_params._cookies_to_set.items():
+				if(req._cookies_to_set):
+					for cookie_name, cookie_val in req._cookies_to_set.items():
 						buffered_socket.send(b'Set-Cookie: ', cookie_name, b'=', cookie_val, b'\r\n')
 
 				# send back keep alive
@@ -974,6 +982,8 @@ class App:
 					# close the headers
 					buffered_socket.send(b'\r\n')
 
+			# resp.3 Send body
+			# resp.3.1 If handler is handling socket
 			if(body == I_AM_HANDLING_THE_SOCKET):
 				LOG_SERVER(
 					"http_socket", request_type=request_type,
@@ -982,6 +992,7 @@ class App:
 
 				return I_AM_HANDLING_THE_SOCKET
 
+			# resp.3.2 Send finalizing headers(content related only) and body
 			else:
 				# just a variable to track api type responses
 				if(isinstance(body, (dict, list))):
@@ -992,7 +1003,7 @@ class App:
 				if(isinstance(body, str)):
 					body = body.encode()
 
-				# close headers and send the body data
+				# resp.3.3 send content length and body
 				content_length = 0
 				if(body):
 					# finalize all the headers
@@ -1011,38 +1022,40 @@ class App:
 					LOG_ERROR(
 						"http_took_long", response_status=status, request_type=request_type,
 						path=request_path, content_length=content_length,
-						body_len=request_params._body_raw and len(request_params._body_raw),
-						request_params_str=str(request_params.to_dict())[:16 * _1_KB_],
+						body_len=req._body_raw and len(req._body_raw),
+						req_str=str(req.to_dict())[:16 * _1_KB_],
 						wallclockms=_wallclock_ms
 					)
 
 		except Exception as ex:
 			stacktrace_string = traceback.format_exc()
-			body = None
+			status = None 
 			resp_headers = []
-			# if it's a type error, send it
-			if(isinstance(ex, TypeError)):
-				body = ex.args and ex.args[0]
+			body = None
 
 			# if given as error page handler
-			if(not body and self.server_error_page):
-				body = self.server_error_page(
-					request_type,
-					request_path,
-					request_params,
-					headers,
-					stacktrace_string=stacktrace_string
-				)
-
+			for exception_handler in self.server_exception_handlers:
+				if(resp:= exception_handler(req, ex)):
+					status, _resp_headers, body = App.response_body_to_parts(resp)
+					_resp_headers and resp_headers.extend(_resp_headers)
+					break
 			if(isinstance(body, (dict, list))):
 				body = json.dumps(body)
-				resp_headers.append("Content-Type: application/json\r\n")
-
+				resp_headers.append("Content-Type: application/json")
+			
+			status = str(status) if status else b'502 Server error'
 			body = body or b'Internal server error'
-			# send the error response
+
+			# err.2 send the error response
+			# err.2.1 send status line
+			buffered_socket.send(b'HTTP/1.1 ', status, b'\r\n')
+
+			# err.2.2 send all headers
+			for resp_header in resp_headers:
+				buffered_socket.send(resp_header, b'\r\n')
+
+			# err.2.3 send final headers(content related only) and body
 			buffered_socket.send(
-				b'HTTP/1.1 ', b'502 Server error', b'\r\n',
-				*resp_headers,
 				b'Connection: close', b'\r\n',
 				b'Content-Length: ', str(len(body)), b'\r\n\r\n',
 				body
@@ -1053,7 +1066,7 @@ class App:
 				stacktrace_string=stacktrace_string,
 				request_type=request_type,
 				request_line=request_line,
-				request_params_str=str(request_params.to_dict())
+				req_str=str(req.to_dict())
 			)
 			if(IS_DEV):
 				traceback.print_exc()
@@ -1090,27 +1103,26 @@ def stop_all_apps():
 		app.stop()  # should handle all connections gracefully
 
 # create a global app for generic single server use
-_main_app = App(title="Blaster", description="Built for speed and rapid prototyping..", version="0.0.368")
+DefaultApp = App(title="Blaster", description="Built for speed and rapid prototyping..", version="0.0.368")
 
 # generic global route handler
-route = _main_app.route
+route = DefaultApp.route
 
 
 # generic glonal route handler
 def start_server(*args, **kwargs):
-	_main_app.start(*args, **kwargs)
-	_main_app.serve()
+	DefaultApp.start(*args, **kwargs)
+	DefaultApp.serve()
 
 
 def redirect_http_to_https():
-	def redirect(path, request_params=None, user=None):
-		host = request_params.HEADERS('host')
+	def redirect(path, req=None, user=None):
+		host = req.HEADERS('host')
 		if(not host):
 			return "404", {}, "Not understood"
 		return "302 Redirect", [
 			"Location: https://{:s}{:s}?{:s}".format(
-				host, request_params.path,
-				request_params.query_string
+				host, req.path, req.query_string
 			)
 		], "Need Https"
 
@@ -1159,7 +1171,7 @@ def static_file_handler(
 			}
 		return ("200 OK", resp_headers, data)
 
-	def file_handler(request_params: Request, path):
+	def file_handler(req: Request, path):
 		if(not path):
 			path = default_file
 
@@ -1172,11 +1184,9 @@ def static_file_handler(
 				pass
 
 		return file_resp if file_resp else (
-						file_not_found_cb 
-						and file_not_found_cb(
-							path, request_params=None, headers=None, post_data=None
-						)
-					) or ("404 Not Found", [], "-NO-FILE-")
+					file_not_found_cb 
+					and file_not_found_cb(path, req=req)
+				) or ("404 Not Found", [], "-NO-FILE-")
 	# headers , data
 	# preload all files once on load
 	file_names = [
@@ -1201,11 +1211,11 @@ def proxy_file_handler(url_path, proxy_url):
 	return url_path + "{*path}", file_handler
 
 # Get args hook
-def _get_web_socket_handler(request_params):
-	set_socket_fast_close_options(request_params.sock)
+def _get_web_socket_handler(req):
+	set_socket_fast_close_options(req.sock)
 	# sends handshake automatically
-	ws = WebSocketServerHandler(request_params.sock)
-	ws.do_handshake(request_params.HEADERS())
+	ws = WebSocketServerHandler(req.sock)
+	ws.do_handshake(req.HEADERS())
 	return ws
 
 

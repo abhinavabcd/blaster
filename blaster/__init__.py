@@ -10,7 +10,7 @@ from gevent import local, signal_handler
 # gevent local with some default
 class __ReqCtx(local.local):
 	def __init__(self, **kwargs):
-		self.__dict__.update({"req": None, "timestamp": None, "client_name": None})
+		self.__dict__.update({"req": None, "timestamp": None, "client_name": None, "user": None})
 req_ctx = __ReqCtx()
 # END gevent local
 

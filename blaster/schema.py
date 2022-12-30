@@ -63,6 +63,8 @@ class Number:
             if(default != _OBJ_END_):
                 return default
             raise TypeError("should be int")
+        if(isinstance(e, str) and len(e) > 50):
+            raise TypeError("should be valid int")
         e = self._type(e)
         if(self._min != _OBJ_END_ and e < self._min):
             raise TypeError("should be minlen {:d}".format(self._min))
