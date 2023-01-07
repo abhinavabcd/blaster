@@ -17,6 +17,10 @@ from ..config import DEFAULT_CURRENCY_CODE
 
 COUNTRY_DATA = json.loads(open(os.path.join(os.path.dirname(__file__), "data/countries.json")).read())
 
+# use this with caution, please check before using this
+PHONE_CODE_TO_COUNTRY_CODE = {v["phone_code"]: k for k, v in COUNTRY_DATA.items()}
+
+
 # currencies data
 _currency_aliases = {"RS" : "INR", "KSH": "KES"}
 INR_EXCHANGE_RATE = {

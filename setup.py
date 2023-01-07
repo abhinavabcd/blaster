@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
 	name='blaster-server',
 	packages=find_packages() + ["blaster/utils/data"],
-	version='0.0.413b',
+	version='0.0.418',
 	license='MIT',
 	description='Gevent based python server built from scratch for maximum performance',
 	author='Abhinav Reddy',                   # Type in your name
@@ -11,7 +11,7 @@ setup(
 	url='https://github.com/abhinavabcd/blaster',
 	download_url='https://github.com/abhinavabcd/blaster/archive/v0.0337b.tar.gz',
 	keywords=['server', 'superfast', 'Like FastApi or Flask but 10x faster'],
-    	include_package_data=True,
+	include_package_data=True,
 	install_requires=[            # I get to this in a second
 		"wheel>=0.34.2",
 		"pytz>=2020.1",

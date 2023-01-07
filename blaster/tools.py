@@ -35,7 +35,7 @@ import traceback
 import contextlib
 from io import BytesIO, StringIO
 import requests
-from http.client import HTTPConnection # py3
+from http.client import HTTPConnection  # py3
 
 from .websocket._core import WebSocket
 from .config import IS_DEV
@@ -43,9 +43,18 @@ from .utils.xss_html import XssHtml
 from .utils import events
 from .logging import LOG_APP_INFO, LOG_WARN, LOG_ERROR
 
-
+# some useful constants
 INT64_MAX = 9223372036854775807
+MILLIS_IN_HOUR = 60 * 60 * 1000
+MILLIS_IN_DAY = 24 * MILLIS_IN_HOUR
+SECONDS_IN_HOUR = 60 * 60
+SECONDS_IN_DAY = 24 * 60 * 60
+
+EPOCH = datetime.utcfromtimestamp(0)
+
+
 _OBJ_END_ = object()
+
 
 def cur_ms():
 	return int(1000 * time.time())
@@ -63,7 +72,7 @@ class LRUCache:
 
 	def exists(self, key):
 		return self.cache.get(key, None)
-		
+
 	def get(self, key, default=None):
 		try:
 			# remove and reinsert into
@@ -219,6 +228,51 @@ def timestamp2date(timestamp):
 		return timestamp
 	date = datetime.utcfromtimestamp(timestamp)
 	return date
+
+
+# 1h2m3s
+def duration2string(seconds):
+	remaining = seconds
+
+	d = remaining // SECONDS_IN_DAY
+	remaining = seconds - d * SECONDS_IN_DAY
+
+	h = remaining // SECONDS_IN_HOUR
+	remaining = remaining - h * SECONDS_IN_HOUR
+
+	m = remaining // 60
+	remaining = remaining - m * 60
+
+	s = remaining
+
+	ret = ""
+	if(d):
+		ret += f"{d}d"
+	if(h):
+		ret += f"{h}h"
+	if(m):
+		ret += f"{m}m"
+	if(s):
+		ret += f"{s}s"
+
+	return ret
+
+
+def string2duration(duration_str):
+	ret = 0
+	splits = re.split(r'([a-zA-Z]+)', duration_str)
+	for i in range(0, len(splits) - len(splits) % 2, 2):
+		v = int(splits[i])
+		c = splits[i + 1]
+		if(c[0] == 'd'):
+			ret += v * SECONDS_IN_DAY
+		if(c[0] == 'h'):
+			ret += v * SECONDS_IN_HOUR
+		if(c[0] == 'm'):
+			ret += v * 60
+		if(c[0] == 's'):
+			ret += v
+	return ret
 
 
 def zrfill(tup, n):
@@ -416,10 +470,6 @@ def get_time_overlaps(
 			else:
 				ret.append(time_range)
 	return ret
-
-
-# EPOCH
-EPOCH = timestamp2date(0)
 
 
 def find_index(a_list, value):
@@ -753,8 +803,10 @@ def jump_hash(key, num_buckets):
 
 
 number_regex = re.compile(r"([0-9\.]+)")
-non_alpha_regex = re.compile("[^0-9a-zA-Z \.]", re.DOTALL)
-non_alpha_regex_2 = re.compile("[^0-9a-zA-Z]", re.DOTALL)
+non_alpha_regex = re.compile(r"[^0-9a-zA-Z \.]", re.DOTALL) # space, . allowed
+non_alpha_regex_2 = re.compile(r"[^0-9a-zA-Z]", re.DOTALL)
+non_alpha_regex_3 = re.compile(r"[^0-9a-zA-Z_]", re.DOTALL)
+non_alpha_regex_4 = re.compile(r"[^0-9a-zA-Z]+", re.DOTALL) # multiple non-alpha groups
 
 
 def sanitize_string(text):
@@ -763,6 +815,10 @@ def sanitize_string(text):
 
 def sanitize_to_id(text):
 	return non_alpha_regex_2.sub("", text.lower())
+
+
+def sanitize_to_id2(text):
+	return non_alpha_regex_4.sub("_", text.strip().lower())
 
 
 EMAIL_REGEX = re.compile(r'^[_a-z0-9-]+(\.[_a-z0-9-]+)*(\+[_a-z0-9-]+)?\@[a-z0-9-]+(\.[a-z0-9-]+)*(\.[a-z]{2,6})$')
@@ -982,6 +1038,10 @@ class ThreadPool:
 		# join all threads
 		for worker_thread in self.worker_threads:
 			worker_thread.join()
+
+
+def raise_exception(msg):
+	raise Exception(msg)
 
 
 def make_xss_safe(_html):
@@ -1725,10 +1785,10 @@ def debug_requests_off():
 
 @contextlib.contextmanager
 def debug_requests():
-    '''Use with 'with'!'''
-    debug_requests_on()
-    yield
-    debug_requests_off()
+	'''Use with 'with'!'''
+	debug_requests_on()
+	yield
+	debug_requests_off()
 
 def cached_request(
 	url, ignore_cache_read=False, cache_folder="/tmp/",

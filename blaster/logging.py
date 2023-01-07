@@ -186,8 +186,8 @@ def LOG(level, log_type, **kwargs):
 			"timestamp": req_ctx.timestamp or int(1000 * time.time()),
 			"payload": kwargs
 		}
-		if(client:=req_ctx.client_name):
-			_log["client"] = client
+		if(req_ctx.req and (client_name:= req_ctx.req.client_name)):
+			_log["client"] = client_name
 		if(req:= req_ctx.req):
 			_log["ip"] = req.ip_port[0]
 

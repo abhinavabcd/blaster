@@ -16,15 +16,17 @@ from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 from pymongo import ReturnDocument, ReadPreference
 from .tools import ExpiringCache, all_subclasses,\
-	cur_ms, list_diff2, batched_iter
-from .config import IS_DEV, MONGO_WARN_THRESHOLD_MANY_RESULTS_FETCHED, MONGO_WARN_MAX_QUERY_TIME_SECONDS
+	cur_ms, list_diff2, batched_iter, _OBJ_END_
+from .config import IS_DEV, MONGO_WARN_MAX_RESULTS_RATE,\
+	MONGO_MAX_RESULTS_AT_HIGH_SCAN_RATE,\
+	MONGO_WARN_MAX_QUERY_RESPONSE_TIME_SECONDS,\
+	DEBUG_PRINT_LEVEL
 from gevent.threading import Thread
 from gevent import time
-from .logging import LOG_APP_INFO, LOG_WARN, LOG_SERVER, LOG_ERROR
+from .logging import LOG_WARN, LOG_SERVER, LOG_ERROR
 
 _loading_errors = {}
 
-MONGO_DEBUG_LEVEL =  int(environ.get("BLASTER_MONGO_ORM_DEBUG_LEVEL") or 0)
 MONGO_RUNNING_IN_TEST_MODE = IS_DEV and int(environ.get("BLASTER_MONGO_RUNNING_IN_TEST_MODE") or 0)
 
 EVENT_BEFORE_DELETE = -2
@@ -37,7 +39,6 @@ EVENT_MONGO_AFTER_UPDATE = 5
 
 # just a random constant object to check for non existent
 # keys without catching KeyNotExist exception
-_OBJ_END_ = object()
 # given a list of [(filter, iter), ....] , flattens them
 
 _NOT_EXISTS_QUERY = {"$exists": False}  # just a constant
@@ -50,20 +51,24 @@ def COLLECTION_NAME(collection):
 		return "{:s}.{:s}.{:d}".format(collection.full_name, _node[0], _node[1])
 	return collection.full_name
 
+
 def str_validator(_attr, val, obj):
 	max_len = getattr(_attr, "max_len", 2048)
 	if(val and len(val) > max_len):
 		val = val[:max_len]
 	return val
 
+
 DEFAULT_VALIDATORS = {
 	str: str_validator
 }
+
 
 class Attribute(object):
 	_type = None
 	_validator = None
 	_models = None
+
 	def __init__(self, _type, validator=None, **kwargs):
 		self._type = _type
 		self._validator = validator or DEFAULT_VALIDATORS.get(_type)
@@ -146,7 +151,7 @@ class MongoList(list):
 			_push = self._model_obj._other_query_updates.get("$push")
 			if(_push == None):
 				self._model_obj._other_query_updates["$push"] = _push = {}
-			
+
 			_push_path_values = _push.get(self.path)
 			if(not _push_path_values):
 				_push[self.path] = _push_path_values = {"$position": pos, "$each": [item]}
@@ -183,7 +188,7 @@ class MongoList(list):
 		super().clear()
 		self._model_obj._set_query_updates[self.path] = self
 		self._initializing = True  # Hack for new object
- 
+
 
 class MongoDict(dict):
 	_initializing = True
@@ -242,19 +247,22 @@ class MongoDict(dict):
 		self._model_obj._set_query_updates[self.path] = self
 		self._initializing = True  # Hack for new object
 
+
 # utility function to cache and return a session for transaction
 def _with_transaction(collection, _transaction, exit_stack):
 	dbnode = collection._db_node_
 	mclient = dbnode.mongo_client
 	session = _transaction.get(mclient)
 	if(not session):
-		_transaction[mclient] = session =  mclient.start_session()
+		_transaction[mclient] = session = mclient.start_session()
 		exit_stack.enter_context(session)
-		if(dbnode.replicaset): # TODO: do better to indentify replicaset
+		if(dbnode.replicaset):  # TODO: do better to indentify replicaset
 			exit_stack.enter_context(session.start_transaction())
 	return session
 
-ModelType = TypeVar('ModelType', bound='Model') # use string
+
+ModelType = TypeVar('ModelType', bound='Model')  # use string
+
 
 class Model(object):
 	# ###class level###
@@ -450,8 +458,8 @@ class Model(object):
 					if(isinstance(v, list)):
 						v = MongoList(self, k, v)
 
-			else: # initialized object
-				# check with validator	
+			else:  # initialized object
+				# check with validator
 				_attr_validator = _attr_obj._validator
 				if(_attr_validator):
 					v = _attr_validator(_attr_obj, v, self)
@@ -522,7 +530,6 @@ class Model(object):
 						self.__dict__[attr_name] = MongoDict(self, attr_name, {})  # copy
 					elif(attr_obj._type == list):
 						self.__dict__[attr_name] = MongoList(self, attr_name, [])  # copy
-
 
 	# when retrieving objects from db
 	# creates a new Model object
@@ -666,7 +673,7 @@ class Model(object):
 				updated_doc = None
 				_query = {
 					"_id": self._id,
-					"_": original_doc.get("_", _NOT_EXISTS_QUERY) # IMP to check
+					"_": original_doc.get("_", _NOT_EXISTS_QUERY)  # IMP to check
 				}
 
 				# update with more given conditions,
@@ -679,7 +686,7 @@ class Model(object):
 				primary_shard_collection = cls.get_collection(primary_shard_key)
 				# query and update the document
 				IS_DEV \
-					and MONGO_DEBUG_LEVEL > 1 \
+					and DEBUG_PRINT_LEVEL > 1 \
 					and LOG_SERVER(
 						"MONGO", description="update before and query",
 						model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
@@ -688,7 +695,7 @@ class Model(object):
 					)
 
 				if(
-					_transaction == True 
+					_transaction == True
 					or (after_mongo_update and _transaction == None)
 				):
 					_transaction = {}  # use transaction
@@ -700,7 +707,7 @@ class Model(object):
 
 				_to_set["_"] = max(
 					original_doc.get("_", 0) + 1,
-					int(time.time()* 1000)
+					int(time.time() * 1000)
 				)
 
 				# 1: try updating
@@ -717,7 +724,7 @@ class Model(object):
 				)
 
 				IS_DEV \
-					and MONGO_DEBUG_LEVEL > 1\
+					and DEBUG_PRINT_LEVEL > 1\
 					and LOG_SERVER(
 						"MONGO", description="after update",
 						model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
@@ -872,12 +879,17 @@ class Model(object):
 		queries = None
 		# split or queries to separate it to shards
 		if(not isinstance(_query, list)):
-			if("$or" in _query):
-				queries = _query["$or"]
+			if((or_queries:= _query.pop("$or", None)) != None):  # top level $or query
+				if(not _query):
+					queries = or_queries
+				else:  # merge remaining query with all $or queries
+					queries = []
+					for or_query in or_queries:
+						queries.append({**_query, **or_query})
 			else:
 				queries = [_query]
 		else:
-			queries = _query
+			queries = _query  # already a list of queries
 
 		# if there is nothing to query return empty
 		if(not queries):
@@ -972,16 +984,18 @@ class Model(object):
 				return True
 
 		# does local sorting on results from multiple query iterators using a heap
-		class MultiCollectionQueryResult:
+		class MultiCollectionQueryResultIterator:
 			query_result_iters = None
 			query_count_funcs = None
 			buffer = None
 			results_returned = 0
+			__start_timestamp = 0
 
 			def __init__(self):
 				self.query_result_iters = []
 				self.query_count_funcs = []
 				self.results_returned = 0
+				self.__start_timestamp = 0
 
 			def add(self, query_result_iter, query_count_func=None):
 				self.query_result_iters.append(query_result_iter)
@@ -1023,19 +1037,26 @@ class Model(object):
 					raise StopIteration
 
 				self.results_returned += 1
-				if(self.results_returned % MONGO_WARN_THRESHOLD_MANY_RESULTS_FETCHED == 0):
-					LOG_WARN(
-						"mongo_results_scan_many",
-						desc=f"scanned {cls._collection_name_with_shard_}/{cls.__name__} {_queries}: {self.results_returned}"
-					)
+				if(self.results_returned % MONGO_WARN_MAX_RESULTS_RATE == 0):
+					cur_timestamp = time.time()
+					if(not self.__start_timestamp):
+						self.__start_timestamp = cur_timestamp
+
+					elif(self.results_returned > MONGO_WARN_MAX_RESULTS_RATE * (cur_timestamp - self.__start_timestamp)):
+						LOG_WARN(
+							"mongo_results_high_rate",
+							desc=f"scanned {cls._collection_name_with_shard_}/{cls.__name__} {_queries}: {self.results_returned}"
+						)
+						if(self.results_returned > MONGO_MAX_RESULTS_AT_HIGH_SCAN_RATE):  # high scan rate for 1000 results, must be doing something wrong
+							raise Exception(f"Scanned {MONGO_MAX_RESULTS_AT_HIGH_SCAN_RATE} results at max scan rate")
 
 				return _ret
 
-		multi_collection_query_result = MultiCollectionQueryResult()
+		multi_collection_query_result_iterator = MultiCollectionQueryResultIterator()
 
 		def query_collection(_Model, _collection, _query, offset=None):
 			IS_DEV \
-				and MONGO_DEBUG_LEVEL > 1 \
+				and DEBUG_PRINT_LEVEL > 1 \
 				and LOG_SERVER(
 					"MONGO",
 					description="querying", model=_Model.__name__,
@@ -1044,7 +1065,7 @@ class Model(object):
 				)
 
 			_start_time = time.time()
-			
+
 			ret = _collection.find(_query, **kwargs)
 			if(sort):  # from global arg
 				ret = ret.sort(sort)
@@ -1053,11 +1074,11 @@ class Model(object):
 			if(limit):
 				ret = ret.limit(limit)
 
-			if((_elapsed_time:= (time.time() - _start_time)) > MONGO_WARN_MAX_QUERY_TIME_SECONDS):
+			if((_elapsed_time:= (time.time() - _start_time)) > MONGO_WARN_MAX_QUERY_RESPONSE_TIME_SECONDS):
 				query_plan = ret.explain()["queryPlanner"]
 				LOG_WARN(
 					"mongo_perf",
-					desc=f"query took longer than {MONGO_WARN_MAX_QUERY_TIME_SECONDS} seconds",
+					desc=f"query took longer than {MONGO_WARN_MAX_QUERY_RESPONSE_TIME_SECONDS} seconds",
 					elapsed_millis=int(_elapsed_time * 1000),
 					plan_type=query_plan["winningPlan"]["stage"],
 					query=query_plan["parsedQuery"]
@@ -1083,7 +1104,7 @@ class Model(object):
 							_query = {"$or": [{"_id": _doc["_id"]} for _doc in docs]}
 
 						IS_DEV\
-							and MONGO_DEBUG_LEVEL > 1\
+							and DEBUG_PRINT_LEVEL > 1\
 							and LOG_SERVER(
 								"MONGO", description="requerying",
 								model=cls.__name__, query=str(_query)
@@ -1093,7 +1114,7 @@ class Model(object):
 							item = _requeried_from_primary.get(_id)
 							if(not item):
 								IS_DEV\
-									and MONGO_DEBUG_LEVEL > 1\
+									and DEBUG_PRINT_LEVEL > 1\
 									and LOG_SERVER(
 										"MONGO", description="missing from primary",
 										model=cls.__name__, _id=str(_id)
@@ -1104,7 +1125,7 @@ class Model(object):
 			else:
 				ret = map(cls.get_instance_from_document, ret)
 
-			multi_collection_query_result.add(
+			multi_collection_query_result_iterator.add(
 				ret,
 				lambda: count_documents(_collection, _query, offset, limit)  # query count func
 			)
@@ -1141,7 +1162,7 @@ class Model(object):
 		for thread in threads:
 			thread.join()
 
-		return multi_collection_query_result
+		return multi_collection_query_result_iterator
 
 	'''
 		usually we call this while compile time,
@@ -1203,7 +1224,7 @@ class Model(object):
 				getattr(self, shard_key_name)
 			)
 			IS_DEV \
-				and MONGO_DEBUG_LEVEL > 1 \
+				and DEBUG_PRINT_LEVEL > 1 \
 				and LOG_SERVER(
 					"MONGO", description="new object values",
 					model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
@@ -1262,7 +1283,7 @@ class Model(object):
 				doc_in_db = primary_shard_collection.find_one(self.pk())
 				self.reset_and_update_cache(doc_in_db)
 				IS_DEV \
-					and MONGO_DEBUG_LEVEL > 1 \
+					and DEBUG_PRINT_LEVEL > 1 \
 					and LOG_SERVER(
 						"MONGO", description="created a duplicate, refetching and updating",
 						model=cls.__name__,
@@ -1314,7 +1335,7 @@ class Model(object):
 		collection_shard = _Model.get_collection(self._original_doc[_Model._shard_key_])
 		collection_shard.delete_one(_delete_query)
 		IS_DEV \
-			and MONGO_DEBUG_LEVEL > 1 \
+			and DEBUG_PRINT_LEVEL > 1 \
 			and LOG_SERVER(
 				"MONGO", description="deleting from primary",
 				model=_Model.__name__, collection=COLLECTION_NAME(collection_shard),
@@ -1576,7 +1597,7 @@ def initialize_model(_Model):
 
 
 	IS_DEV \
-		and MONGO_DEBUG_LEVEL > 1 \
+		and DEBUG_PRINT_LEVEL > 1 \
 		and print(
 			"\n\n#MONGO: Initializing Model", _Model,
 			_Model._indexes_, _Model._shard_key_, _Model._secondary_shards_
@@ -1694,7 +1715,7 @@ def initialize_model(_Model):
 	__all_models__[_Model._collection_name_with_shard_] = _Model
 
 	IS_DEV \
-		and MONGO_DEBUG_LEVEL > 1 \
+		and DEBUG_PRINT_LEVEL > 1 \
 		and print(
 			"\n\n#MONGO collection tracker key",
 			_Model._collection_tracker_key_
@@ -1819,15 +1840,15 @@ def initialize_model(_Model):
 
 	if(_new_indexes and not MONGO_RUNNING_IN_TEST_MODE):
 		for _index in _new_indexes:
-			LOG_ERROR(
-				"missing_mongo_indexes",
-				desc=(
-					f"db.{_Model._collection_name_with_shard_}"
-					f".createIndex({json.dumps({x:y for x,y in _index})}, "
-					f"{json.dumps(_pymongo_indexes_to_create[_index])})"
-				)
+			missing_index_creation_string = (
+				f"db.{_Model._collection_name_with_shard_}"
+				f".createIndex({json.dumps({x:y for x,y in _index})}, "
+				f"{json.dumps(_pymongo_indexes_to_create[_index])})"
 			)
-			_loading_errors["missing_mongo_indexes"] = True
+			LOG_ERROR("missing_mongo_indexes", desc=missing_index_creation_string)
+			if("missing_mongo_indexes" not in _loading_errors):
+				_loading_errors["missing_mongo_indexes"] = []
+			_loading_errors["missing_mongo_indexes"].append(missing_index_creation_string)
 
 	# create secondary shards
 	for _secondary_shard_key in list(_Model._secondary_shards_.keys()): # iterate on copy

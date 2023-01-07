@@ -9,8 +9,10 @@
 # update 100 documents
 # 1. verify  updates are propagated to the secondary shards and are available for query
 
-import unittest
 import blaster
+blaster.config.load("test.yaml")
+
+import unittest
 import time
 import gevent
 import random
@@ -68,6 +70,7 @@ class CModel(Model):
     _id = Attribute(str)
     a = Attribute(list)
     b = Attribute(dict)
+    c = Attribute(str)
 
 
 initialize_mongo(
@@ -109,6 +112,7 @@ class TestValidators(unittest.TestCase):
         a = AModel(a=11, b="-ab-" * 1000).commit(force=True)
         self.assertEqual(len(a.b), 2048)
 
+
 class TestBasics(unittest.TestCase):
     def test_update_propagation(self):
         a = AModel(a=11, b="23", c="33", d="43", e="53").commit()
@@ -124,14 +128,14 @@ class TestBasics(unittest.TestCase):
         self.assertEqual(len(AModel._attrs_["c"]._models), 3)
         self.assertEqual(len(AModel._attrs_["d"]._models), 2)
         self.assertEqual(len(AModel._attrs_["f"]._models), 1)
-        
+
     def test_commit_with_transaction(self):
         a = AModel(a=11, b="22", c="33").commit()
         try:
             b = AModel(a=12, b="22", c="33").commit()  # should crash but should create entry in a shard
+
         except Exception:
             pass
-        
         self.assertIsNone(
             AModel.get_collection(11).find_one({"a": 12})
         )
@@ -147,12 +151,28 @@ class TestBasics(unittest.TestCase):
             a.update({}, after_mongo_update=after_mongo_update)
         except Exception as ex:
             print(str(ex))
-        
+
         # test update doesn't commit
         self.assertEqual(
             AModel.get_collection(11).find_one({"a": 11})["c"],
             "31"
         )
+
+    def test_max_rate_exception(self):
+        for i in range(101, 300, 1):
+            CModel(_id=str(i), c=str(i)).commit()
+
+        CModel.query({}, limit=15)  # this should warn
+        raised_exception = False
+        try:
+            l = list(CModel.query({}))  # this should warn
+        except Exception as ex:
+            raised_exception = True
+            print(str(ex))
+
+        self.assertTrue(raised_exception)
+
+
 class TestListAndDict(unittest.TestCase):
     def test_mongo_list(self):
         a = AModel(a=11).commit()
@@ -183,8 +203,8 @@ class TestListAndDict(unittest.TestCase):
         a.commit()
         self.assertListEqual(a.g, [0, 1, 2, 3, 4, 5, 6, 7, 8])
         a = AModel.get(a=11, use_cache=False)
-        
-        
+
+
 class TestSnippets(unittest.TestCase):
     def test_1(self):
         a = AModel(a=int(time.time()), b="00904441").commit()
@@ -215,5 +235,16 @@ class TestUpdates(unittest.TestCase):
         self.assertTrue(c_from_db.a == [100, 150])
 
 
+class TestBugs(unittest.TestCase):
+    def test_top_level_or_query_fix(self):
+        for i in range(100):
+            CModel(_id=str(i), c=str(i)).commit()
+        CModel(_id="100").commit()
+        l = list(CModel.query({"_id": {"$in": ["1", "3", "5"]}, "$or": [{"c": "1"}, {"c": "5"}]}))
+        self.assertEqual(len(l), 2)
+
+
+
 # test remove multiple values from MongoList
 # test remove multiple values from MongoDict
+# BLASTER_MONGO_RUNNING_IN_TEST_MODE=1 python -m unittest test.test_mongo_orm.TestBugs

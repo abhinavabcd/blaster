@@ -3,6 +3,24 @@ _event_listeners = {}  # {int : [listeners]}
 PASS = NOT_HANDLING = object()
 
 
+def add_listener(_id, listener):
+	if(not _id or not listener):
+		return
+	listeners = _event_listeners.get(_id)
+	if(not listeners):
+		_event_listeners[_id] = listeners = []
+
+	listeners.insert(0, listener)  # at the beginning
+
+
+def remove_listener(_id, listener):
+	listeners = _event_listeners.get(_id)
+	if(not listeners):
+		return
+	if(listener in listeners):
+		listeners.remove(listener)
+
+
 def register_listener(_id, name=None):
 	if(callable(_id)):
 		# id is func here
@@ -53,24 +71,6 @@ def broadcast_event(_id, *args, _n=-1, **kwargs):
 		listeners_ret_values.append(NOT_HANDLING)
 
 	return tuple(listeners_ret_values)
-
-
-def add_listener(_id, listener):
-	if(not _id or not listener):
-		return
-	listeners = _event_listeners.get(_id)
-	if(not listeners):
-		_event_listeners[_id] = listeners = []
-
-	listeners.insert(0, listener)  # at the beginning
-
-
-def remove_listener(_id, listener):
-	listeners = _event_listeners.get(_id)
-	if(not listeners):
-		return
-	if(listener in listeners):
-		listeners.remove(listener)
 
 
 broadcast_event_multiproc = None

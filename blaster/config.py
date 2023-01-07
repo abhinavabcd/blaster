@@ -1,11 +1,12 @@
 from os import environ
-import sys, os
+import sys
+import os
 import json
 import logging
 import inspect
-## NOTE: don't import anything from blaster library,
-## they may depend on config and won't load correctly.
-## keep it isolated as much as possible
+# NOTE: don't import anything from blaster library,
+# they may depend on config and won't load correctly.
+# keep it isolated as much as possible
 
 # default env variables
 IS_PROD = environ.get("IS_PROD") == "1"
@@ -14,22 +15,25 @@ IS_DEV = 1 if not (IS_PROD or IS_STAGING) else 0
 
 # CRITICAL-50 ERROR-40  WARNING-30  INFO-20  DEBUG-10  NOTSET-0
 LOG_LEVEL = logging.DEBUG if IS_DEV else (logging.INFO if IS_STAGING else logging.WARN)
+DEBUG_PRINT_LEVEL = IS_DEV and int(environ.get("DEBUG_PRINT_LEVEL") or 0)
 
 
 _this_ = sys.modules[__name__]
 
+
 class Config:
     _config = None
     frozen_keys = None
+
     def __init__(self):
-        self.frozen_keys = {k:v for k,v in vars(_this_).items() if not k.startswith("_")}
+        self.frozen_keys = {k: v for k, v in vars(_this_).items() if not k.startswith("_")}
         self._config = dict(self.frozen_keys)
-    
+
     def load(self, *paths):
         import yaml
         for path in paths or ["./"]:
             path = os.path.join(
-                os.path.dirname(inspect.stack()[1][1]), # caller file, called once usually, so no performance impact on app
+                os.path.dirname(inspect.stack()[1][1]),  # caller file, called once usually, so no performance impact on app
                 path
             )
             config_files = []
@@ -72,8 +76,9 @@ class Config:
             return None
         return self._config[key]
 
+
 # hack: customized config module,
-# that doesn't crash for missing config variables, 
+# that doesn't crash for missing config variables,
 # they will be just None.
 config = Config()
 
@@ -81,12 +86,13 @@ config = Config()
 if(gcloud_credential_file:= environ.get("GOOGLE_APPLICATION_CREDENTIALS")):
     try:
         config.GCLOUD_CREDENTIALS = json.loads(open(gcloud_credential_file).read())
-    except Exception as ex: 
+    except Exception as ex:
         print(ex)
 
 # BLASTER SPECIFIC CONFIGS, that can be overridden
 config.BLASTER_HTTP_TIMEOUT_WARN_THRESHOLD = 5000
 
 # MONGO ORM SPECIFIC CONFIGS
-config.MONGO_WARN_THRESHOLD_MANY_RESULTS_FETCHED = 2000
-config.MONGO_WARN_MAX_QUERY_TIME_SECONDS = 3
+config.MONGO_WARN_MAX_RESULTS_RATE = 1000  # can scan at a max of 1000 / sec
+config.MONGO_MAX_RESULTS_AT_HIGH_SCAN_RATE = 10000  # cannot scan more than this at high scan rate
+config.MONGO_WARN_MAX_QUERY_RESPONSE_TIME_SECONDS = 3

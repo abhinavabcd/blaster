@@ -18,12 +18,13 @@ from gevent.server import StreamServer
 from requests_toolbelt.multipart import decoder
 
 from . import req_ctx
-from .tools import SanitizedDict, DummyObject,\
-	set_socket_fast_close_options, BufferedSocket, ltrim
+from .tools import SanitizedDict,\
+	set_socket_fast_close_options, BufferedSocket, ltrim,\
+	_OBJ_END_
 from .utils import events
 from .utils.data_utils import FILE_EXTENSION_TO_MIME_TYPE
 from .logging import LOG_ERROR, LOG_SERVER
-from .schema import Int, Object, Required, Str, schema as schema_func
+from .schema import Int, Object, Required, schema as schema_func
 from .websocket.server import WebSocketServerHandler
 from .config import IS_DEV, BLASTER_HTTP_TIMEOUT_WARN_THRESHOLD
 
@@ -48,7 +49,6 @@ I_AM_HANDLING_THE_SOCKET = object()
 
 
 REUSE_SOCKET_FOR_HTTP = object()
-_OBJ_END_ = object()
 
 # some random constants
 _1_KB_ = 1024
@@ -110,11 +110,13 @@ class Query(Object):
 			kwargs[key] = Required[str]
 		super().__init__(**kwargs)
 
+
 class Headers(Object):
 	def __init__(self, *key, **kwargs):
 		if(key):
 			kwargs[key] = Required[str]
 		super().__init__(**kwargs)
+
 
 class Cookie(Object):
 	def __init__(self, *key, **kwargs):
@@ -122,20 +124,24 @@ class Cookie(Object):
 			kwargs[key] = Required[str]
 		super().__init__(**kwargs)
 
+
 class Body(Object):
 	def __init__(self, *key, **kwargs):
 		if(key):
 			kwargs[key] = Required[str]
 		super().__init__(**kwargs)
 
+
 # custom argument hooks
 _argument_creator_hooks = {}
+
 
 class MissingBlasterArgumentException(Exception):
 	def __init__(self, arg_name, arg_type, *args: object) -> None:
 		self.arg_name = arg_name
 		self.arg_type = arg_type
 		super().__init__(*args)
+
 
 class Request:
 	# class level
@@ -185,6 +191,10 @@ class Request:
 			_remote_port = _forwarded_port.strip()
 
 		return (_remote_ip, _remote_port)
+
+	@property
+	def client_name(self):
+		return self._headers.get("x-client")
 
 	def __init__(self, buffered_socket, ctx):
 		self._params = SanitizedDict()  # empty params by default
@@ -240,9 +250,9 @@ class Request:
 
 	def COOKIES(self, key=None, default=None):
 		if(key == None):
-			return self._cookies					
+			return self._cookies
 		return self._cookies.get(key, default)
-		
+
 	def SET_COOKIE(self, key, cookie_value):
 		if(self._cookies_to_set == None):
 			self._cookies_to_set = {}
@@ -260,7 +270,6 @@ class Request:
 			cookie_value = _cookie_val
 		if(isinstance(cookie_value, str)):
 			self._cookies_to_set[key] = cookie_value
-		
 
 	def parse_request_body(self, post_data_bytes, headers):
 		if(not post_data_bytes):
@@ -842,7 +851,6 @@ class App:
 
 				_headers_data_size += len(data)
 
-			req_ctx.client_name = headers.get("x-client")
 			# check if there is a content length or transfer encoding chunked
 			content_length = int(headers.get("Content-Length", 0))
 			_max_body_size = handler.get("max_body_size") or HTTP_MAX_REQUEST_BODY_SIZE
@@ -1029,7 +1037,7 @@ class App:
 
 		except Exception as ex:
 			stacktrace_string = traceback.format_exc()
-			status = None 
+			status = None
 			resp_headers = []
 			body = None
 
@@ -1042,7 +1050,7 @@ class App:
 			if(isinstance(body, (dict, list))):
 				body = json.dumps(body)
 				resp_headers.append("Content-Type: application/json")
-			
+
 			status = str(status) if status else b'502 Server error'
 			body = body or b'Internal server error'
 
@@ -1102,6 +1110,7 @@ def stop_all_apps():
 	for app in list(_all_apps):
 		app.stop()  # should handle all connections gracefully
 
+
 # create a global app for generic single server use
 DefaultApp = App(title="Blaster", description="Built for speed and rapid prototyping..", version="0.0.368")
 
@@ -1140,13 +1149,14 @@ def is_server_running():
 
 DEFAULT_STATIC_FILE_CACHE = {}
 
+
 def static_file_handler(
 	url_path,
 	_base_folder_path_,
 	default_file="index.html",
 	file_not_found_cb=None,
 	file_cache=DEFAULT_STATIC_FILE_CACHE,
-	dynamic_files=IS_DEV # always reload from filesystem if not in cache
+	dynamic_files=IS_DEV  # always reload from filesystem if not in cache
 ):
 	# both paths should start with /
 	if(url_path[-1] != "/"):
@@ -1176,17 +1186,17 @@ def static_file_handler(
 			path = default_file
 
 		file_resp = file_cache.get(url_path + path, None)
-		if((not file_resp and dynamic_files) or IS_DEV): # always reload from filesystem in devmode
+		if((not file_resp and dynamic_files) or IS_DEV):  # always reload from filesystem in devmode
 			try:
 				file_resp = get_file_resp(path)
-				file_cache[path] = file_resp # add to cache
+				file_cache[path] = file_resp  # add to cache
 			except Exception:
 				pass
 
 		return file_resp if file_resp else (
-					file_not_found_cb 
-					and file_not_found_cb(path, req=req)
-				) or ("404 Not Found", [], "-NO-FILE-")
+				file_not_found_cb 
+				and file_not_found_cb(path, req=req)
+			) or ("404 Not Found", [], "-NO-FILE-")
 	# headers , data
 	# preload all files once on load
 	file_names = [
@@ -1203,12 +1213,15 @@ def static_file_handler(
 
 	return url_path + "{*path}", file_handler
 
+
 def proxy_file_handler(url_path, proxy_url):
 	import requests
+
 	def file_handler(req:Request, path):
 		ret = requests.get(proxy_url + path, headers=dict(req._headers), verify=False)
 		return {"Content-Type": ret.headers["Content-Type"]}, ret.text
 	return url_path + "{*path}", file_handler
+
 
 # Get args hook
 def _get_web_socket_handler(req):
@@ -1220,5 +1233,3 @@ def _get_web_socket_handler(req):
 
 
 Request.set_arg_type_hook(WebSocketServerHandler, _get_web_socket_handler)
-
-
