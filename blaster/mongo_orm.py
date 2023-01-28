@@ -994,19 +994,23 @@ class Model(object):
 			def __init__(self):
 				self.query_result_iters = []
 				self.query_count_funcs = []
+				self._cursors = []
 				self.results_returned = 0
 				self.__start_timestamp = 0
 
-			def add(self, query_result_iter, query_count_func=None):
+			def add(self, query_result_iter, _cursor, query_count_func=None):
 				self.query_result_iters.append(query_result_iter)
+				self._cursors.append(_cursor)
 				if(query_count_func):
 					self.query_count_funcs.append(query_count_func)
 
 			def count(self):
-				ret = 0
-				for count_func in self.query_count_funcs:
-					ret += count_func()
-				return ret
+				return sum([x() for x in self.query_count_funcs])
+
+			def distinct(self, key):
+				return chain.from_iterable(
+					map(lambda x: x.distinct(key), self._cursors)
+				)
 
 			def push_query_iter_into_heap(self, _query_result_iter):
 				try:
@@ -1067,14 +1071,16 @@ class Model(object):
 			_start_time = time.time()
 
 			ret = _collection.find(_query, **kwargs)
-			if(sort):  # from global arg
-				ret = ret.sort(sort)
 			if(offset):  # from global arg
 				ret = ret.skip(offset)
 			if(limit):
 				ret = ret.limit(limit)
+			if(sort):  # from global arg
+				ret = ret.sort(sort)
 
-			if((_elapsed_time:= (time.time() - _start_time)) > MONGO_WARN_MAX_QUERY_RESPONSE_TIME_SECONDS):
+			_cursor = ret  # keep track of this for distinct
+
+			if((_elapsed_time := (time.time() - _start_time)) > MONGO_WARN_MAX_QUERY_RESPONSE_TIME_SECONDS):
 				query_plan = ret.explain()["queryPlanner"]
 				LOG_WARN(
 					"mongo_perf",
@@ -1127,6 +1133,7 @@ class Model(object):
 
 			multi_collection_query_result_iterator.add(
 				ret,
+				_cursor,
 				lambda: count_documents(_collection, _query, offset, limit)  # query count func
 			)
 
@@ -1362,7 +1369,7 @@ class Model(object):
 			return True
 
 		count = 0
-		while((cur_timestamp:= cur_ms()) - start_timestamp < timeout):
+		while((cur_timestamp := cur_ms()) - start_timestamp < timeout):
 			count += 1
 			locked_until = cur_timestamp + can_hold_until
 			if(
@@ -1404,6 +1411,7 @@ class Model(object):
 			include_pending_updates=False
 		)
 		self.__locked_until = None
+
 
 # decorator to prevent concurrent updates
 # uses the first argument to lock
@@ -1463,9 +1471,13 @@ def INDEX(*indexes):
 		if(isinstance(first_key_of_index_key_set, tuple)):
 			# when it has a sorting order as second key
 			first_key_of_index_key_set = first_key_of_index_key_set[0]
+		
+		if(isinstance(first_key_of_index_key_set, Attribute)):
+			first_key_of_index_key_set._indexes_to_create = getattr(
+				first_key_of_index_key_set, "_indexes_to_create", []
+			)
+			first_key_of_index_key_set._indexes_to_create.append(index_key_set)
 
-		first_key_of_index_key_set._indexes_to_create = getattr(first_key_of_index_key_set, "_indexes_to_create", [])
-		first_key_of_index_key_set._indexes_to_create.append(index_key_set)
 
 _cached_mongo_clients = {}
 
@@ -1638,15 +1650,15 @@ def initialize_model(_Model):
 
 	# sort shortest first and grouped by shard keys first
 	def index_cmp(index_a, index_b):
-		index_a = index_a[0] # just the index keys
-		index_b = index_b[0] # just the index keys
+		index_a = index_a[0]  # just the index keys
+		index_b = index_b[0]  # just the index keys
 
-		if((_diff:= len(index_a) - len(index_b)) != 0):
-			return _diff # shorter wins
-		
-		if(index_a[0] != index_b[0]): # cmp by shard key
+		if((_diff := len(index_a) - len(index_b)) != 0):
+			return _diff  # shorter wins
+
+		if(index_a[0] != index_b[0]):  # cmp by shard key
 			return -1 if index_a[0] < index_b[0] else 1
-		return 0		
+		return 0
 
 	_indexes_list.sort(key=cmp_to_key(index_cmp))
 

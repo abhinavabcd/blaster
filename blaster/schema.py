@@ -96,7 +96,8 @@ class Str:
 
 	def __init__(
 		self, one_of=None, minlen=0, maxlen=4294967295,
-		regex=None, default=_OBJ_END_, _name=None, **kwargs
+		regex=None, default=_OBJ_END_, _name=None,
+		before=None, **kwargs
 	):
 		self.minlen = minlen
 		self.maxlen = maxlen
@@ -104,6 +105,7 @@ class Str:
 		self._default = default
 		self.regex = regex and re.compile(regex)
 		self._name = _name
+		self.before = before
 		_fmt = kwargs.pop("format", None)
 		self.fmt = _fmt and Str.format_validators[_fmt]
 
@@ -124,6 +126,8 @@ class Str:
 			_schema["format"] = _fmt
 
 	def validate(self, e, default=_OBJ_END_):
+		if(self.before):
+			e = (e != None) and self.before(e)
 		if(e == None):
 			if(self._default != _OBJ_END_):
 				return self._default

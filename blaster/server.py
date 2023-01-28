@@ -163,6 +163,7 @@ class Request:
 	request_type = None
 	path = None
 	ctx = None
+	timestamp = None
 
 	@classmethod
 	def before(cls, func=None):
@@ -184,7 +185,6 @@ class Request:
 	def ip_port(self):
 		_remote_peer_data = self.sock.getpeername()
 		_remote_ip, _remote_port = _remote_peer_data[0], _remote_peer_data[1]
-
 		if(_forwarded_ip:= self._headers.get("X-Forwarded-For")):
 			_remote_ip = _forwarded_ip.strip()
 		if(_forwarded_port:= self._headers.get("X-Forwarded-Port")):
@@ -194,7 +194,7 @@ class Request:
 
 	@property
 	def client_name(self):
-		return self._headers.get("x-client")
+		return self._headers.get("x-client") or ""
 
 	def __init__(self, buffered_socket, ctx):
 		self._params = SanitizedDict()  # empty params by default
@@ -424,7 +424,7 @@ class App:
 		before=None,
 		after=None
 	):
-		methods = methods or ("GET", "POST")
+		methods = methods or ("GET", "POST", "HEAD")
 		if(isinstance(methods, str)):
 			methods = (methods,)
 
@@ -783,7 +783,10 @@ class App:
 			return
 		post_data = None
 		req = req_ctx.req = Request(buffered_socket, req_ctx)
-		cur_millis = req_ctx.timestamp = int(1000 * time.time())
+		cur_millis \
+			= req_ctx.timestamp \
+			= req.timestamp \
+			= int(1000 * time.time())
 		request_type = None
 		request_path = None
 		headers = None
@@ -824,7 +827,7 @@ class App:
 
 				if(request_path_match != None):
 					# check if handler has request type handler
-					if(handler:= method_handlers.get(request_type)):
+					if(handler := method_handlers.get(request_type)):
 						# found the handler
 						break
 

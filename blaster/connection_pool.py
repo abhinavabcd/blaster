@@ -6,6 +6,7 @@ from .config import IS_DEV, \
 _conn_pools = {}
 _pool_item_generators = {}
 
+
 def register_pool_item_generator(pool_name, func):
     _conn_pools[pool_name] = deque()
     _pool_item_generators[pool_name] = func
@@ -15,7 +16,7 @@ def get_from_pool(pool_name):
     try:
         return _conn_pools[pool_name].popleft()
     except IndexError:
-        #if queue is empty create a connection for use.
+        # if queue is empty create a connection for use.
         return _pool_item_generators[pool_name]()
 
 
@@ -23,7 +24,9 @@ def release_to_pool(conn, pool_name):
     # print "releasing to pool"
     _conn_pools[pool_name].append(conn)
 
+
 # decorator that supplies argument from a given pool and puts back after use
+
 def use_connection_pool(**pool_args):
     # check and register None pool at load time, 
     # instead of checking runtime, to avoid runtime crashes
@@ -44,13 +47,16 @@ def use_connection_pool(**pool_args):
 
     return use_db_connection
 
+
 # AWS session/clients
 boto_session = None
+
 
 def init_aws_clients(aws_credentials):
     import boto3
     global boto_session
     boto_session = boto3.session.Session(**aws_credentials)
+
 
 def get_dynamodb_conn():
     if(IS_DEV):
@@ -65,18 +71,22 @@ def get_dynamodb_conn():
     else:
         return boto_session.resource('dynamodb')
 
+
 def get_s3_conn():
     return boto_session.resource('s3')
 
+
 def get_sqs_conn():
     return boto_session.client('sqs')
+
 
 def get_ses_conn():
     return boto_session.client('ses')
 
 
-## gcloud clients
+# gcloud clients
 gcloud_credentials = None
+
 
 def init_gcloud_clients(_gcloud_credentials):
     global gcloud_credentials
@@ -88,9 +98,10 @@ def get_gcloud_tasks_client():
     from google.cloud import tasks_v2
     return tasks_v2.CloudTasksClient(credentials=gcloud_credentials)
 
+
 def get_gcloud_storage():
     from google.cloud import storage
-    return None
+    return storage.Client(credentials=gcloud_credentials)
 
 
 # try autoloading if already set

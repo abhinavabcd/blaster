@@ -803,22 +803,26 @@ def jump_hash(key, num_buckets):
 
 
 number_regex = re.compile(r"([0-9\.]+)")
-non_alpha_regex = re.compile(r"[^0-9a-zA-Z \.]", re.DOTALL) # space, . allowed
-non_alpha_regex_2 = re.compile(r"[^0-9a-zA-Z]", re.DOTALL)
-non_alpha_regex_3 = re.compile(r"[^0-9a-zA-Z_]", re.DOTALL)
-non_alpha_regex_4 = re.compile(r"[^0-9a-zA-Z]+", re.DOTALL) # multiple non-alpha groups
+non_alpha_num_space_dot_regex = re.compile(r"[^0-9a-zA-Z \.]", re.DOTALL)  # space, . allowed
+non_alpha_regex = re.compile(r"[^0-9a-zA-Z]", re.DOTALL)
+non_alpha_num_underscore_regex = re.compile(r"[^0-9a-zA-Z_]", re.DOTALL)
+non_alpha_groups_regex = re.compile(r"[^0-9a-zA-Z]+", re.DOTALL)  # multiple non-alpha groups
 
 
 def sanitize_string(text):
-	return non_alpha_regex.sub("", text)
+	return non_alpha_num_space_dot_regex.sub("", text)
 
 
 def sanitize_to_id(text):
-	return non_alpha_regex_2.sub("", text.lower())
+	return non_alpha_regex.sub("", text.lower())
+
+
+def sanitize_to_id_allow_case(text):
+	return non_alpha_regex.sub("", text)
 
 
 def sanitize_to_id2(text):
-	return non_alpha_regex_4.sub("_", text.strip().lower())
+	return non_alpha_groups_regex.sub("_", text.strip().lower())
 
 
 EMAIL_REGEX = re.compile(r'^[_a-z0-9-]+(\.[_a-z0-9-]+)*(\+[_a-z0-9-]+)?\@[a-z0-9-]+(\.[a-z0-9-]+)*(\.[a-z]{2,6})$')
