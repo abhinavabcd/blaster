@@ -26,8 +26,18 @@ if(UPLOADS_GCLOUD_BUCKET):
             expiration=timedelta(minutes=30),
             method='PUT',
             content_type="application/octet-stream",
-            headers={"x-goog-acl": "public-read"}
+            headers={
+                "x-goog-acl": "public-read",
+                "Content-Type": "application/octet-stream"
+            }
         )
+        # bucket.cors = [{
+        #   'origin': ['http://localhost:3000', 'https://localhost'...],
+        #   'method': ['PUT', 'GET', 'HEAD'],
+        #   'responseHeader': ['Content-Type', 'x-goog-resumable', 'x-goog-acl'],
+        #   'maxAgeSeconds': 3600
+        # }]
+
         return {
             "url": url,
             "method": "PUT",
@@ -35,7 +45,7 @@ if(UPLOADS_GCLOUD_BUCKET):
             # if you wish to change, be careful to test it
             "headers": {
                 "x-goog-acl": "public-read",
-                "content-type": "application/octet-stream"
+                "Content-Type": "application/octet-stream"
             },
         }, f"https://storage.googleapis.com/{UPLOADS_GCLOUD_BUCKET}/{file_path}"
 

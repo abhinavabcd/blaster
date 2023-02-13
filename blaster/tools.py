@@ -38,7 +38,7 @@ import requests
 from http.client import HTTPConnection  # py3
 
 from .websocket._core import WebSocket
-from .config import IS_DEV
+from .config import IS_DEV, DEBUG_PRINT_LEVEL
 from .utils.xss_html import XssHtml
 from .utils import events
 from .logging import LOG_APP_INFO, LOG_WARN, LOG_ERROR
@@ -1413,8 +1413,9 @@ def parse_cmd_line_arguments():
 	return args_map
 
 
-def run_shell(cmd, output_parser=None, shell=False, max_buf=5000):
+def run_shell(cmd, output_parser=None, shell=False, max_buf=5000, fail=True):
 
+	DEBUG_PRINT_LEVEL > 2 and print(f"#RUNNING: {cmd}")
 	state = DummyObject()
 	state.total_output = ""
 	state.total_err = ""
@@ -1497,6 +1498,8 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000):
 	# just keep printing error
 	# wait for process to terminate
 	ret_code = proc.wait()
+	if(ret_code and fail):
+		raise Exception(f"Non zero return code :{ret_code}")
 	state.return_code = ret_code
 	state.is_running = False
 

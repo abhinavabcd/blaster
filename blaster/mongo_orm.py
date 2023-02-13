@@ -216,6 +216,9 @@ class MongoDict(dict):
 
 		super(MongoDict, self).__setitem__(k, v)
 
+	def __delitem__(self, k):
+		self.pop(k)
+
 	def pop(self, k, default=None):
 		# not in initializing mode
 		popped_val = super(MongoDict, self).pop(k, _OBJ_END_)
@@ -686,7 +689,7 @@ class Model(object):
 				primary_shard_collection = cls.get_collection(primary_shard_key)
 				# query and update the document
 				IS_DEV \
-					and DEBUG_PRINT_LEVEL > 1 \
+					and DEBUG_PRINT_LEVEL > 8 \
 					and LOG_SERVER(
 						"MONGO", description="update before and query",
 						model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
@@ -724,7 +727,7 @@ class Model(object):
 				)
 
 				IS_DEV \
-					and DEBUG_PRINT_LEVEL > 1\
+					and DEBUG_PRINT_LEVEL > 8\
 					and LOG_SERVER(
 						"MONGO", description="after update",
 						model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
@@ -1060,7 +1063,7 @@ class Model(object):
 
 		def query_collection(_Model, _collection, _query, offset=None):
 			IS_DEV \
-				and DEBUG_PRINT_LEVEL > 1 \
+				and DEBUG_PRINT_LEVEL > 8 \
 				and LOG_SERVER(
 					"MONGO",
 					description="querying", model=_Model.__name__,
@@ -1110,7 +1113,7 @@ class Model(object):
 							_query = {"$or": [{"_id": _doc["_id"]} for _doc in docs]}
 
 						IS_DEV\
-							and DEBUG_PRINT_LEVEL > 1\
+							and DEBUG_PRINT_LEVEL > 8\
 							and LOG_SERVER(
 								"MONGO", description="requerying",
 								model=cls.__name__, query=str(_query)
@@ -1120,7 +1123,7 @@ class Model(object):
 							item = _requeried_from_primary.get(_id)
 							if(not item):
 								IS_DEV\
-									and DEBUG_PRINT_LEVEL > 1\
+									and DEBUG_PRINT_LEVEL > 8\
 									and LOG_SERVER(
 										"MONGO", description="missing from primary",
 										model=cls.__name__, _id=str(_id)
@@ -1231,7 +1234,7 @@ class Model(object):
 				getattr(self, shard_key_name)
 			)
 			IS_DEV \
-				and DEBUG_PRINT_LEVEL > 1 \
+				and DEBUG_PRINT_LEVEL > 8 \
 				and LOG_SERVER(
 					"MONGO", description="new object values",
 					model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
@@ -1290,7 +1293,7 @@ class Model(object):
 				doc_in_db = primary_shard_collection.find_one(self.pk())
 				self.reset_and_update_cache(doc_in_db)
 				IS_DEV \
-					and DEBUG_PRINT_LEVEL > 1 \
+					and DEBUG_PRINT_LEVEL > 8 \
 					and LOG_SERVER(
 						"MONGO", description="created a duplicate, refetching and updating",
 						model=cls.__name__,
@@ -1342,7 +1345,7 @@ class Model(object):
 		collection_shard = _Model.get_collection(self._original_doc[_Model._shard_key_])
 		collection_shard.delete_one(_delete_query)
 		IS_DEV \
-			and DEBUG_PRINT_LEVEL > 1 \
+			and DEBUG_PRINT_LEVEL > 8 \
 			and LOG_SERVER(
 				"MONGO", description="deleting from primary",
 				model=_Model.__name__, collection=COLLECTION_NAME(collection_shard),
@@ -1609,7 +1612,7 @@ def initialize_model(_Model):
 
 
 	IS_DEV \
-		and DEBUG_PRINT_LEVEL > 1 \
+		and DEBUG_PRINT_LEVEL > 8 \
 		and print(
 			"\n\n#MONGO: Initializing Model", _Model,
 			_Model._indexes_, _Model._shard_key_, _Model._secondary_shards_
@@ -1727,7 +1730,7 @@ def initialize_model(_Model):
 	__all_models__[_Model._collection_name_with_shard_] = _Model
 
 	IS_DEV \
-		and DEBUG_PRINT_LEVEL > 1 \
+		and DEBUG_PRINT_LEVEL > 8 \
 		and print(
 			"\n\n#MONGO collection tracker key",
 			_Model._collection_tracker_key_
@@ -1820,8 +1823,10 @@ def initialize_model(_Model):
 
 	# check unused indexes
 	existing_indexes = {
-		tuple([(x, int(y)) for x, y in _index["key"]]): (_name, _index) # sometimes it's float so convert to int
-		for _name, _index in existing_indexes.items()
+		tuple([  # list of tuples
+			(x, int(y) if isinstance(y, float) else y)  # sometimes it's float so convert to int
+				for x, y in _index["key"]
+		]): (_name, _index) for _name, _index in existing_indexes.items()
 	}  # key: ((_id, 1)).., value: {uqniue: False} or None
 
 	# remove default for comparision
@@ -1861,6 +1866,29 @@ def initialize_model(_Model):
 			if("missing_mongo_indexes" not in _loading_errors):
 				_loading_errors["missing_mongo_indexes"] = []
 			_loading_errors["missing_mongo_indexes"].append(missing_index_creation_string)
+
+	# check if our options are different from remote options
+	for _index, _options in _pymongo_indexes_to_create.items():
+		existing_index = existing_indexes.get(_index)
+		if(existing_index):
+			# _options = dict(_options)  # copy
+			existing_options = dict(existing_index[1])  # copy
+			# existing_options.pop("v")
+			# existing_options.pop("key")
+			# ignore some default
+			existing_is_unique = existing_options.get("unique") or False
+			is_unique = _options.get("unique") or False
+			if(existing_is_unique != is_unique):
+				index_options_changed = (
+					f"{existing_options} -> {_options} : you can delete and recreate "
+					f"db.{_Model._collection_name_with_shard_}"
+					f".createIndex({json.dumps({x:y for x,y in _index})}, "
+					f"{json.dumps(_options)})"  # options
+				)
+				LOG_ERROR("index_options_changed", desc=index_options_changed)
+				if("index_options_changed" not in _loading_errors):
+					_loading_errors["index_options_changed"] = []
+				_loading_errors["index_options_changed"].append(index_options_changed)
 
 	# create secondary shards
 	for _secondary_shard_key in list(_Model._secondary_shards_.keys()): # iterate on copy

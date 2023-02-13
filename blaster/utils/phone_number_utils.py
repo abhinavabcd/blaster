@@ -44,7 +44,12 @@ class PhoneNumberObj:
 		# assume phone number without country code
 		# assume phone number with country code without +
 		# assume + by mistake
-		if(not phone_number or not PHONE_NUMBER_REGEX.match(phone_number)):
+		if(not phone_number):
+			return None
+
+		phone_number = phone_number.replace(" ", "")
+
+		if(not PHONE_NUMBER_REGEX.match(phone_number)):
 			return None
 
 		if(country_phone_code):
@@ -66,7 +71,7 @@ class PhoneNumberObj:
 			_root = _root[_d]
 
 		if(not country_phone_code and iso2_country_code):
-			if(_country_data:=COUNTRY_DATA.get(iso2_country_code)):
+			if(_country_data := COUNTRY_DATA.get(iso2_country_code)):
 				country_phone_code = _country_data["phone_code"]
 
 		if(not country_phone_code):
