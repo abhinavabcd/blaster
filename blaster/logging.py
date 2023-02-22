@@ -8,7 +8,8 @@ from gevent.queue import Queue
 from gevent.threading import Thread
 from logging import DEBUG, INFO, WARN, ERROR
 from .utils import events
-from .config import LOG_LEVEL, APP_VERSION, APP_NAME
+from .config import LOG_LEVEL, APP_VERSION, APP_NAME,\
+	CONSOLE_LOG_RAW_JSON
 from . import req_ctx
 
 # CRITICAL-50 ERROR-40  WARNING-30  INFO-20  DEBUG-10  NOTSET-0
@@ -171,26 +172,35 @@ def LOG(level, log_type, **kwargs):
 	log_level_name = log_level_to_names.get(level, "SERVER")
 	# print to stdout
 
-	print(
-		"%s%s [%s]"%(log_level_colors.get(level, PrintColors.OKGREEN), datetime.now(), log_level_name),
-		log_type, json.dumps(kwargs),
-		PrintColors.ENDC
-	)
-
-	if(log_streaming_thread):
-		_log = {
-			"log_type": log_type,
-			"log_level": log_level_name,
-			"app": LOG_APP_NAME,
-			"version": LOG_APP_VERSION,
-			"timestamp": req_ctx.timestamp or int(1000 * time.time()),
-			"payload": kwargs
-		}
-		if(req_ctx.req and (client_name:= req_ctx.req.client_name)):
+	_log = {
+		"log_level": log_level_name,
+		"log_type": log_type,
+		"app": LOG_APP_NAME,
+		"version": LOG_APP_VERSION,
+		"timestamp": req_ctx.timestamp or int(1000 * time.time()),
+		"payload": kwargs
+	}
+	# blaster request
+	if(req := req_ctx.req):
+		_log["ip"] = req.ip_port[0]
+		if(client_name := req.client_name):
 			_log["client"] = client_name
-		if(req:= req_ctx.req):
-			_log["ip"] = req.ip_port[0]
 
+	if(CONSOLE_LOG_RAW_JSON):
+		print(json.dumps(_log))
+	else:
+		print(
+			"%s%s [%s]"%(
+				log_level_colors.get(level, PrintColors.OKGREEN),
+				datetime.now(),
+				log_level_name
+			),
+			log_type, json.dumps(kwargs),
+			PrintColors.ENDC
+		)
+
+	# put this on quue if a log_streaming thread is processing it
+	if(log_streaming_thread):
 		log_queue.put(_log)
 
 

@@ -26,7 +26,7 @@ from .utils.data_utils import FILE_EXTENSION_TO_MIME_TYPE
 from .logging import LOG_ERROR, LOG_SERVER
 from .schema import Int, Object, Required, schema as schema_func
 from .websocket.server import WebSocketServerHandler
-from .config import IS_DEV, BLASTER_HTTP_TIMEOUT_WARN_THRESHOLD
+from .config import IS_DEV, BLASTER_HTTP_TOOK_LONG_WARN_THRESHOLD
 
 if(IS_DEV):
 	# dev specific config
@@ -1029,7 +1029,7 @@ class App:
 					path=request_path, content_length=content_length,
 					wallclockms=_wallclock_ms
 				)
-				if(_wallclock_ms > BLASTER_HTTP_TIMEOUT_WARN_THRESHOLD):
+				if(_wallclock_ms > BLASTER_HTTP_TOOK_LONG_WARN_THRESHOLD):
 					LOG_ERROR(
 						"http_took_long", response_status=status, request_type=request_type,
 						path=request_path, content_length=content_length,

@@ -1474,7 +1474,7 @@ def INDEX(*indexes):
 		if(isinstance(first_key_of_index_key_set, tuple)):
 			# when it has a sorting order as second key
 			first_key_of_index_key_set = first_key_of_index_key_set[0]
-		
+
 		if(isinstance(first_key_of_index_key_set, Attribute)):
 			first_key_of_index_key_set._indexes_to_create = getattr(
 				first_key_of_index_key_set, "_indexes_to_create", []
@@ -1483,6 +1483,7 @@ def INDEX(*indexes):
 
 
 _cached_mongo_clients = {}
+
 
 # DatabaseNode is basically a server or a replicaset
 class DatabaseNode:

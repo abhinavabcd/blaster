@@ -1390,6 +1390,7 @@ class WebsocketConnection(WebSocket):
 			self.lock.release()
 		return
 
+
 def parse_cmd_line_arguments():
 	from sys import argv
 	args_map = {}
@@ -1400,17 +1401,24 @@ def parse_cmd_line_arguments():
 		if(arg.startswith("--")):
 			if("=" in arg):
 				key, val = arg.split("=", 1)
-				args_map[key.strip("-")] = val
+				args_map[key.lstrip("-")] = val
 			else:
-				args_map[arg.strip("-")] = True
-		elif(arg.startswith("-")):
-			key = arg.strip("-")
-			val = argv[i + 1] if (i + 1 < num_args) else True
-			i += 1
+				args_map[arg.lstrip("-")] = True
+		elif(arg.startswith("-")):  # Flags
+			key = arg.lstrip("-")
+			# if next argument doesn't start with - its considered as value
+			val = True
+			if (i + 1 < num_args and argv[i + 1][0] != "-"):
+				val = argv[i + 1]
+				i += 1
 			args_map[key] = val
 
 		i += 1
 	return args_map
+
+
+# PARSE COMMAND LINE ARGUMENTS BY DEFAULT
+CommandLineArgs = parse_cmd_line_arguments()
 
 
 def run_shell(cmd, output_parser=None, shell=False, max_buf=5000, fail=True):

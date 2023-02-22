@@ -83,16 +83,18 @@ class Config:
 config = Config()
 
 # more variables from env
-if(gcloud_credential_file:= environ.get("GOOGLE_APPLICATION_CREDENTIALS")):
+if(gcloud_credential_file := environ.get("GOOGLE_APPLICATION_CREDENTIALS")):
     try:
         config.GCLOUD_CREDENTIALS = json.loads(open(gcloud_credential_file).read())
     except Exception as ex:
         print(ex)
 
 # BLASTER SPECIFIC CONFIGS, that can be overridden
-config.BLASTER_HTTP_TIMEOUT_WARN_THRESHOLD = 5000
+config.BLASTER_HTTP_TOOK_LONG_WARN_THRESHOLD = 5000
 
 # MONGO ORM SPECIFIC CONFIGS
 config.MONGO_WARN_MAX_RESULTS_RATE = 1000  # can scan at a max of 1000 / sec
 config.MONGO_MAX_RESULTS_AT_HIGH_SCAN_RATE = 10000  # cannot scan more than this at high scan rate
-config.MONGO_WARN_MAX_QUERY_RESPONSE_TIME_SECONDS = 3
+config.MONGO_WARN_MAX_QUERY_RESPONSE_TIME_SECONDS = 3  # cannot take more than 3 seconds
+# Logging basics
+config.CONSOLE_LOG_RAW_JSON = False

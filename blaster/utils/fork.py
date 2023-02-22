@@ -5,18 +5,20 @@ import time
 import socket
 from . import events
 from gevent.threading import Thread
+from ..tools import BufferedSocket
 
 # MULTIPROCESS SERVER
 _has_forked = False
 _is_listening = True
 BLASTER_FORK_ID = 0
+
+
 # forks current process x num_process
 # creates a connection between process using local unix socket
 # can broadcast events to all process
 # can call top level functions on master process
 def blaster_fork(num_procs):
 	# post load imports, because of config variables
-	from ..tools import BufferedSocket
 	# GLOBALS
 	global BLASTER_FORK_ID, _has_forked
 
