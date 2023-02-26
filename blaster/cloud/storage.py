@@ -25,10 +25,10 @@ if(UPLOADS_GCLOUD_BUCKET):
             version='v4',
             expiration=timedelta(minutes=30),
             method='PUT',
-            content_type="application/octet-stream",
+            content_type=mime_type,
             headers={
                 "x-goog-acl": "public-read",
-                "Content-Type": "application/octet-stream"
+                "Content-Type": mime_type
             }
         )
         # bucket.cors = [{
@@ -45,7 +45,7 @@ if(UPLOADS_GCLOUD_BUCKET):
             # if you wish to change, be careful to test it
             "headers": {
                 "x-goog-acl": "public-read",
-                "Content-Type": "application/octet-stream"
+                "Content-Type": mime_type
             },
         }, f"https://storage.googleapis.com/{UPLOADS_GCLOUD_BUCKET}/{file_path}"
 

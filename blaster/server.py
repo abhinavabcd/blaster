@@ -1197,9 +1197,9 @@ def static_file_handler(
 				pass
 
 		return file_resp if file_resp else (
-				file_not_found_cb 
-				and file_not_found_cb(path, req=req)
-			) or ("404 Not Found", [], "-NO-FILE-")
+			file_not_found_cb
+			and file_not_found_cb(path, req=req)
+		) or ("404 Not Found", [], "-NO-FILE-")
 	# headers , data
 	# preload all files once on load
 	file_names = [
