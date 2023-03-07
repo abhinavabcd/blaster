@@ -69,9 +69,9 @@ class Config:
         if(key not in self._config):
             if(key.startswith("__")):
                 return getattr(_this_, key, None)
-            elif(not self._config.get("BLASTER_FORK_ID")): # None or 0
+            elif(not self._config.get("BLASTER_FORK_ID")):  # None or 0
                 caller_frame = inspect.stack()[1]
-                if(not caller_frame[1].startswith("<frozen")): # <frozen importlib._bootstrap>
+                if(not caller_frame[1].startswith("<frozen")):  # <frozen importlib._bootstrap>
                     print("MISSING CONFIG Key#: {} {}:{}".format(key, caller_frame[1], caller_frame[2]))
             return None
         return self._config[key]

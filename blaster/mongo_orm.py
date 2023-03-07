@@ -13,7 +13,7 @@ from bson.objectid import ObjectId
 from itertools import chain
 from collections import OrderedDict
 from pymongo import MongoClient
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, OperationFailure
 from pymongo import ReturnDocument, ReadPreference
 from .tools import ExpiringCache, all_subclasses,\
 	cur_ms, list_diff2, batched_iter, _OBJ_END_
@@ -393,6 +393,8 @@ class Model(object):
 				else:
 					return None
 			# multiple items, reorder
+			# put them into id and pk_map
+			# convert them to list by querying again from map
 			pk_map = {}
 			for item in ret:
 				if(item):
@@ -412,7 +414,6 @@ class Model(object):
 					for _k in cls._pk_attrs:
 						_pk_tuple.append(_pk.get(_k))
 					_pk_tuple = tuple(_pk_tuple)
-
 					item = pk_map.get(_pk_tuple)
 				if(item):
 					ret.append(item)
@@ -714,17 +715,23 @@ class Model(object):
 				)
 
 				# 1: try updating
-				updated_doc = primary_shard_collection.find_one_and_update(
-					_query,
-					_update_query,
-					return_document=ReturnDocument.AFTER,
-					session=(
-						_with_transaction(primary_shard_collection, _transaction, stack)
-						if _transaction != None
-						else None
-					),
-					**kwargs
-				)
+				try:
+					updated_doc = primary_shard_collection.find_one_and_update(
+						_query,
+						_update_query,
+						return_document=ReturnDocument.AFTER,
+						session=(
+							_with_transaction(primary_shard_collection, _transaction, stack)
+							if _transaction != None
+							else None
+						),
+						**kwargs
+					)
+				except OperationFailure as ex:
+					LOG_ERROR("MONGO", desc=str(ex))
+					if ex.has_error_label("TransientTransactionError"):
+						time.sleep(0.03 * _update_retry_count)
+						continue
 
 				IS_DEV \
 					and DEBUG_PRINT_LEVEL > 8\
@@ -1249,8 +1256,8 @@ class Model(object):
 						self._set_query_updates,
 						session=(
 							_with_transaction(primary_shard_collection, _transaction, stack)
-							if cls._secondary_shards_ 
-							else None 
+							if cls._secondary_shards_
+							else None
 						)
 					)
 
@@ -1882,7 +1889,8 @@ def initialize_model(_Model):
 			if(existing_is_unique != is_unique):
 				index_options_changed = (
 					f"{existing_options} -> {_options} : you can delete and recreate "
-					f"db.{_Model._collection_name_with_shard_}"
+					f'Delete: db.{_Model._collection_name_with_shard_}.dropIndex("{existing_indexes[_index_keys][0]}") '
+					f"Create: db.{_Model._collection_name_with_shard_}"
 					f".createIndex({json.dumps({x:y for x,y in _index})}, "
 					f"{json.dumps(_options)})"  # options
 				)

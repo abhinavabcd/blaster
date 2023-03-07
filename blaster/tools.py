@@ -642,7 +642,7 @@ def remove_duplicates(lst, key=None):
 	ret = []
 	for i in lst:
 		if(key):
-			if((key_val:= key(i)) in exists):
+			if((key_val := key(i)) in exists):
 				continue
 			exists.add(key_val)
 		else:
@@ -653,13 +653,22 @@ def remove_duplicates(lst, key=None):
 		ret.append(i)
 	return ret
 
+
 def get_shard_id(_id):
 	return (int(_id) & (((1 << 12) - 1) << 11)) >> 11
 
 
+# can split at most at n points
+# always returns n + 1 parts
+def nsplit(_str, delimiter, n):
+	parts = _str.split(delimiter, n)
+	for i in range(n + 1 - len(parts)):
+		parts.append(None)
+	return parts
+
+
 # move it to seperate module ?
 # copied from internet sha1 token encode - decode module
-
 if hasattr(hmac, 'compare_digest'):  # python 3.3
 	_time_independent_equals = hmac.compare_digest
 else:
@@ -935,7 +944,7 @@ def normalize(val, n=13):
 	raise Exception('cannot have greater length, ensure about this')
 
 
-# normalize a int/str to n number of characters 
+# normalize a int/str to n number of characters
 # and clips of any characters more than n characters
 def normalize_no_warn(val, n=13):
 	val = str(val)
@@ -1572,6 +1581,7 @@ def retry(num_retries=2, ignore_exceptions=None, max_time=5000):
 	num_retries = max(2, num_retries)
 	sleep_time_on_fail = max_time / num_retries
 	ignore_exceptions = ignore_exceptions or []
+
 	def decorator(func):
 		def new_func(*args, **kwargs):
 			retry_count = 0
@@ -1662,14 +1672,15 @@ def _process_partitioned_task_queue_items(_queue):
 				stacktrace_string=stacktrace_string
 			)
 			IS_DEV and traceback.print_exc()
-		
-		if((_elapsed_time:= (time.time() - _start_time)) > 3):
+
+		if((_elapsed_time := (time.time() - _start_time)) > 3):
 			# background tasks shouldn't run longer than 5 seconds
 			LOG_WARN(
 				"background_task_perf",
 				func_name=func.__name__,
 				elapsed_millis=int(_elapsed_time * 1000),
 			)
+
 
 # singleton
 def __start_task_processors():
@@ -1699,7 +1710,7 @@ def submit_background_task(partition_key, func, *args, **kwargs):
 		.put((func, args, kwargs))
 
 
-# decorator to be used for a short io tasks to be 
+# decorator to be used for a short io tasks to be
 # run in background
 def background_task(func):
 	def wrapper(*args, **kwargs):
@@ -1775,7 +1786,7 @@ def all_subclasses(cls):
 	)
 
 
-'''print debugging info for networks request called with requests'''
+# print debugging info for networks request called with requests
 def debug_requests_on():
 	import logging
 	'''Switches on logging of the requests module.'''
@@ -1785,6 +1796,7 @@ def debug_requests_on():
 	requests_log = logging.getLogger("requests.packages.urllib3")
 	requests_log.setLevel(logging.DEBUG)
 	requests_log.propagate = True
+
 
 def debug_requests_off():
 	'''Switches off logging of the requests module, might be some side-effects'''
@@ -1798,12 +1810,14 @@ def debug_requests_off():
 	requests_log.setLevel(logging.WARNING)
 	requests_log.propagate = False
 
+
 @contextlib.contextmanager
 def debug_requests():
 	'''Use with 'with'!'''
 	debug_requests_on()
 	yield
 	debug_requests_off()
+
 
 def cached_request(
 	url, ignore_cache_read=False, cache_folder="/tmp/",
@@ -1813,7 +1827,7 @@ def cached_request(
 	if(_json):
 		cache_hash += json.dumps(_json)
 	elif(data):
-		cache_hash += json.dumps(data)	
+		cache_hash += json.dumps(data)
 	cache_hash = hashlib.md5(cache_hash.encode("utf-8")).hexdigest()
 	cache_file_path = cache_folder + cache_hash
 	if(ignore_cache_read or not os.path.isfile(cache_file_path)):
@@ -1825,9 +1839,9 @@ def cached_request(
 			with open(cache_file_path, "wb") as cache_file:
 				for chunk in resp.iter_content():
 					cache_file.write(chunk)
-		except:
+		except Exception:
 			os.remove(cache_file_path)
-	
+
 	bytes_buffer = BytesIO(open(cache_file_path, "rb").read())
 	if(as_string_buffer):
 		return StringIO(bytes_buffer.read().decode())
