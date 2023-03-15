@@ -169,7 +169,7 @@ class Array:
 		self._complex_validations = _item_validation.keywords.get("complex_validations") or ()
 		self._simple_types = _item_validation.keywords.get("simple_types") or ()
 		self.validate = partial(
-			array_validation, self, # arg here
+			array_validation, self,  # arg here
 			simple_types=self._simple_types,
 			complex_validations=self._complex_validations,
 			mix=self._mix,

@@ -1,4 +1,5 @@
 from os import environ
+import inspect
 import json
 import heapq
 import types
@@ -813,7 +814,6 @@ class Model(object):
 								# changed during update
 								is_shard_data_changed = True
 
-
 						# nothing changed in the shard
 						# don't replace/update
 						if(not is_shard_data_changed):
@@ -873,7 +873,6 @@ class Model(object):
 				cls._trigger_event(EVENT_AFTER_UPDATE, self)
 				return True
 
-
 	@classmethod
 	def query(
 		cls,
@@ -889,7 +888,7 @@ class Model(object):
 		queries = None
 		# split or queries to separate it to shards
 		if(not isinstance(_query, list)):
-			if((or_queries:= _query.pop("$or", None)) != None):  # top level $or query
+			if((or_queries := _query.pop("$or", None)) != None):  # top level $or query
 				if(not _query):
 					queries = or_queries
 				else:  # merge remaining query with all $or queries
@@ -1236,7 +1235,7 @@ class Model(object):
 				raise Exception("Need to specify _id")
 
 			self._set_query_updates["_"] = int(time.time() * 1000)
-			
+
 			primary_shard_collection = cls.get_collection(
 				getattr(self, shard_key_name)
 			)
@@ -1363,64 +1362,85 @@ class Model(object):
 
 		_Model._trigger_event(EVENT_AFTER_DELETE, self)
 
-	# utility to lock
-	__locked_until = None
+	# utility to keep track of locks
+	__locks = None
 
 	# timeout -> can try to get lock until
 	# can_hold_until -> after acquired, how long we can hold it,
 	# - beyong that time, we know other can interfere
-	def lock(self, timeout=5000, silent=False, can_hold_until=2 * 60 * 1000):
+	def lock(self, name="", timeout=5000, silent=False, can_hold_until=2 * 60 * 1000):
 		# return true for objects not yet in db too
+		lock_name = f"_lock_{name}"
 		start_timestamp = cur_ms()
-		if(
-			(self.__locked_until and self.__locked_until >= start_timestamp)
-			or not self._original_doc
-		):
-			return True
 
+		if(self.__locks == None):
+			self.__locks = {}
+
+		# non db lock
+		if(not self._original_doc):
+			# keep waiting until lock cleared
+			while(
+				lock_name in self.__locks
+				and (cur_timestamp := cur_ms()) - start_timestamp < timeout
+			):
+				time.sleep(1)
+			if(lock_name in self.__locks):
+				if(not silent):
+					raise TimeoutError(
+						"locking timedout on non-db new object {}:{}".format(
+							self.__class__,
+							self.pk_tuple()
+						)
+					)
+				return False
+
+			self.__locks[lock_name] = None
+			return True  # no lock needed
+
+		# db lock
 		count = 0
 		while((cur_timestamp := cur_ms()) - start_timestamp < timeout):
 			count += 1
 			locked_until = cur_timestamp + can_hold_until
 			if(
 				self.update(
-					{"$set": {"locked": locked_until}},
+					{"$set": {lock_name: locked_until}},
 					conditions={
 						"$or": [
-							{"locked": None},
-							{"locked": {"$lt": cur_timestamp}}  # locked before 2 minutes
+							{lock_name: None},
+							{lock_name: {"$lt": cur_timestamp}}  # locked before 2 minutes
 						]
 					},
 					include_pending_updates=False
 				)
 			):
-				self.__locked_until = locked_until
-				break
+				self.__locks[lock_name] = locked_until
+				return True
 			time.sleep(0.2 * count)  # wait
 
-		if(not self.__locked_until):
-			if(not silent):
-				raise TimeoutError(
-					"locking timedout {}:{}".format(
-						self.__class__,
-						self.pk_tuple()
-					)
+		if(not silent):
+			raise TimeoutError(
+				"locking timedout {}:{}".format(
+					self.__class__,
+					self.pk_tuple()
 				)
-			return False
+			)
 
-		return True
+		return False
 
-	def unlock(self, force=False):
-		if(not self.__locked_until and not force):
+	def unlock(self, name="", force=False):
+		lock_name = f"_lock_{name}"
+		if(not force and lock_name not in self.__locks):
 			# not acqurired by us and no force
 			return
-
-		self.update(
-			{"$unset": {"locked": ""}},
-			conditions=None if force else {"locked": self.__locked_until}, # if locked by us
-			include_pending_updates=False
-		)
-		self.__locked_until = None
+		# check if it's a db lock
+		if(self._original_doc):
+			self.update(
+				{"$unset": {lock_name: True}},
+				conditions=None if force else {lock_name: self.__locks[lock_name]},  # if locked by us
+				include_pending_updates=False
+			)
+		self.__locks.pop(lock_name, None)
 
 
 # decorator to prevent concurrent updates
@@ -1473,20 +1493,14 @@ def SHARD_BY(primary=None, secondary=None):
 				secondary_shard_attr.is_secondary_shard_key = True
 
 
+IndexesToCreate = {}
+
+
 # tags indexes_to_create to attributes and
 # retrieve them when initializing the model
 def INDEX(*indexes):
-	for index_key_set in indexes:
-		first_key_of_index_key_set = index_key_set[0]
-		if(isinstance(first_key_of_index_key_set, tuple)):
-			# when it has a sorting order as second key
-			first_key_of_index_key_set = first_key_of_index_key_set[0]
-
-		if(isinstance(first_key_of_index_key_set, Attribute)):
-			first_key_of_index_key_set._indexes_to_create = getattr(
-				first_key_of_index_key_set, "_indexes_to_create", []
-			)
-			first_key_of_index_key_set._indexes_to_create.append(index_key_set)
+	collection_name = inspect.currentframe().f_back.f_locals["_collection_name_"]
+	IndexesToCreate[collection_name] = indexes
 
 
 _cached_mongo_clients = {}
@@ -1511,7 +1525,7 @@ class DatabaseNode:
 		self, host=None, replicaset=None,
 		username=None, password=None, db_name=None,
 		hosts=None,
-		replica_set=None, at=0 # cleanup
+		replica_set=None, at=0  # cleanup
 	):
 		if(isinstance(host, str)):
 			hosts = [host]
@@ -1566,7 +1580,7 @@ def initialize_model(_Model):
 	# defaults, do not change the code below
 	_Model._shard_key_ = getattr(_Model, "_shard_key_", "_id")
 	_Model._secondary_shards_ = {}
-	_Model._indexes_ = getattr(_Model, "_indexes_", [("_id",)])
+	_Model._indexes_ = getattr(_Model, "_indexes_", [])
 	# create a default cache if nothing specified
 	_Model_cache = getattr(_Model, "_cache_", _OBJ_END_)
 	if(_Model_cache == _OBJ_END_ and not _Model._is_secondary_shard):
@@ -1599,12 +1613,7 @@ def initialize_model(_Model):
 			# shard key tagged to attributes
 			if(not _Model._is_secondary_shard):  # very important check
 				# check indexes_to_create
-				_indexes_to_create = getattr(v, "_indexes_to_create", None)
-				if(_indexes_to_create):
-					# because we don't need it again after first time
-					delattr(v, "_indexes_to_create")
-					_Model._indexes_.extend(_indexes_to_create)
-
+				_Model._indexes_ = IndexesToCreate.get(_Model._collection_name_) or [("_id",)]
 				is_primary_shard_key = getattr(v, "is_primary_shard_key", False)
 				is_secondary_shard_key = getattr(v, "is_secondary_shard_key", False)
 				if(is_primary_shard_key is True):
@@ -1617,7 +1626,6 @@ def initialize_model(_Model):
 					_Model._secondary_shards_[k] = SecondaryShard()
 					# because we don't need it again after first time
 					delattr(v, "is_secondary_shard_key")
-
 
 	IS_DEV \
 		and DEBUG_PRINT_LEVEL > 8 \
@@ -1707,7 +1715,8 @@ def initialize_model(_Model):
 					"keys": _index_keys,
 					"properties": _index_properties
 				})
-
+		# if this index doesn't belong to secondary shards
+		# create it on this index
 		if(
 			_index_shard_key not in _Model._secondary_shards_
 			and _index_shard_key != "_id"

@@ -793,7 +793,7 @@ def get_random_id(length=10, include_timestamp=True):
 		random.SystemRandom().choice(BASE_62_LIST) for _ in range(length)  # iter
 	)
 	if(include_timestamp):
-		key_str = key_str + ("{:d}".format(int(time.time())))
+		key_str = f"{int(time.time())}{key_str}"
 	# key_str = hashlib.md5(key_str).hexdigest()
 	return key_str
 

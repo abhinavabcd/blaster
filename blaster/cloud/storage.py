@@ -49,6 +49,14 @@ if(UPLOADS_GCLOUD_BUCKET):
             },
         }, f"https://storage.googleapis.com/{UPLOADS_GCLOUD_BUCKET}/{file_path}"
 
+    @use_connection_pool(gcloud_storage="google_cloudstorage")
+    def upload_file_obj(file_path, file_obj, mime_type, gcloud_storage=None):
+        bucket = gcloud_storage.bucket(UPLOADS_GCLOUD_BUCKET)
+        blob = bucket.blob(file_path)
+        blob.upload_from_file(file_obj, content_type=mime_type)
+        blob.make_public()
+        return blob.public_url
+
 
 # decide uploading via s3 or gcloud
 elif(UPLOADS_S3_CLIENT_POOL_NAME and UPLOADS_S3_BUCKET):
@@ -87,3 +95,13 @@ elif(UPLOADS_S3_CLIENT_POOL_NAME and UPLOADS_S3_BUCKET):
             post,  # {url, fields}
             f'https://{UPLOADS_S3_BUCKET}.s3.{UPLOADS_S3_BUCKET_REGION}.amazonaws.com/{file_path}'
         )
+
+    @use_connection_pool(s3_client=UPLOADS_S3_CLIENT_POOL_NAME)
+    def upload_file_obj(file_path, file_obj, mime_type, s3_client=None):
+        s3_client.upload_fileobj(
+            file_obj,
+            UPLOADS_S3_BUCKET,
+            file_path,
+            ExtraArgs={'ACL': 'public-read', "ContentType": mime_type}
+        )
+        return f'https://{UPLOADS_S3_BUCKET}.s3.{UPLOADS_S3_BUCKET_REGION}.amazonaws.com/{file_path}'

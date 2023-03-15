@@ -143,6 +143,10 @@ class MissingBlasterArgumentException(Exception):
 		super().__init__(*args)
 
 
+def raise_ex(ex):
+	raise ex
+
+
 class Request:
 	# class level
 	_before_hooks = []
@@ -185,9 +189,9 @@ class Request:
 	def ip_port(self):
 		_remote_peer_data = self.sock.getpeername()
 		_remote_ip, _remote_port = _remote_peer_data[0], _remote_peer_data[1]
-		if(_forwarded_ip:= self._headers.get("X-Forwarded-For")):
+		if(_forwarded_ip := self._headers.get("X-Forwarded-For")):
 			_remote_ip = _forwarded_ip.strip()
-		if(_forwarded_port:= self._headers.get("X-Forwarded-Port")):
+		if(_forwarded_port := self._headers.get("X-Forwarded-Port")):
 			_remote_port = _forwarded_port.strip()
 
 		return (_remote_ip, _remote_port)
@@ -340,7 +344,11 @@ class Request:
 	@classmethod
 	def arg_generator(cls, name, _type, default):
 		if(_type in (str, int, float)):
-			return lambda req: (_val:= req.get(name, default)) and _type(_val)
+			return lambda req: (_type(_val) if _val != None else None)\
+				if (_val := req.get(name, default)) != _OBJ_END_\
+				else raise_ex(
+					MissingBlasterArgumentException(name, _type)
+				)
 		elif(_type == Request):  # req: Request
 			return lambda req: req
 		elif(_type == Query):  # query: Query
@@ -1018,7 +1026,7 @@ class App:
 				content_length = 0
 				if(body):
 					# finalize all the headers
-					buffered_socket.send(b'Content-Length: ', str(content_length:= len(body)), b'\r\n\r\n')
+					buffered_socket.send(b'Content-Length: ', str(content_length := len(body)), b'\r\n\r\n')
 					buffered_socket.send(body)
 				else:
 					buffered_socket.send(b'Content-Length: 0', b'\r\n\r\n')
@@ -1046,7 +1054,7 @@ class App:
 
 			# if given as error page handler
 			for exception_handler in self.server_exception_handlers:
-				if(resp:= exception_handler(req, ex)):
+				if(resp := exception_handler(req, ex)):
 					status, _resp_headers, body = App.response_body_to_parts(resp)
 					_resp_headers and resp_headers.extend(_resp_headers)
 					break
