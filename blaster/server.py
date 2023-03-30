@@ -142,6 +142,9 @@ class MissingBlasterArgumentException(Exception):
 		self.arg_type = arg_type
 		super().__init__(*args)
 
+	def __str__(self) -> str:
+		return super().__str__() + f" {self.arg_name}: {self.arg_type}"
+
 
 def raise_ex(ex):
 	raise ex

@@ -48,7 +48,10 @@ def stream_logs_loop():
 	while stream_logs_loop.can_run or not log_queue.empty():
 		log_item = log_queue.get()
 		for _handler in log_handlers:
-			_handler(log_item)
+			try:
+				_handler(log_item)
+			except Exception as ex:
+				print("Exception in log handler: {ex}")
 
 
 def create_es_log_handler(es_config):
@@ -67,43 +70,40 @@ def create_es_log_handler(es_config):
 	def log_handler(log_item):
 		nonlocal es_index_name
 		nonlocal start_of_today_timestamp
-		try:
-			log_timestamp = log_item.get("timestamp") or int(time.time() * 1000)
-			# create a new index if the log belongs to next day
-			if(log_timestamp > start_of_today_timestamp + _1_DAY_MILLIS):  # next day
-				_d = datetime.now()
-				start_of_today \
-					= datetime(year=_d.year, month=_d.month, day=_d.day)
+		log_timestamp = log_item.get("timestamp") or int(time.time() * 1000)
+		# create a new index if the log belongs to next day
+		if(log_timestamp > start_of_today_timestamp + _1_DAY_MILLIS):  # next day
+			_d = datetime.now()
+			start_of_today \
+				= datetime(year=_d.year, month=_d.month, day=_d.day)
 
-				start_of_today_timestamp = start_of_today.timestamp()
+			start_of_today_timestamp = start_of_today.timestamp()
 
-				es_index_name = "{}_{}".format(
-					es_base_index_name, start_of_today.strftime("%Y-%m-%d")
-				)
-				es_conn.indices.create(
-					index=es_index_name,
-					body={
-						"aliases": {
-							es_base_index_name: {}
-						},
-						"mappings": {
-							"dynamic": False,
-							"properties": {
-								"log_type": {"type": "keyword"},
-								"log_level": {"type": "keyword"},
-								"app": {"type": "keyword"},
-								"version": {"type": "keyword"},
-								"timestamp": {"type": "date", "format": "epoch_millis||yyyy-MM-dd HH:mm:ss"},
-								"payload": {"dynamic": True, "properties": {}}
-							}
-						}
+			es_index_name = "{}_{}".format(
+				es_base_index_name, start_of_today.strftime("%Y-%m-%d")
+			)
+			es_conn.indices.create(
+				index=es_index_name,
+				body={
+					"aliases": {
+						es_base_index_name: {}
 					},
-					ignore=400
-				)
+					"mappings": {
+						"dynamic": False,
+						"properties": {
+							"log_type": {"type": "keyword"},
+							"log_level": {"type": "keyword"},
+							"app": {"type": "keyword"},
+							"version": {"type": "keyword"},
+							"timestamp": {"type": "date", "format": "epoch_millis||yyyy-MM-dd HH:mm:ss"},
+							"payload": {"dynamic": True, "properties": {}}
+						}
+					}
+				},
+				ignore=400
+			)
 
-			es_conn.index(es_index_name, log_item)
-		except Exception as ex:
-			print("Exception streaming logs to elasticsearch:", str(ex), es_index_name)
+		es_conn.index(es_index_name, log_item)
 
 	return log_handler
 
