@@ -114,7 +114,8 @@ class MongoList(list):
 		value_to_remove = _pull.get(self.path, _OBJ_END_)
 		if(value_to_remove == _OBJ_END_):
 			_pull[self.path] = item  # first item to remove
-		else:
+		else: 
+			# if there are multiple items to remove, use $in
 			if(
 				isinstance(value_to_remove, dict)
 				and "$in" in value_to_remove

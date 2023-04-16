@@ -65,14 +65,17 @@ def make_nearrest_currency(val, f):
 '''
 	return UNITS (current absolute app units value), CURRENCY_CODE, VALUE_IN_CURRENCY_CODE
 '''
-NUM_REGEX = re.compile(r'[+-.]?[0-9]+(?:\.[0-9]+)?')
+NUM_REGEX = re.compile(r'[+-.]?[0-9][0-9,]*(?:\.[0-9]+)?')
 def parse_currency_string(currency_str, default_currency_code=DEFAULT_CURRENCY_CODE, country_code=None):
 	val = NUM_REGEX.findall(currency_str)
 	if(not val):
 		return 0, default_currency_code, 0
 
-	val = val[0]
-	currency_code = currency_str.replace(val, "").strip().upper()
+	val_str = val[0]
+	currency_code = None
+	if(_curreny_code := currency_str.replace(val_str, " ").split()):
+		currency_code = _curreny_code[0].upper()
+	val = val_str.replace(",", "")  # remove commas
 	if(not currency_code):
 		if(country_code):
 			currency_code = COUNTRY_DATA[country_code]["currency_code"]
@@ -83,13 +86,13 @@ def parse_currency_string(currency_str, default_currency_code=DEFAULT_CURRENCY_C
 	if(val[0] == "."):
 		val = "0." + val[1:].replace(".", "", 1)
 
-	val = float(val) # convert str to float
+	val = float(val)  # convert str to float
 	return int(val * 1000 * INR_EXCHANGE_RATE[currency_code]), currency_code, val
 
 
 def convert_currency(val, from_currency='APP_CURRENCY', to_currency='INR'):
 	# val / from_currency_inr_exchange -> inr  then multiply to_exchange rate 
-	return (val *  INR_EXCHANGE_RATE[to_currency.upper()]) / INR_EXCHANGE_RATE[from_currency.upper()]
+	return (val * INR_EXCHANGE_RATE[to_currency.upper()]) / INR_EXCHANGE_RATE[from_currency.upper()]
 
 
 # simply parse number , units
@@ -98,8 +101,13 @@ def parse_string_to_units(full_str, default_unit="EUR"):
 	if(not val):
 		return 0, default_unit
 
-	units_value = val[0]
-	units_code = full_str.replace(units_value, "").strip() or default_unit
+	val_str = val[0]
+	units_code = None
+	if(_units_code := full_str.replace(val_str, " ").split()):
+		units_code = _units_code[0]
+	units_code = units_code or default_unit
+
+	units_value = val_str.replace(",", "")  # remove any commas
 
 	if(units_value[0] == "."):
 		units_value = "0." + units_value[1:].replace(".", "", 1)

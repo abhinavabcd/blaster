@@ -137,10 +137,10 @@ def blaster_fork(num_procs):
 			client_sock = BufferedSocket(client_sock)
 			# keep track
 			tracked_connections.append(client_sock)
-			joinables.append(_thread:= Thread(target=read_data_from_other_process, args=(client_sock,)))
+			joinables.append(_thread := Thread(target=read_data_from_other_process, args=(client_sock,)))
 			_thread.start()
 
-		sock.close() # all child processes connected
+		sock.close()  # all child processes connected
 
 	else:
 		for i in range(3):
@@ -148,11 +148,9 @@ def blaster_fork(num_procs):
 				# cloned process, connect to the BROADCASTER SOCKET
 				sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 				sock.connect(multiproc_broadcaster_sock_address)
-				joinables.append(_thread:= Thread(target=read_data_from_other_process, args=(BufferedSocket(sock),)))
+				joinables.append(_thread := Thread(target=read_data_from_other_process, args=(BufferedSocket(sock),)))
 				_thread.start()
 				break
 			except Exception as ex:
 				print("waiting to connect to broadcaster :", ex)
 				time.sleep(0.1 * (i + 1))
-
-

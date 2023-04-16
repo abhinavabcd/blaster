@@ -43,6 +43,9 @@ from .utils.xss_html import XssHtml
 from .utils import events
 from .logging import LOG_APP_INFO, LOG_WARN, LOG_ERROR
 
+os.environ['TZ'] = 'UTC'
+time.tzset()
+
 # some useful constants
 INT64_MAX = 9223372036854775807
 MILLIS_IN_HOUR = 60 * 60 * 1000
@@ -306,7 +309,9 @@ def _bound_time(start, end, a, b, partial, params):
 			return (start, end, params)
 
 
-def iter_time_overlaps(a, b, x: str, partial=False):
+# tz_delta = UTC - local ( to dereive UTC times in current timezone)
+
+def iter_time_overlaps(a, b, x: str, tz_delta, partial=False):
 	x, *params = x.split("|")
 	if(isinstance(a, int)):
 		a = timestamp2date(a)
@@ -336,8 +341,9 @@ def iter_time_overlaps(a, b, x: str, partial=False):
 		for i in range(3):
 			time_match[i] = int(time_match[i])
 
+	# offset from start of day
 	offset_check_x = timedelta()
-	offset_check_y = timedelta()
+	offset_check_y = timedelta(hours=24)
 	if(time_matches):
 		hours, mins, secs, am_pm = time_matches[0]
 		if(am_pm):
@@ -376,19 +382,19 @@ def iter_time_overlaps(a, b, x: str, partial=False):
 				year = 2000 + year
 			time_range_end = datetime(year=year, month=month, day=day) + offset_check_y
 
-		_ret = _bound_time(time_range_start, time_range_end, a, b, partial, params)
+		_ret = _bound_time(time_range_start + tz_delta, time_range_end + tz_delta, a, b, partial, params)
 		if(_ret):
 			yield _ret
 
 	elif(day_matches):
 		start_day = DAYS_OF_WEEK.index(day_matches[0].lower())
 		if(start_day == -1):
-			return None
+			return []
 		extra_offset_y = timedelta()
 		if(len(day_matches) > 1):
 			end_day = DAYS_OF_WEEK.index(day_matches[1].lower())
 			if(end_day == -1):
-				return None
+				return []
 			if(end_day != start_day):
 				extra_offset_y = (
 					timedelta(hours=24) - offset_check_x  # next day
@@ -402,37 +408,37 @@ def iter_time_overlaps(a, b, x: str, partial=False):
 				)
 
 		t = a
-		while(t < b):
+		while(t <= b):
 			if(t.weekday() == start_day):
 				t_start_of_day = datetime(year=t.year, month=t.month, day=t.day)
 				_ret = _bound_time(
-					t_start_of_day + offset_check_x,
-					t_start_of_day + extra_offset_y + offset_check_y,
+					t_start_of_day + offset_check_x + tz_delta,
+					t_start_of_day + extra_offset_y + offset_check_y + tz_delta,
 					a, b, partial, params
 				)
 				if(_ret):
 					yield _ret
 			t += timedelta(days=1)  # increment by 1 day and keep on checking
-	else:
+	elif(time_matches):  # just times were given
 		if(offset_check_y < offset_check_x):
 			offset_check_y += timedelta(days=1)
 		t_start_of_day = datetime(a.year, a.month, a.day)
 		while(t_start_of_day < b):
 			_ret = _bound_time(
-				t_start_of_day + offset_check_x,
-				t_start_of_day + offset_check_y,
+				t_start_of_day + offset_check_x + tz_delta,
+				t_start_of_day + offset_check_y + tz_delta,
 				a, b, partial, params
 			)
 			if(_ret):
 				yield _ret
 			t_start_of_day += timedelta(days=1)
 
-	return
+	return []
 
 
 def get_time_overlaps(
 	a, b, include: list, exclude=None,
-	limit=10, partial=False, milliseconds=False
+	limit=10, partial=False, tz_delta=timedelta(), milliseconds=False
 ):
 	if(isinstance(include, str)):
 		include = include.split(",")
@@ -443,11 +449,10 @@ def get_time_overlaps(
 	heapq.heapify(buffer)
 	for x in include:
 		try:
-			it = iter_time_overlaps(a, b, x, partial=partial)
+			it = iter_time_overlaps(a, b, x, tz_delta, partial=partial)
 			heapq.heappush(buffer, (next(it), it))
 		except StopIteration:
 			pass
-
 	ret = []
 	while(len(ret) < limit and len(buffer) > 0):
 		time_range, it = heapq.heappop(buffer)
@@ -455,21 +460,33 @@ def get_time_overlaps(
 			heapq.heappush(buffer, (next(it), it))
 		except StopIteration:
 			pass
+		# check if it's excluded
 		if(
 			not exclude
-			or not get_time_overlaps(time_range[0], time_range[1], exclude, limit=1, partial=True)
+			or not get_time_overlaps(
+				time_range[0], time_range[1], exclude,
+				limit=1, partial=True, tz_delta=tz_delta
+			)
 		):
 			if(milliseconds):
 				ret.append(
 					(
-						int(time_range[0].timestamp() * 1000),
-						int(time_range[1].timestamp() * 1000),
+						int(date2timestamp(time_range[0]) * 1000),
+						int(date2timestamp(time_range[1]) * 1000),
 						*time_range[2:]
 					)
 				)
 			else:
 				ret.append(time_range)
 	return ret
+
+
+def get_start_of_day(t):
+	return datetime(year=t.year, month=t.month, day=t.day)
+
+
+def get_start_of_day_millis(millis):
+	return (millis // MILLIS_IN_DAY) * MILLIS_IN_DAY
 
 
 def find_index(a_list, value):
