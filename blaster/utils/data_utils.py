@@ -47,12 +47,13 @@ def reload_exchange_rates():
 # currencies END
 
 
-#### MIME_TYPES
+# MIME_TYPES
 __mime_types = json.loads(open(os.path.join(os.path.dirname(__file__), "data/mime_types.json")).read())
 FILE_EXTENSION_TO_MIME_TYPE = {k: v["mime_type"] for k, v in __mime_types.items()}
 MIME_TYPE_TO_EXTENSION = {v["mime_type"]: k for k, v in __mime_types.items()}
 
-#points  =
+
+# points  =
 def make_nearrest_currency(val, f):
 	val = int(val)
 	if val == 0:

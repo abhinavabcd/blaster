@@ -197,8 +197,8 @@ def from_kwargs(cls, **kwargs):
 	return ret
 
 
-def get_by_key_list(d, keyList, default=None):
-	for key in keyList:
+def get_by_key_list(d, key_list, default=None):
+	for key in key_list:
 		if(not d):
 			return default
 		if(isinstance(d, list)):
@@ -209,6 +209,16 @@ def get_by_key_list(d, keyList, default=None):
 		else:
 			d = d.get(key, None)
 	return d
+
+
+def set_by_key_list(d, key_list, value):
+	if(not key_list):
+		return
+	for key in key_list[0:-1]:
+		if(key not in d):
+			d[key] = {}
+		d = d[key]
+	d[key_list[-1]] = value
 
 
 def date2string(date):

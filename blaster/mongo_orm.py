@@ -17,7 +17,7 @@ from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError, OperationFailure
 from pymongo import ReturnDocument, ReadPreference
 from .tools import ExpiringCache, all_subclasses,\
-	cur_ms, list_diff2, batched_iter, _OBJ_END_
+	cur_ms, list_diff2, batched_iter, set_by_key_list, _OBJ_END_
 from .config import IS_DEV, MONGO_WARN_MAX_RESULTS_RATE,\
 	MONGO_MAX_RESULTS_AT_HIGH_SCAN_RATE,\
 	MONGO_WARN_MAX_QUERY_RESPONSE_TIME_SECONDS,\
@@ -206,9 +206,20 @@ class MongoDict(dict):
 		self._initializing = False
 
 	def __setitem__(self, k, v):
+		if(self._model_obj._is_new_):
+			set_by_key_list(
+				self._model_obj._set_query_updates,
+				(self.path + "." + str(k)).split("."),  # split by dot
+				v
+			)
+			super(MongoDict, self).__setitem__(
+				self.path, self._model_obj._set_query_updates[self.path]
+			)
+			return
+
 		if(not self._initializing):
 			self._model_obj._set_query_updates[self.path + "." + str(k)] = v
-		if(self._initializing):
+		else:
 			# recursively create custom dicts/list when
 			# loading object from db
 			if(isinstance(v, dict)):
@@ -279,7 +290,7 @@ class Model(object):
 	_is_secondary_shard = False
 
 	# ###instance level###
-	__is_new = True
+	_is_new_ = True
 	# this means the object is being initialized by this orm,
 	# and not available to user yet
 	_initializing = False
@@ -297,7 +308,7 @@ class Model(object):
 	def __init__(self, _is_new_=True, **values):
 
 		# defaults
-		self.__is_new = _is_new_
+		self._is_new_ = _is_new_
 		self._initializing = not _is_new_
 		self._set_query_updates = {}
 		self._other_query_updates = {}
@@ -506,7 +517,7 @@ class Model(object):
 		return tuple(self.pk().values())
 
 	def pk(self, renew=False):
-		if(not self._pk or renew or self.__is_new):
+		if(not self._pk or renew or self._is_new_):
 			ret = OrderedDict()
 			for k in self.__class__._pk_attrs.keys():
 				ret[k] = getattr(self, k)
@@ -546,7 +557,7 @@ class Model(object):
 		return ret
 
 	def _reset(self, doc):
-		self.__is_new = False  # this is not a new object
+		self._is_new_ = False  # this is not a new object
 		self._initializing = True
 
 		self.__check_and_set_initial_defaults(doc)
@@ -1221,7 +1232,7 @@ class Model(object):
 		cls = self.__class__
 		committed = False
 
-		if(self.__is_new):  # try inserting
+		if(self._is_new_):  # try inserting
 			cls._trigger_event(EVENT_BEFORE_CREATE, self)
 			if(not self._set_query_updates):
 				return self  # nothing to update
@@ -1312,7 +1323,7 @@ class Model(object):
 				if("_id" in self._set_query_updates):
 					del self._set_query_updates["_id"]
 
-		if(not self.__is_new and not committed):  # try updating
+		if(not self._is_new_ and not committed):  # try updating
 			# automatically picks up _set_query_updates inside .update function
 			is_committed = self.update({}, conditions=conditions)
 			if(not is_committed and not conditions):

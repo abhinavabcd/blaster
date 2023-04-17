@@ -23,7 +23,7 @@ from .tools import SanitizedDict,\
 	_OBJ_END_
 from .utils import events
 from .utils.data_utils import FILE_EXTENSION_TO_MIME_TYPE
-from .logging import LOG_ERROR, LOG_SERVER
+from .logging import LOG_ERROR, LOG_SERVER, LOG_WARN
 from .schema import Int, Object, Required, schema as schema_func
 from .websocket.server import WebSocketServerHandler
 from .config import IS_DEV, BLASTER_HTTP_TOOK_LONG_WARN_THRESHOLD
@@ -1056,10 +1056,12 @@ class App:
 			body = None
 
 			# if given as error page handler
+			log_handler = LOG_ERROR
 			for exception_handler in self.server_exception_handlers:
 				if(resp := exception_handler(req, ex)):
 					status, _resp_headers, body = App.response_body_to_parts(resp)
 					_resp_headers and resp_headers.extend(_resp_headers)
+					log_handler = LOG_WARN
 					break
 			if(isinstance(body, (dict, list))):
 				body = json.dumps(body)
@@ -1082,7 +1084,7 @@ class App:
 				b'Content-Length: ', str(len(body)), b'\r\n\r\n',
 				body
 			)
-			LOG_ERROR(
+			log_handler(
 				"http_error",
 				exception_str=str(ex),
 				stacktrace_string=stacktrace_string,
@@ -1231,7 +1233,7 @@ def static_file_handler(
 def proxy_file_handler(url_path, proxy_url):
 	import requests
 
-	def file_handler(req:Request, path):
+	def file_handler(req: Request, path):
 		ret = requests.get(proxy_url + path, headers=dict(req._headers), verify=False)
 		return {"Content-Type": ret.headers["Content-Type"]}, ret.text
 	return url_path + "{*path}", file_handler
