@@ -741,7 +741,6 @@ class Model(object):
 						**kwargs
 					)
 				except OperationFailure as ex:
-					LOG_ERROR("MONGO", desc=str(ex))
 					if ex.has_error_label("TransientTransactionError"):
 						time.sleep(0.03 * _update_retry_count)
 						continue
@@ -1557,7 +1556,8 @@ class DatabaseNode:
 				= _cached_mongo_clients[_mongo_clients_cache_key] \
 				= MongoClient(
 					host=hosts, replicaSet=replicaset,
-					username=username, password=password
+					username=username, password=password,
+					retryWrites=True
 				)
 
 		self._cached_pymongo_collections = {}

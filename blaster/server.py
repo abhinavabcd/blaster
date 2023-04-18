@@ -1085,7 +1085,7 @@ class App:
 				body
 			)
 			log_handler(
-				"http_error",
+				"http",
 				exception_str=str(ex),
 				stacktrace_string=stacktrace_string,
 				request_type=request_type,

@@ -453,7 +453,7 @@ def get_time_overlaps(
 	if(isinstance(include, str)):
 		include = include.split(",")
 	if(isinstance(exclude, str)):
-		include = include.split(",")
+		exclude = exclude.split(",")
 
 	buffer = []
 	heapq.heapify(buffer)
