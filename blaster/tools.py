@@ -697,9 +697,9 @@ def nsplit(_str, delimiter, n):
 # move it to seperate module ?
 # copied from internet sha1 token encode - decode module
 if hasattr(hmac, 'compare_digest'):  # python 3.3
-	_time_independent_equals = hmac.compare_digest
+	hmac_compare_digest = hmac.compare_digest
 else:
-	def _time_independent_equals(a, b):
+	def hmac_compare_digest(a, b):
 		if len(a) != len(b):
 			return False
 		result = 0
@@ -718,50 +718,34 @@ def utf8(value) -> bytes:
 	return value.encode("utf-8")
 
 
-def create_signed_value(name, value, secret):
-	timestamp = utf8(str(int(time.time())))
-	value = base64.b64encode(utf8(value))
-	signature = _create_signature(secret, name, value, timestamp)
-	signed_value = b"|".join([value, timestamp, signature])
+def create_signed_value(name, value, secret, expires_in=31 * SECONDS_IN_DAY):
+	timestamp = utf8(str(int(time.time() + expires_in)))
+	value = base64.b64encode(utf8(value))  # hide value
+	signature = hmac_hexdigest(secret, name, value, b"~", timestamp)
+	signed_value = b"|".join([value, b"~", timestamp, signature])
 	return signed_value
 
 
-def decode_signed_value(name, value, secret, max_age_days=-1):
+def decode_signed_value(name, value, secret, expiry_check=True):
 	if not value:
 		return None
-	parts = utf8(value).split(b"|")
-	if(len(parts) < 3):
-		return None
+	_value, *parts, _timestamp, _signature = utf8(value).split(b"|")
 	# check signature matches or not
-	signature = _create_signature(secret, name, parts[0], parts[1])
-	if not _time_independent_equals(parts[2], signature):
+	signature = hmac_hexdigest(secret, name, _value, *parts, _timestamp)
+	if not hmac_compare_digest(_signature, signature):
 		return None
-	if(max_age_days > 0):
-		timestamp = int(parts[1])
-		if timestamp < time.time() - max_age_days * 86400:
-			LOG_APP_INFO("cookie", msg="Expired cookie {:s}".format(value))
+
+	if(expiry_check):
+		expires_at = int(_timestamp)
+		if(time.time() > expires_at):
 			return None
-		if timestamp > time.time() + 31 * 86400:
-			# _cookie_signature does not hash a delimiter between the
-			# parts of the cookie, so an attacker could transfer trailing
-			# digits from the payload to the timestamp without altering the
-			# signature.  For backwards compatibility, sanity-check timestamp
-			# here instead of modifying _cookie_signature.
-			LOG_APP_INFO(
-				"cookie",
-				msg="Cookie timestamp in future; possible tampering {:s}".format(value)
-			)
-			return None
-	if parts[1].startswith(b"0"):
-		LOG_WARN("cookie", msg="Tampered cookie %r", value=value)
-		return None
 	try:
-		return base64.b64decode(parts[0])
+		return base64.b64decode(_value)
 	except Exception:
 		return None
 
 
-def _create_signature(secret, *parts):
+def hmac_hexdigest(secret, *parts) -> bytes:
 	hash = hmac.new(utf8(secret), digestmod=hashlib.sha1)
 	for part in parts:
 		hash.update(utf8(part))

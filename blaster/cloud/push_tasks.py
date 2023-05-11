@@ -11,7 +11,7 @@ import traceback
 import ujson as json
 import gevent
 from ..server import route, Request, is_server_running
-from ..tools import background_task, _create_signature, get_random_id, retry
+from ..tools import background_task, hmac_hexdigest, get_random_id, retry
 from ..connection_pool import use_connection_pool
 from ..utils import events
 from ..logging import LOG_ERROR, LOG_WARN, LOG_SERVER, LOG_DEBUG
@@ -30,7 +30,7 @@ def exec_push_task(raw_bytes_message: bytes, auth=None):
 	# check for authorization
 	if(
 		auth 
-		and _create_signature(auth, func_name) != message_payload.get("signature")
+		and hmac_hexdigest(auth, func_name) != message_payload.get("signature")
 	):
 		LOG_ERROR("push_tasks", desc="authorization failed", func=func_name)
 		
@@ -88,7 +88,7 @@ def post_task_to_sqs(push_tasks_sqs_url, message_body, sqs_client=None):
 @use_connection_pool(gcloudtasks_client="google_cloudtasks")
 def post_task_to_gcloud_tasks(queue_path, host, message_body: dict, gcloudtasks_client=None):
 	if(GCLOUD_TASKS_AUTH_SECRET):
-		message_body["signature"] = _create_signature(
+		message_body["signature"] = hmac_hexdigest(
 			GCLOUD_TASKS_AUTH_SECRET, message_body["func_v2"]
 		)
 
