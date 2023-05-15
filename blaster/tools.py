@@ -57,6 +57,8 @@ EPOCH = datetime.utcfromtimestamp(0)
 
 
 _OBJ_END_ = object()
+_1KB_ = 1024
+_16KB_ = _1KB_ * 16
 
 
 def cur_ms():
@@ -718,7 +720,7 @@ def utf8(value) -> bytes:
 	return value.encode("utf-8")
 
 
-def create_signed_value(name, value, secret, expires_in=31 * SECONDS_IN_DAY):
+def create_signed_value(name, value, secret, expires_in=31 * SECONDS_IN_DAY) -> bytes:
 	timestamp = utf8(str(int(time.time() + expires_in)))
 	value = base64.b64encode(utf8(value))  # hide value
 	signature = hmac_hexdigest(secret, name, value, b"~", timestamp)
@@ -726,7 +728,7 @@ def create_signed_value(name, value, secret, expires_in=31 * SECONDS_IN_DAY):
 	return signed_value
 
 
-def decode_signed_value(name, value, secret, expiry_check=True):
+def decode_signed_value(name, value, secret, expiry_check=True) -> bytes:
 	if not value:
 		return None
 	_value, *parts, _timestamp, _signature = utf8(value).split(b"|")

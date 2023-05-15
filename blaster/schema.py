@@ -6,7 +6,7 @@ import ujson as json
 from typing import get_type_hints
 from functools import partial
 
-from blaster.tools import _OBJ_END_
+from blaster.tools import _OBJ_END_, _16KB_
 # bare minimum validations and schema generators
 
 
@@ -95,7 +95,7 @@ class Str:
 	}
 
 	def __init__(
-		self, one_of=None, minlen=0, maxlen=4294967295,
+		self, one_of=None, minlen=1, maxlen=_16KB_,
 		regex=None, default=_OBJ_END_, _name=None,
 		before=None, **kwargs
 	):
@@ -229,7 +229,7 @@ class _Dict:
 			str if len(kv) < 2 else kv[-2], 
 			str if len(kv) < 1 else kv[-1]
 		)
-				
+
 class Object:
 	def __init__(self, default=_OBJ_END_, _required_=None, _name=None, **keys):
 		self._default = default
@@ -303,9 +303,12 @@ class Object:
 	def from_dict(cls, _dict: dict, default=_OBJ_END_):
 		ret = cls()
 		for _k, (k, _validator, _default) in cls._dict_key_to_object_key.items():
-			if((_v:= _dict.get(_k, _OBJ_END_)) != _OBJ_END_):
+			if((_v := _dict.get(_k, _OBJ_END_)) != _OBJ_END_):
 				# value exists
-				setattr(ret, k, _validator(_v))  
+				try:
+					setattr(ret, k, _validator(_v))
+				except Exception as ex:
+					raise Exception(f"key: {_k}/{k} failed validation: {_v} -> {ex}")
 			elif(_default != _OBJ_END_):
 				# key doesn't exists, if default exists it's set,
 				# else raises error with missing key
@@ -315,7 +318,7 @@ class Object:
 			else:
 				raise Exception(f"missing key: {_k}/{k}")
 		return ret
-		
+
 	def to_dict(self):
 		ret = {}
 		for k, attr_validation in self.__class__._validations.items():
@@ -432,7 +435,7 @@ def schema(x):
 		x._properties = _properties = {}
 		x._property_types = {}
 		x._required = _required = set()
-		x._dict_key_to_object_key = {} # used when converting json/dict to object
+		x._dict_key_to_object_key = {}  # used when converting json/dict to object
 
 		for k, _type in get_type_hints(x).items():
 			is_required = True
@@ -455,20 +458,23 @@ def schema(x):
 
 			# pure type to instance of schema types
 			_default = x.__dict__.get(k, _OBJ_END_)  # declaration default
-			if(x == int or x == Int):
+			if(_type == int or _type == Int):
 				_type = Int(default=_default)
 
-			elif(x == float):
+			elif(_type == float):
 				_type = Float(default=_default)
 
-			elif(x == str or x == Str):
+			elif(_type == str or _type == Str):
 				_type = Str(default=_default)
 
-			elif(x == Array or x == list):  # genric
-				_type = Array(default=list(_default))
+			elif(_type == Array or _type == list):  # genric
+				# make a copy if default exists
+				_default_copy = list(_default) if (_default and _default != _OBJ_END_) else _default
+				_type = Array(None, default=_default_copy)
 
-			elif(x == dict or x == Dict):  # generic without any attributes
-				_type = _Dict(default=dict(_default))
+			elif(_type == dict or _type == Dict):  # generic without any attributes
+				_default_copy = dict(_default) if (_default and _default != _OBJ_END_) else _default
+				_type = _Dict(None, None, default=_default_copy)
 
 			_schema_and_validation = schema(_type)
 			if(_schema_and_validation):
@@ -554,7 +560,7 @@ def schema(x):
 		return x._schema_, x.validate
 
 	else:
-		return None, lambda x: x
+		return {"AnyValue": {}}, lambda x: x
 
 
 # Defs, that require schema to be defined
