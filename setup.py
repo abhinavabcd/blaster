@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
 	name='blaster-server',
 	packages=find_packages() + ["blaster/utils/data"],
-	version='0.0.430b',
+	version='0.0.431b',
 	license='MIT',
 	description='Gevent based python server built from scratch for maximum performance',
 	author='Abhinav Reddy',                   # Type in your name
@@ -22,7 +22,6 @@ setup(
 		"python-dateutil>=2.8.1",
 		"requests>=2.25.1",
 		"requests-toolbelt>=0.9.1",
-		"PyMySQL>=0.9.3",
 		"urllib3>=1.26.4",
 		"metrohash-python>=1.1.3.3",
 		"PyYAML>=6.0"

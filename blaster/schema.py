@@ -57,12 +57,10 @@ class Number:
 		if(self.one_of):
 			_schema["enum"] = list(self.one_of)
 
-	def validate(self, e, default=_OBJ_END_):
+	def validate(self, e):
 		if(e == None):
 			if(self._default != _OBJ_END_):
 				return self._default
-			if(default != _OBJ_END_):
-				return default
 			raise TypeError("should be int")
 		if(isinstance(e, str) and len(e) > 50):
 			raise TypeError("should be valid int")
@@ -84,6 +82,21 @@ class Int(Number):
 class Float(Number):
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, _type=float, **kwargs)
+
+
+class Bool:
+	def __init__(self, default=_OBJ_END_, _name=None):
+		self._schema_ = _schema = {"type": "boolean"}
+		self._name = _name
+		if(default != _OBJ_END_):
+			_schema["default"] = default
+
+	def validate(self, e):
+		if(e == None):
+			if(self._default != _OBJ_END_):
+				return self._default
+			raise TypeError("should be boolean")
+		return bool(e)
 
 
 class Str:
@@ -125,18 +138,21 @@ class Str:
 		if(_fmt):
 			_schema["format"] = _fmt
 
-	def validate(self, e, default=_OBJ_END_):
+	def validate(self, e):
 		if(self.before):
 			e = (e != None) and self.before(e)
+		_default = self._default
 		if(e == None):
-			if(self._default != _OBJ_END_):
-				return self._default
-			if(default != _OBJ_END_):
-				return default
+			if(_default != _OBJ_END_):
+				return _default
 			raise TypeError("should be string")
 		if(not isinstance(e, str)):
 			e = str(e)
+		# e is a string now
 		if(len(e) < self.minlen):
+			if(not e):  # empty string allowed if minlen is 0 or default is set
+				if(_default != _OBJ_END_):
+					return _default
 			raise TypeError("should be minlen {:d}".format(self.minlen))
 		if(len(e) > self.maxlen):
 			e = e[:self.maxlen]
@@ -208,15 +224,12 @@ class _Dict:
 			"additionalProperties": schema(val_type)[0]
 		}
 
-	def validate(self, e, default=_OBJ_END_):
-		if(e == None):
+	def validate(self, e):
+		if(e == None or not isinstance(e, dict)):
 			if(self._default != _OBJ_END_):
-				return self._default
-			if(default != _OBJ_END_):
-				return default
+				return dict(self._default) if self._default != None else None
+			raise TypeError("should be a dict")
 
-		if(not isinstance(e, dict)):
-			return e
 		for k in list(e.keys()):
 			if(self.key_ype_validator(k) == None):
 				e.pop(k)
@@ -226,9 +239,10 @@ class _Dict:
 
 	def __getitem__(self, *kv):
 		return _Dict(
-			str if len(kv) < 2 else kv[-2], 
+			str if len(kv) < 2 else kv[-2],
 			str if len(kv) < 1 else kv[-1]
 		)
+
 
 class Object:
 	def __init__(self, default=_OBJ_END_, _required_=None, _name=None, **keys):
@@ -262,15 +276,10 @@ class Object:
 		self.__class__.validate(self)  # resets internal dict
 
 	@classmethod
-	def validate(cls, obj):  # obj -> instance of dict, cls, str
-		if(isinstance(obj, dict)):
-			return cls.from_dict(obj)
-		elif(isinstance(obj, str)):
-			return cls.from_dict(json.loads(obj))
-
+	def validate(cls, obj, set_obj=None):  # obj -> instance of dict, cls, str
 		# regular class instance
 		# validate __dict__ of the instance inplace
-		e = obj.__dict__
+		e = obj.__dict__ if not isinstance(obj, dict) else obj
 		k = None
 		attr_value = None
 		try:
@@ -287,6 +296,10 @@ class Object:
 
 				if(_validated_attr != attr_value):
 					e[k] = _validated_attr
+
+				if(set_obj):
+					setattr(set_obj, k, _validated_attr)
+
 			return obj
 		except Exception as ex:
 			raise TypeError({
@@ -296,27 +309,13 @@ class Object:
 				"schema": cls._properties[k]
 			})
 
-	def from_dict(self, _dict: dict, default=_OBJ_END_):
-		return self.__class__.from_dict(_dict, default=default)
-
 	@classmethod
-	def from_dict(cls, _dict: dict, default=_OBJ_END_):
+	def from_dict(cls, _dict: dict):
 		ret = cls()
-		for _k, (k, _validator, _default) in cls._dict_key_to_object_key.items():
-			if((_v := _dict.get(_k, _OBJ_END_)) != _OBJ_END_):
-				# value exists
-				try:
-					setattr(ret, k, _validator(_v))
-				except Exception as ex:
-					raise Exception(f"key: {_k}/{k} failed validation: {_v} -> {ex}")
-			elif(_default != _OBJ_END_):
-				# key doesn't exists, if default exists it's set,
-				# else raises error with missing key
-				setattr(ret, k, _default)
-			elif(default != _OBJ_END_):
-				return default
-			else:
-				raise Exception(f"missing key: {_k}/{k}")
+		for _k, k in cls._dict_key_to_object_key.items():
+			if(_k in _dict):
+				_dict[_k] = _dict.pop(_k)
+		cls.validate(_dict, set_obj=ret)
 		return ret
 
 	def to_dict(self):
@@ -364,7 +363,7 @@ def array_validation(_type, arr, simple_types=None, complex_validations=None, mi
 	# sequece
 	if(arr == None):
 		if(_type._default != _OBJ_END_):
-			return _type._default
+			return list(_type._default) if _type._default != None else None
 		if(nullable):
 			return None
 		raise TypeError("Cannot be none")
@@ -413,7 +412,7 @@ def array_validation(_type, arr, simple_types=None, complex_validations=None, mi
 # Dict[str, int]
 
 # given any instance/class, returns schema, _validation function
-def schema(x):
+def schema(x, _default=_OBJ_END_):
 
 	if(isinstance(x, _Optional)):
 		_schema, _validator = schema(x._types[0])
@@ -438,7 +437,11 @@ def schema(x):
 		x._dict_key_to_object_key = {}  # used when converting json/dict to object
 
 		for k, _type in get_type_hints(x).items():
-			is_required = True
+
+			# pure type to instance of schema types
+			_default_value = x.__dict__.get(k, _OBJ_END_)  # declaration default
+			is_required = _default_value == _OBJ_END_
+
 			if(
 				_type.__module__ == 'typing'
 				and getattr(_type, "__origin__", None) == typing.Union
@@ -456,38 +459,15 @@ def schema(x):
 				# required
 				_type = _type._types[0]
 
-			# pure type to instance of schema types
-			_default = x.__dict__.get(k, _OBJ_END_)  # declaration default
-			if(_type == int or _type == Int):
-				_type = Int(default=_default)
-
-			elif(_type == float):
-				_type = Float(default=_default)
-
-			elif(_type == str or _type == Str):
-				_type = Str(default=_default)
-
-			elif(_type == Array or _type == list):  # genric
-				# make a copy if default exists
-				_default_copy = list(_default) if (_default and _default != _OBJ_END_) else _default
-				_type = Array(None, default=_default_copy)
-
-			elif(_type == dict or _type == Dict):  # generic without any attributes
-				_default_copy = dict(_default) if (_default and _default != _OBJ_END_) else _default
-				_type = _Dict(None, None, default=_default_copy)
-
-			_schema_and_validation = schema(_type)
+			_schema_and_validation = schema(_type, _default=_default_value)
 			if(_schema_and_validation):
 				_properties[k], _validations[k] = _schema_and_validation
-				if(_default != _OBJ_END_):  # ? and not isinstance(_type, type)):
-					is_required = False
 
 				is_required and _required.add(k)
 				# keep track of propeties
 				x._property_types[k] = _type
-				dict_key = getattr(_type, "_name", None) or k
-				x._dict_key_to_object_key[dict_key] \
-					= (k, _validations[k], _default)
+				if(dict_key := getattr(_type, "_name", None)):
+					x._dict_key_to_object_key[dict_key] = k
 		# create schema
 		x._schema_ = ret = schema.defs[x.__name__] = {
 			"type": "object",
@@ -545,18 +525,63 @@ def schema(x):
 		)
 
 	elif(isinstance(x, Str)):
+		if(_default != _OBJ_END_):
+			x._default = _default
+			x._schema_["default"] = _default
 		return x._schema_, x.validate
 
 	elif(isinstance(x, Int)):
+		if(_default != _OBJ_END_):
+			x._default = _default
+			x._schema_["default"] = _default
 		return x._schema_, x.validate
 
 	elif(isinstance(x, _Dict)):
+		if(_default != _OBJ_END_):
+			x._default = _default
+			x._schema_["default"] = _default
 		return x._schema_, x.validate
 
 	elif(isinstance(x, Array)):  # Array(_types)
+		if(_default != _OBJ_END_):
+			x._default = _default
+			x._schema_["default"] = _default
+		return x._schema_, x.validate
+
+	elif(isinstance(x, Bool)):
+		if(_default != _OBJ_END_):
+			x._default = _default
+			x._schema_["default"] = _default
 		return x._schema_, x.validate
 
 	elif(isinstance(x, Object)):  # Object(id=Array)
+		if(_default != _OBJ_END_):
+			x._default = _default
+		return x._schema_, x.validate
+
+	elif(x == int or x == Int):
+		x = Int(default=_default)
+		return x._schema_, x.validate
+
+	elif(x == float):
+		x = Float(default=_default)
+		return x._schema_, x.validate
+
+	elif(x == str or x == Str):
+		x = Str(default=_default)
+		return x._schema_, x.validate
+
+	elif(x == Array or x == list):  # genric
+		# make a copy if default exists
+		x = Array(None, default=_default)
+		return x._schema_, x.validate
+
+	elif(x == dict or x == _Dict):  # generic without any attributes
+		x = _Dict(None, None, default=_default)
+		return x._schema_, x.validate
+
+	elif(x == bool or x == Bool):  # generic without any attributes
+		x = Bool(default=_default)
 		return x._schema_, x.validate
 
 	else:
