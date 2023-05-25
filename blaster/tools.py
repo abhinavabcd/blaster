@@ -1443,10 +1443,10 @@ def parse_cmd_line_arguments():
 CommandLineArgs = parse_cmd_line_arguments()
 
 
-def run_shell(cmd, output_parser=None, shell=False, max_buf=5000, fail=True):
+def run_shell(cmd, output_parser=None, shell=False, max_buf=5000, fail=True, state=None, env=None, **kwargs):
 
 	DEBUG_PRINT_LEVEL > 2 and print(f"#RUNNING: {cmd}")
-	state = DummyObject()
+	state = state if state != None else DummyObject()
 	state.total_output = ""
 	state.total_err = ""
 
@@ -1494,13 +1494,18 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000, fail=True):
 		cmd = shlex.split(cmd)
 
 	dup_stdin = os.dup(sys.stdin.fileno()) if shell else subprocess.PIPE
-	proc = subprocess.Popen(
+	_env = os.environ.copy()
+	if(env):
+		_env.update(env)
+
+	state.proc = proc = subprocess.Popen(
 		cmd,
 		stdin=dup_stdin,
 		stdout=subprocess.PIPE,
 		stderr=subprocess.PIPE,
 		shell=shell,
-		env=os.environ.copy()
+		env=_env,
+		**kwargs
 	)
 	state.is_running = True
 
@@ -1528,13 +1533,13 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000, fail=True):
 	# just keep printing error
 	# wait for process to terminate
 	ret_code = proc.wait()
-	if(ret_code and fail):
-		raise Exception(f"Non zero return code :{ret_code}")
 	state.return_code = ret_code
 	state.is_running = False
-
 	output_parser_thread.join()
 	err_parser_thread.join()
+	state.proc = None
+	if(ret_code and fail):
+		raise Exception(f"Non zero return code :{ret_code}")
 	return state
 
 

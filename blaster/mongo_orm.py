@@ -21,14 +21,13 @@ from .tools import ExpiringCache, all_subclasses,\
 from .config import IS_DEV, MONGO_WARN_MAX_RESULTS_RATE,\
 	MONGO_MAX_RESULTS_AT_HIGH_SCAN_RATE,\
 	MONGO_WARN_MAX_QUERY_RESPONSE_TIME_SECONDS,\
-	DEBUG_PRINT_LEVEL
+	DEBUG_PRINT_LEVEL, IS_TEST
 from gevent.threading import Thread
 from gevent import time
 from .logging import LOG_WARN, LOG_SERVER, LOG_ERROR
 
 _loading_errors = {}
 
-MONGO_RUNNING_IN_TEST_MODE = IS_DEV and int(environ.get("BLASTER_MONGO_RUNNING_IN_TEST_MODE") or 0)
 
 EVENT_BEFORE_DELETE = -2
 EVENT_AFTER_DELETE = -1
@@ -1874,7 +1873,7 @@ def initialize_model(_Model):
 			)
 		)
 
-	if(MONGO_RUNNING_IN_TEST_MODE):
+	if(IS_TEST):
 		# create indexes in test mode automatically
 		for pymongo_index, mongo_index_args in _pymongo_indexes_to_create.items():
 			print(
@@ -1884,7 +1883,7 @@ def initialize_model(_Model):
 			for db_node in _Model._db_nodes_:
 				db_node.get_collection(_Model).create_index(pymongo_index, **mongo_index_args)
 
-	if(_new_indexes and not MONGO_RUNNING_IN_TEST_MODE):
+	if(_new_indexes and not IS_TEST):
 		for _index in _new_indexes:
 			missing_index_creation_string = (
 				f"db.{_Model._collection_name_with_shard_}"
@@ -1921,7 +1920,7 @@ def initialize_model(_Model):
 				_loading_errors["index_options_changed"].append(index_options_changed)
 
 	# create secondary shards
-	for _secondary_shard_key in list(_Model._secondary_shards_.keys()): # iterate on copy
+	for _secondary_shard_key in list(_Model._secondary_shards_.keys()):  # iterate on copy
 		_secondary_shard = _Model._secondary_shards_[_secondary_shard_key]
 		if(not _secondary_shard.attrs):
 			_Model._secondary_shards_.pop(_secondary_shard_key)
@@ -1973,7 +1972,7 @@ def initialize_mongo(db_nodes, default_db_name=None):
 		db_nodes = [DatabaseNode(**db_node) for db_node in db_nodes]
 	else:
 		raise Exception(
-			"argument must be a list of dicts, or a single dict, not %s"%(type(db_nodes))
+			f"argument must be a list of dicts, or a single dict, not {type(db_nodes)}"
 		)
 	# check connection to mongodb
 	[db_node.mongo_client.server_info() for db_node in db_nodes]
@@ -1987,7 +1986,7 @@ def initialize_mongo(db_nodes, default_db_name=None):
 		if(not getattr(cls, "_db_name_", None)):
 			cls._db_name_ = default_db_name
 		initialize_model(cls)
-	
+
 	if(_loading_errors):
 		raise Exception("initialize_mongo has errors: Check error logs: " + str(_loading_errors))
 

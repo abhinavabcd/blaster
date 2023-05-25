@@ -12,6 +12,7 @@ import inspect
 IS_PROD = environ.get("IS_PROD") == "1"
 IS_STAGING = IS_PROD and environ.get("IS_STAGING") == "1"
 IS_DEV = 1 if not (IS_PROD or IS_STAGING) else 0
+IS_TEST = IS_DEV and environ.get("IS_TEST") == "1"
 
 # CRITICAL-50 ERROR-40  WARNING-30  INFO-20  DEBUG-10  NOTSET-0
 APP_NAME = ""
@@ -43,12 +44,14 @@ class Config:
                 config_files = [path]
             else:
                 config_files.append(os.path.join(path, "app.yaml"))
-                if(config.IS_DEV):
+                if(self.IS_DEV):
                     config_files.append(os.path.join(path, "dev.yaml"))
-                elif(config.IS_PROD):
+                    if(self.IS_TEST):
+                        config_files.append(os.path.join(path, "test.yaml"))
+                elif(self.IS_PROD):
                     config_files.append(os.path.join(path, "prod.yaml"))
                     config_files.append(os.path.join(path, "prod.secrets.yaml"))
-                    if(config.IS_STAGING):
+                    if(self.IS_STAGING):
                         config_files.append(os.path.join(path, "staging.yaml"))
                         config_files.append(os.path.join(path, "staging.secrets.yaml"))
             for f in config_files:
