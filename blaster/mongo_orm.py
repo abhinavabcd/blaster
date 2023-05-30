@@ -586,7 +586,7 @@ class Model(object):
 	def get_db_node(_Model, shard_key):
 		shard_key = str(shard_key) if shard_key != None else ""
 		# get 16 bit int
-		shard_key = int.from_bytes(metrohash.metrohash64(shard_key.encode()), 'big')
+		shard_key = metrohash.hash64_int(shard_key.encode())
 		# do a bin search to find (i, j] segment
 		# unfortunately if j == len(nodes) shouldn't happen, because the ring
 		# should cover full region

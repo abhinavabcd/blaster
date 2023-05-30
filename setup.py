@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
 	name='blaster-server',
 	packages=find_packages() + ["blaster/utils/data"],
-	version='0.0.432b',
+	version='0.0.433',
 	license='MIT',
 	description='Gevent based python server built from scratch for maximum performance',
 	author='Abhinav Reddy',                   # Type in your name
@@ -15,7 +15,7 @@ setup(
 	install_requires=[            # I get to this in a second
 		"wheel>=0.34.2",
 		"pytz>=2020.1",
-		"gevent>=20.9.0",
+		"gevent>=22.9.0",
 		"greenlet>=2.0.1",
 		"pymongo>=3.12.0",
 		"ujson>=2.0.3",
@@ -23,7 +23,7 @@ setup(
 		"requests>=2.25.1",
 		"requests-toolbelt>=0.9.1",
 		"urllib3>=1.26.4",
-		"metrohash-python>=1.1.3.3",
+		"metrohash>=0.3.3",
 		"PyYAML>=6.0"
 	],
 	classifiers=[

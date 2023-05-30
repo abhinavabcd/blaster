@@ -105,7 +105,7 @@ INT64_MAX = 9223372036854775807
 def TRACK_USER_EXPERIMENT(user_id, experiment_id, rollout=100, num_variants=2):
 	# consistent hash 0-INT64_MAX
 	user_exp_str = f"{experiment_id}{user_id}"
-	key = int.from_bytes(metrohash.metrohash64(user_exp_str.encode()), 'big')
+	key = metrohash.hash64_int(user_exp_str.encode())
 	d = key / INT64_MAX
 	# which variant ?
 	# in each variant only partial rollout , check if we qualify
