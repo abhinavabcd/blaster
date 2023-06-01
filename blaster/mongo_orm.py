@@ -1909,7 +1909,7 @@ def initialize_model(_Model):
 			if(existing_is_unique != is_unique):
 				index_options_changed = (
 					f"{existing_options} -> {_options} : you can delete and recreate "
-					f'Delete: db.{_Model._collection_name_with_shard_}.dropIndex("{existing_indexes[_index_keys][0]}") '
+					f'Delete: db.{_Model._collection_name_with_shard_}.dropIndex("{existing_index[0]}") '
 					f"Create: db.{_Model._collection_name_with_shard_}"
 					f".createIndex({json.dumps({x:y for x,y in _index})}, "
 					f"{json.dumps(_options)})"  # options

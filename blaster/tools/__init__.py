@@ -8,7 +8,7 @@ from gevent.threading import Thread
 from gevent.queue import Queue
 import os
 import sys
-import subprocess 
+import subprocess
 import shlex
 import collections
 import random
@@ -37,11 +37,11 @@ from io import BytesIO, StringIO
 import requests
 from http.client import HTTPConnection  # py3
 
-from .websocket._core import WebSocket
-from .config import IS_DEV, DEBUG_PRINT_LEVEL
-from .utils.xss_html import XssHtml
-from .utils import events
-from .logging import LOG_APP_INFO, LOG_WARN, LOG_ERROR
+from ..websocket._core import WebSocket
+from ..env import IS_DEV, DEBUG_PRINT_LEVEL
+from ..utils.xss_html import XssHtml
+from ..utils import events
+from ..logging import LOG_APP_INFO, LOG_WARN, LOG_ERROR, LOG_DEBUG
 
 os.environ['TZ'] = 'UTC'
 time.tzset()
@@ -139,7 +139,7 @@ class ExpiringCache:
 			return default
 		if(timestamp_and_value[0] > cur_ms()):
 			return timestamp_and_value[1]
-		self.cache.pop(key, None) # expired object
+		self.cache.pop(key, None)  # expired object
 		return default
 
 	def set(self, key, value):
@@ -1646,37 +1646,12 @@ def empty_func():
 _joinables = []
 
 
-# Background tasks START
-
-def __background_tasks_runner_thread(func, args=(), kwargs={}):
-	if(not __background_tasks_runner_thread.can_run_tasks):
-		LOG_WARN(
-			"background_threads",
-			msg="Cannot run background threads. Correct copepaths"
-		)
-		return
-
-	LOG_APP_INFO(
-		"background_threads", msg="starting background thread",
-		func=func.__name__
-	)
-	_thread_to_start = Thread(
-		target=func,
-		args=args,
-		kwargs=kwargs
-	)
-	_joinables.append(_thread_to_start)
-	_thread_to_start.start()
-
-
-__background_tasks_runner_thread.can_run_tasks = True
-
 # partioned queues
 _partitioned_background_task_queues = tuple(Queue() for _ in range(4))
 
 
-def _process_partitioned_task_queue_items(_queue):
-	while __background_tasks_runner_thread.can_run_tasks or not _queue.empty():
+def _process_task_queue(_queue):
+	while _process_task_queue.can_process or not _queue.empty():
 		func, args, kwargs = _queue.get()
 		_start_time = time.time()
 		try:
@@ -1700,18 +1675,26 @@ def _process_partitioned_task_queue_items(_queue):
 			)
 
 
+_process_task_queue.can_process = True
+_process_task_queue._background_thread_started = False
 # singleton
-def __start_task_processors():
-	# start threads to process entries in partitioned queues
+
+
+def start_background_task_processors():
+	if(_process_task_queue._background_thread_started):
+		return
+	_process_task_queue._background_thread_started = True
 	for _queue in _partitioned_background_task_queues:
-		__background_tasks_runner_thread(
-			_process_partitioned_task_queue_items, args=(_queue,)
+		_thread_to_start = Thread(
+			target=_process_task_queue,
+			args=(_queue,),
 		)
-	__start_task_processors.started = True
-
-
-# set initial flag
-__start_task_processors.started = False
+		LOG_APP_INFO(
+			"background_threads", msg="starting background tasks processor thread",
+			func=_process_task_queue.__name__
+		)
+		_thread_to_start.start()
+		_joinables.append(_thread_to_start)
 
 
 # submit a task:func to a partition
@@ -1719,11 +1702,15 @@ __start_task_processors.started = False
 # same order as submitted
 def submit_background_task(partition_key, func, *args, **kwargs):
 	# start processors if not started already
-	if(not __start_task_processors.started):
-		__start_task_processors()
-
 	if(partition_key == None):
 		partition_key = cur_ms()  # choose a random key
+
+	if(not _process_task_queue.can_process):
+		raise Exception("Cannot submit tasks to a queue which is not processing")
+
+	if(not _process_task_queue._background_thread_started):
+		start_background_task_processors()
+
 	_partitioned_background_task_queues[hash(str(partition_key)) % len(_partitioned_background_task_queues)]\
 		.put((func, args, kwargs))
 
@@ -1733,12 +1720,6 @@ def submit_background_task(partition_key, func, *args, **kwargs):
 def background_task(func):
 	def wrapper(*args, **kwargs):
 		# spawn the thread
-		if(not __background_tasks_runner_thread.can_run_tasks):
-			LOG_WARN(
-				"background_threads",
-				msg="Cannot run background threads as can_run flag is not set. Correct codepaths"
-			)
-			return
 		submit_background_task(None, func, *args, **kwargs)
 		return True
 
@@ -1750,14 +1731,10 @@ def background_task(func):
 @events.register_listener(["blaster_exit0"])
 def exit_0():
 	# start of exit - background threads cannot run
-	if(not __background_tasks_runner_thread.can_run_tasks):
-		return  # double calling function
-
-	__background_tasks_runner_thread.can_run_tasks = False
-
 	# push an empty function to queues to flush them off
-	for _partitioned_task_queue in _partitioned_background_task_queues:
-		_partitioned_task_queue.put((empty_func, [], {}))
+	_process_task_queue.can_process = False
+	for _queue in _partitioned_background_task_queues:
+		_queue.put((empty_func, [], {}))
 
 # Background tasks END
 
@@ -1769,7 +1746,7 @@ def exit_5():
 	for _joinable in _joinables:
 		_joinable.join()
 	_joinables.clear()
-	LOG_APP_INFO("background_threads", msg="cleanedup")
+	LOG_DEBUG("background_threads", msg="cleanedup")
 
 
 # calls a function after the function returns given by argument after

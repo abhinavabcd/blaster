@@ -23,7 +23,7 @@ from .tools import SanitizedDict,\
 	_OBJ_END_
 from .utils import events
 from .utils.data_utils import FILE_EXTENSION_TO_MIME_TYPE
-from .logging import LOG_ERROR, LOG_SERVER, LOG_WARN
+from .logging import LOG_ERROR, LOG_SERVER, LOG_WARN, LOG_DEBUG
 from .schema import Int, Object, Required, schema as schema_func
 from .websocket.server import WebSocketServerHandler
 from .config import IS_DEV, BLASTER_HTTP_TOOK_LONG_WARN_THRESHOLD
@@ -1116,9 +1116,10 @@ class App:
 		if(close_socket):
 			buffered_socket.close()
 
+
 @events.register_listener("blaster_exit0")
 def stop_all_apps():
-	LOG_SERVER("server_info", data="exiting all servers")
+	LOG_DEBUG("server_info", data="exiting all servers")
 	global _is_server_running
 
 	_is_server_running = False

@@ -314,7 +314,7 @@ class Object:
 		ret = cls()
 		for _k, k in cls._dict_key_to_object_key.items():
 			if(_k in _dict):
-				_dict[_k] = _dict.pop(_k)
+				_dict[k] = _dict.pop(_k)
 		cls.validate(_dict, set_obj=ret)
 		return ret
 

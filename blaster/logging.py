@@ -8,14 +8,11 @@ from gevent.queue import Queue
 from gevent.threading import Thread
 from logging import DEBUG, INFO, WARN, ERROR
 from .utils import events
-from .config import LOG_LEVEL, APP_VERSION, APP_NAME,\
+from .env import LOG_LEVEL, LOG_APP_NAME, LOG_APP_VERSION,\
 	CONSOLE_LOG_RAW_JSON
 from . import req_ctx
 
 # CRITICAL-50 ERROR-40  WARNING-30  INFO-20  DEBUG-10  NOTSET-0
-
-LOG_APP_NAME = os.getenv("LOG_APP_NAME") or APP_NAME or ""
-LOG_APP_VERSION = os.getenv("LOG_APP_VERSION") or APP_VERSION or ""
 
 _1_DAY_MILLIS = 24 * 60 * 60 * 1000
 _this_ = sys.modules[__name__]
@@ -143,7 +140,7 @@ def stop_log_streaming():
 @events.register_listener(["blaster_exit1"])
 def flush_and_exit_log_streaming():
 	# don't remove it , it will push an empty function to queues to flush them off
-	LOG(LOG_LEVEL, "log_flushing", msg="flushing logs and exiting")
+	LOG(DEBUG, "log_flushing", msg="flushing logs and exiting")
 
 	log_streaming_thread and log_streaming_thread.join()
 

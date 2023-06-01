@@ -2,24 +2,11 @@ from os import environ
 import sys
 import os
 import json
-import logging
 import inspect
 # NOTE: don't import anything from blaster library,
 # they may depend on config and won't load correctly.
 # keep it isolated as much as possible
-
-# default env variables
-IS_PROD = environ.get("IS_PROD") == "1"
-IS_STAGING = IS_PROD and environ.get("IS_STAGING") == "1"
-IS_DEV = 1 if not (IS_PROD or IS_STAGING) else 0
-IS_TEST = IS_DEV and environ.get("IS_TEST") == "1"
-
-# CRITICAL-50 ERROR-40  WARNING-30  INFO-20  DEBUG-10  NOTSET-0
-APP_NAME = ""
-APP_VERSION = "0"
-LOG_LEVEL = logging.DEBUG if IS_DEV else (logging.INFO if IS_STAGING else logging.WARN)
-DEBUG_PRINT_LEVEL = IS_DEV and int(environ.get("DEBUG_PRINT_LEVEL") or 0)
-
+from . import env
 
 _this_ = sys.modules[__name__]
 
@@ -29,7 +16,7 @@ class Config:
     frozen_keys = None
 
     def __init__(self):
-        self.frozen_keys = {k: v for k, v in vars(_this_).items() if not k.startswith("_")}
+        self.frozen_keys = {k: v for k, v in vars(env).items() if not k.startswith("_")}
         self._config = dict(self.frozen_keys)
 
     def load(self, *paths):
@@ -102,4 +89,3 @@ config.MONGO_WARN_MAX_RESULTS_RATE = 1000  # can scan at a max of 1000 / sec
 config.MONGO_MAX_RESULTS_AT_HIGH_SCAN_RATE = 10000  # cannot scan more than this at high scan rate
 config.MONGO_WARN_MAX_QUERY_RESPONSE_TIME_SECONDS = 3  # cannot take more than 3 seconds
 # Logging basics
-config.CONSOLE_LOG_RAW_JSON = False
