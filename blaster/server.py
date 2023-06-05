@@ -786,7 +786,7 @@ class App:
 
 		return status, response_headers, body
 
-	def process_http_request(self, buffered_socket):
+	def process_http_request(self, buffered_socket: BufferedSocket):
 		resuse_socket_for_next_http_request = True
 		# ignore request lines > 4096 bytes
 		request_line = buffered_socket.readuntil('\r\n', 4096, True)

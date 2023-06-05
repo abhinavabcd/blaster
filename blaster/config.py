@@ -25,7 +25,7 @@ class Config:
             path = os.path.join(
                 os.path.dirname(inspect.stack()[1][1]),  # caller file, called once usually, so no performance impact on app
                 path
-            )
+            ) if not path.startswith("/") else path
             config_files = []
             if(os.path.isfile(path)):
                 config_files = [path]
@@ -52,8 +52,8 @@ class Config:
         if(self._config == None):
             super().__setattr__(key, val)
             return
-        if(self.frozen_keys and key in self.frozen_keys and key in self._config):
-            # don't set frozen keys
+        if(self.frozen_keys and self.frozen_keys.get(key) != None):
+            # don't set frozen keys if already set
             return
         self._config[key] = val
 

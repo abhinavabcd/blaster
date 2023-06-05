@@ -2,7 +2,8 @@ import unittest
 from blaster import tools
 import time
 from blaster.tools import get_time_overlaps, retry,\
-	SanitizedDict, SanitizedList, ExpiringCache
+	SanitizedDict, SanitizedList, ExpiringCache,\
+	create_signed_value, decode_signed_value
 from datetime import datetime
 from blaster.utils.data_utils import parse_string_to_units,\
 	parse_currency_string
@@ -25,6 +26,18 @@ class TestSanitization(unittest.TestCase):
 		self.assertTrue(sl[2]["c"] == "&lt;c&gt;")
 		self.assertTrue(sl[3] == "&lt;e&gt;")
 
+
+class TestAuth(unittest.TestCase):
+	def test(self):
+		secret = "ijkl"
+		val = create_signed_value("abcd", "efgh", secret).decode('utf-8')
+		self.assertEqual(decode_signed_value("abcd", val, secret), b"efgh")
+
+		val = create_signed_value("abcd", "efgh2", secret, -1).decode('utf-8')
+		self.assertEqual(decode_signed_value("abcd", val, secret), None)
+
+		self.assertEqual(decode_signed_value("abcd", "asdasda", secret), None)
+		print("Auth tests passed")
 
 class TestTools(unittest.TestCase):
 	def test_overlaps(self):

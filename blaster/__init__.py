@@ -6,6 +6,8 @@ Created on 29-Nov-2017
 from gevent import monkey; monkey.patch_all()  # replaces read , write, send , sleep ...
 from gevent import local, signal_handler, signal
 import sys
+import os
+import inspect
 # override config module, hack
 from .config import config
 from .utils import events
@@ -36,3 +38,11 @@ def blaster_exit():
 
 # sigint event broadcast
 signal_handler(signal.SIGINT, blaster_exit)
+
+# load default config, scan the stack and load
+stack = inspect.stack()
+for i in range(1, len(stack)):
+	if(file := inspect.getfile(stack[i].frame)):
+		if(file.startswith("/")):
+			config.load(os.path.dirname(file))
+			break

@@ -721,24 +721,28 @@ def utf8(value) -> bytes:
 
 
 def create_signed_value(name, value, secret, expires_in=31 * SECONDS_IN_DAY) -> bytes:
-	timestamp = utf8(str(int(time.time() + expires_in)))
+	expires_at = utf8(str(int(time.time() + expires_in)))
 	value = base64.b64encode(utf8(value))  # hide value
-	signature = hmac_hexdigest(secret, name, value, b"~", timestamp)
-	signed_value = b"|".join([value, b"~", timestamp, signature])
+	# ~ to prevent changing value, timestamp but value + timestamp being same
+	signature = hmac_hexdigest(secret, name, value, b"~", expires_at)
+	signed_value = b"|".join([value, b"~", expires_at, signature])
 	return signed_value
 
 
 def decode_signed_value(name, value, secret, expiry_check=True) -> bytes:
 	if not value:
 		return None
-	_value, *parts, _timestamp, _signature = utf8(value).split(b"|")
+	_parts = utf8(value).split(b"|")
+	if len(_parts) < 3:
+		return None
+	_value, *parts, expires_at, _signature = _parts
 	# check signature matches or not
-	signature = hmac_hexdigest(secret, name, _value, *parts, _timestamp)
+	signature = hmac_hexdigest(secret, name, _value, *parts, expires_at)
 	if not hmac_compare_digest(_signature, signature):
 		return None
 
 	if(expiry_check):
-		expires_at = int(_timestamp)
+		expires_at = int(expires_at)
 		if(time.time() > expires_at):
 			return None
 	try:
@@ -1415,7 +1419,10 @@ class WebsocketConnection(WebSocket):
 
 def parse_cmd_line_arguments():
 	from sys import argv
-	args_map = {}
+	args = []
+	args_map = {
+		"args": args
+	}
 	i = 0
 	num_args = len(argv)
 	while(i < num_args):
@@ -1434,9 +1441,15 @@ def parse_cmd_line_arguments():
 				val = argv[i + 1]
 				i += 1
 			args_map[key] = val
+		else:
+			args.append(arg)
 
 		i += 1
 	return args_map
+
+
+# PARSE COMMAND LINE ARGUMENTS BY DEFAULT
+CommandLineArgs = parse_cmd_line_arguments()
 
 
 # PARSE COMMAND LINE ARGUMENTS BY DEFAULT

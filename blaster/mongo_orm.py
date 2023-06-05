@@ -24,7 +24,7 @@ from .config import IS_DEV, MONGO_WARN_MAX_RESULTS_RATE,\
 	DEBUG_PRINT_LEVEL, IS_TEST
 from gevent.threading import Thread
 from gevent import time
-from .logging import LOG_WARN, LOG_SERVER, LOG_ERROR
+from .logging import LOG_WARN, LOG_SERVER, LOG_ERROR, LOG_DEBUG
 
 _loading_errors = {}
 
@@ -395,7 +395,7 @@ class Model(object):
 			ret = list(chain(from_cache, cls.query(_query)))
 
 			# user supplied cache
-			if(use_cache and use_cache != True):
+			if(use_cache and use_cache is not True):
 				for _item in ret:
 					use_cache.set(_item.pk_tuple(), _item._original_doc)
 
@@ -700,18 +700,9 @@ class Model(object):
 				# get the shard where current object is
 				primary_shard_key = original_doc[cls._shard_key_]
 				primary_shard_collection = cls.get_collection(primary_shard_key)
-				# query and update the document
-				IS_DEV \
-					and DEBUG_PRINT_LEVEL > 8 \
-					and LOG_SERVER(
-						"MONGO", description="update before and query",
-						model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
-						query="_query", original_doc=str(original_doc),
-						update_query=str(_update_query)
-					)
 
 				if(
-					_transaction == True
+					_transaction is True
 					or (after_mongo_update and _transaction == None)
 				):
 					_transaction = {}  # use transaction
@@ -725,6 +716,16 @@ class Model(object):
 					original_doc.get("_", 0) + 1,
 					int(time.time() * 1000)
 				)
+
+				# query and update the document
+				IS_DEV \
+					and DEBUG_PRINT_LEVEL > 8 \
+					and LOG_DEBUG(
+						"MONGO", description="update before and query",
+						model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
+						query=str(_query), original_doc=str(original_doc),
+						update_query=str(_update_query)
+					)
 
 				# 1: try updating
 				try:
@@ -743,10 +744,11 @@ class Model(object):
 					if ex.has_error_label("TransientTransactionError"):
 						time.sleep(0.03 * _update_retry_count)
 						continue
+					raise ex
 
 				IS_DEV \
 					and DEBUG_PRINT_LEVEL > 8\
-					and LOG_SERVER(
+					and LOG_DEBUG(
 						"MONGO", description="after update",
 						model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
 						updated_doc=str(updated_doc)
@@ -1080,7 +1082,7 @@ class Model(object):
 		def query_collection(_Model, _collection, _query, offset=None):
 			IS_DEV \
 				and DEBUG_PRINT_LEVEL > 8 \
-				and LOG_SERVER(
+				and LOG_DEBUG(
 					"MONGO",
 					description="querying", model=_Model.__name__,
 					collection=COLLECTION_NAME(_collection),
@@ -1130,7 +1132,7 @@ class Model(object):
 
 						IS_DEV\
 							and DEBUG_PRINT_LEVEL > 8\
-							and LOG_SERVER(
+							and LOG_DEBUG(
 								"MONGO", description="requerying",
 								model=cls.__name__, query=str(_query)
 							)
@@ -1140,7 +1142,7 @@ class Model(object):
 							if(not item):
 								IS_DEV\
 									and DEBUG_PRINT_LEVEL > 8\
-									and LOG_SERVER(
+									and LOG_DEBUG(
 										"MONGO", description="missing from primary",
 										model=cls.__name__, _id=str(_id)
 									)
@@ -1251,7 +1253,7 @@ class Model(object):
 			)
 			IS_DEV \
 				and DEBUG_PRINT_LEVEL > 8 \
-				and LOG_SERVER(
+				and LOG_DEBUG(
 					"MONGO", description="new object values",
 					model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
 					set_query=str(self._set_query_updates)
@@ -1310,7 +1312,7 @@ class Model(object):
 				self.reset_and_update_cache(doc_in_db)
 				IS_DEV \
 					and DEBUG_PRINT_LEVEL > 8 \
-					and LOG_SERVER(
+					and LOG_DEBUG(
 						"MONGO", description="created a duplicate, refetching and updating",
 						model=cls.__name__,
 						collection=COLLECTION_NAME(primary_shard_collection),
@@ -1362,7 +1364,7 @@ class Model(object):
 		collection_shard.delete_one(_delete_query)
 		IS_DEV \
 			and DEBUG_PRINT_LEVEL > 8 \
-			and LOG_SERVER(
+			and LOG_DEBUG(
 				"MONGO", description="deleting from primary",
 				model=_Model.__name__, collection=COLLECTION_NAME(collection_shard),
 				delete_query=str(_delete_query)
