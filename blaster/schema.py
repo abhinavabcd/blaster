@@ -310,13 +310,18 @@ class Object:
 			})
 
 	@classmethod
-	def from_dict(cls, _dict: dict):
-		ret = cls()
-		for _k, k in cls._dict_key_to_object_key.items():
-			if(_k in _dict):
-				_dict[k] = _dict.pop(_k)
-		cls.validate(_dict, set_obj=ret)
-		return ret
+	def from_dict(cls, _dict: dict, default=_OBJ_END_):
+		try:
+			ret = cls()
+			for _k, k in cls._dict_key_to_object_key.items():
+				if(_k in _dict):
+					_dict[k] = _dict.pop(_k)
+			cls.validate(_dict, set_obj=ret)
+			return ret
+		except Exception as ex:
+			if(default != _OBJ_END_):
+				return default
+			raise ex
 
 	def to_dict(self):
 		ret = {}
@@ -349,6 +354,9 @@ def item_validation(e, simple_types=(), complex_validations=(), nullable=True):
 			if(_complex_validation(e)):
 				valid = True
 				break
+	# if no validations are given are we good
+	if(not simple_types and not complex_validations):
+		valid = True
 
 	if(valid):
 		return e
@@ -363,43 +371,25 @@ def array_validation(_type, arr, simple_types=None, complex_validations=None, mi
 	# sequece
 	if(arr == None):
 		if(_type._default != _OBJ_END_):
+			# None or copy of default
 			return list(_type._default) if _type._default != None else None
 		if(nullable):
 			return None
 		raise TypeError("Cannot be none")
+
 	if(not isinstance(arr, list)):
 		arr = json.loads(arr)
 
-	filter_nones = False
 	_prev_type = _OBJ_END_
 	for i in range(len(arr)):
-		valid = False
-		e = arr[i]
-		if(simple_types and isinstance(e, simple_types)):
-			valid = True
-		if(complex_validations):
-			for _complex_validation in complex_validations:
-				if(_complex_validation(e)):
-					valid = True
+		e = item_validation(arr[i], simple_types, complex_validations, nullable)
 		# check types should not mixed
 		if(not mix):  # single type, so check type matches with previous
 			_cur_type = type(e)
 			if(_prev_type == _OBJ_END_):
 				_prev_type = _cur_type
 			elif(_prev_type != _cur_type):
-				valid = False
-
-		if(not valid):
-			arr[i] = None
-			filter_nones = True
-
-	if(filter_nones and not nullable):  # null not allowed
-		n = len(arr)
-		i = n - 1
-		while(i >= 0):
-			if(arr[i] == None):
-				arr.pop(i)
-			i -= 1
+				raise TypeError(f"Array values should not be mixed types: {_prev_type} != {_cur_type}")
 
 	return arr
 

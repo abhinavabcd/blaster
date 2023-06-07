@@ -1016,7 +1016,6 @@ class App:
 
 			# resp.3.2 Send finalizing headers(content related only) and body
 			else:
-				# just a variable to track api type responses
 				if(isinstance(body, (dict, list))):
 					body = json.dumps(body)
 					buffered_socket.send(b'Content-Type: application/json\r\n')
