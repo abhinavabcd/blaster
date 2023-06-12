@@ -2,8 +2,8 @@ import unittest
 from blaster import tools
 import time
 from blaster.tools import get_time_overlaps, retry,\
-	SanitizedDict, SanitizedList, ExpiringCache,\
-	create_signed_value, decode_signed_value
+	ExpiringCache, create_signed_value, decode_signed_value
+from blaster.tools.sanitize_html import SanitizedDict, SanitizedList
 from datetime import datetime
 from blaster.utils.data_utils import parse_string_to_units,\
 	parse_currency_string

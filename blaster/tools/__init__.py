@@ -8,6 +8,7 @@ from gevent.threading import Thread
 from gevent.queue import Queue
 import os
 import sys
+import weakref
 import subprocess
 import shlex
 import collections
@@ -16,7 +17,6 @@ import string
 import socket
 import struct
 import fcntl
-import html
 import heapq
 from gevent import sleep
 from functools import reduce as _reduce
@@ -886,9 +886,9 @@ def list_diff(first, second):
 # no order
 def list_diff2(first, second, key=None):
 	if(not first and second):
-		return [], second
+		return [], list(second)
 	if(second == None):
-		return first, []
+		return list(first), []
 	if(key):
 		second_keys = set(map(key, second))
 		first_keys = set(map(key, first))
@@ -1093,116 +1093,6 @@ def batched_iter(iterable, n=1):
 			current_batch = []
 	if current_batch:
 		yield current_batch
-
-
-# custom containers ##########
-# SanitizedList and SanitizedDict are used for HTML safe operation
-# the idea is to wrap them to sanitizeContainers while inserting
-# rather than retrieving
-
-class SanitizedSetterGetter(object):
-	def __getitem__(self, k, escape_quotes=True, escape_html=True):
-		val = super().__getitem__(k)
-		if(escape_html and isinstance(val, str)):
-			# make it html safe
-			return html.escape(val, quote=escape_quotes)
-		return val
-
-	def __setitem__(self, key, val):
-		if(isinstance(val, dict)):
-			new_val = SanitizedDict()
-			for k, v in val.items():
-				new_val[k] = v  # calls __setitem__ nested way
-			super().__setitem__(key, new_val)
-
-		elif(isinstance(val, list)):
-			new_val = SanitizedList()
-			for i in val:
-				new_val.append(i)
-			super().__setitem__(key, new_val)
-		else:
-			super().__setitem__(key, val)
-
-
-class SanitizedList(SanitizedSetterGetter, list):
-
-	def __iter__(self):
-		# unoptimized but for this it's okay, always returns sanitized one
-		def sanitized(val):
-			if(isinstance(val, str)):
-				return html.escape(val, quote=True)
-			return val
-		return map(sanitized, list.__iter__(self))
-
-	def at(self, k, escape_quotes=True, escape_html=True):
-		self.__getitem__(
-			k,
-			escape_quotes=escape_quotes,
-			escape_html=escape_html
-		)
-
-	def extend(self, _list):
-		for val in _list:
-			# calls __setitem__ again
-			self.append(val)
-		# allow chaining
-		return self
-
-	def append(self, val):
-		if(isinstance(val, dict)):
-			new_val = SanitizedDict()
-			for k, v in val.items():
-				new_val[k] = v  # calls __setitem__ nested way
-			super().append(new_val)
-
-		elif(isinstance(val, list)):
-			new_val = SanitizedList()
-			for i in val:
-				new_val.append(i)
-			super().append(new_val)
-		else:
-			super().append(val)
-		# allow chaining
-		return self
-
-
-# intercepts all values setting and
-class SanitizedDict(SanitizedSetterGetter, dict):
-	# can pass escape_html=false if you want raw data
-	def get(self, key, default=None, escape_html=True, escape_quotes=True):
-		try:
-			val = self.__getitem__(
-				key,
-				escape_html=escape_html,
-				escape_quotes=escape_quotes
-			)
-			return val
-		except KeyError:
-			return default
-
-	def items(self):
-		# unoptimized but for this it's okay, always returns sanitized one
-		def sanitized(key_val):
-			key, val = key_val
-			if(isinstance(val, str)):
-				return (key, html.escape(val, quote=True))
-			return key_val
-		return map(sanitized, dict.items(self))
-
-	def update(self, another):
-		for k, v in another.items():
-			# calls __setitem__ again
-			self[k] = v
-		# allow chaining
-		return self
-
-
-class LowerKeyDict(dict):
-	def __getitem__(self, k):
-		return super().__getitem__(k.lower())
-
-	def get(self, k, default=None):
-		return super().get(k.lower(), default)
 
 
 # This is the most *important* socket wrapped implementation
@@ -1420,40 +1310,30 @@ class WebsocketConnection(WebSocket):
 def parse_cmd_line_arguments():
 	from sys import argv
 	args = []
-	args_map = {
-		"args": args
-	}
+	args_map = {}
 	i = 0
 	num_args = len(argv)
 	while(i < num_args):
 		arg = argv[i]
-		if(arg.startswith("--")):
+		if(arg.startswith("-")):
 			if("=" in arg):
 				key, val = arg.split("=", 1)
 				args_map[key.lstrip("-")] = val
 			else:
-				args_map[arg.lstrip("-")] = True
-		elif(arg.startswith("-")):  # Flags
-			key = arg.lstrip("-")
-			# if next argument doesn't start with - its considered as value
-			val = True
-			if (i + 1 < num_args and argv[i + 1][0] != "-"):
-				val = argv[i + 1]
-				i += 1
-			args_map[key] = val
+				next_arg = True
+				if(i + 1 < num_args and not argv[i + 1].startswith("-")):
+					next_arg = argv[i + 1]
+					i += 1
+				args_map[arg.lstrip("-")] = next_arg
 		else:
 			args.append(arg)
 
 		i += 1
-	return args_map
+	return args, args_map
 
 
 # PARSE COMMAND LINE ARGUMENTS BY DEFAULT
-CommandLineArgs = parse_cmd_line_arguments()
-
-
-# PARSE COMMAND LINE ARGUMENTS BY DEFAULT
-CommandLineArgs = parse_cmd_line_arguments()
+CommandLineArgs, CommandLineNamedArgs = parse_cmd_line_arguments()
 
 
 def run_shell(cmd, output_parser=None, shell=False, max_buf=5000, fail=True, state=None, env=None, **kwargs):
@@ -1855,3 +1735,19 @@ def cached_request(
 		return StringIO(bytes_buffer.read().decode())
 	else:
 		return bytes_buffer
+
+
+def memoized_method(func):
+	cache = {}
+
+	def wrapper(self, *args, **kwargs):
+		# need weakref otherwise cache will never be garbage collected
+		key = (weakref.ref(self), args, frozenset(kwargs.items()))
+		if key in cache:
+			return cache[key]
+		result = func(self, *args, **kwargs)
+		cache[key] = result
+		return result
+	setattr(wrapper, "_original", func)
+	wrapper.clear_cache = cache.clear
+	return wrapper
