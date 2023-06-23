@@ -200,17 +200,14 @@ def from_kwargs(cls, **kwargs):
 
 
 def get_by_key_list(d, key_list, default=None):
-	for key in key_list:
-		if(not d):
-			return default
-		if(isinstance(d, list)):
-			key = int(key)
-			if(key >= len(d) or key < 0):
-				return default  # dead end
+	try:
+		for key in key_list:
 			d = d[key]
-		else:
-			d = d.get(key, None)
-	return d
+		return d
+	except KeyError:
+		return default
+	except IndexError:
+		return default
 
 
 def set_by_key_list(d, key_list, value):
@@ -1678,7 +1675,7 @@ def all_subclasses(cls):
 def debug_requests_on():
 	import logging
 	'''Switches on logging of the requests module.'''
-	HTTPConnection.debuglevel = 1
+	HTTPConnection.debuglevel = 3
 	logging.basicConfig()
 	logging.getLogger().setLevel(logging.DEBUG)
 	requests_log = logging.getLogger("requests.packages.urllib3")

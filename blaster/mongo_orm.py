@@ -1223,7 +1223,7 @@ class Model(object):
 
 	@property
 	def updated_at(self):
-		return self._original_doc.get("_")
+		return self._original_doc.get("_", 0)
 
 	def commit(
 		self, force=False, ignore_exceptions=None,
@@ -1766,65 +1766,39 @@ def initialize_model(_Model):
 			_Model._collection_tracker_key_
 		)
 
+	# FIND ALL DB NODES THIS TABLE IS SHARED TO
 	if(_Model not in [CollectionTracker]):
 		collection_tracker = CollectionTracker.get(_Model._collection_tracker_key_)
-		if(
-			not collection_tracker
-			or not collection_tracker.db_nodes
-			or not collection_tracker.primary_shard_key
-		):
-			print(
-				"\n\n#MONGOORM_IMPORTANT_INFO : "
-				"Collection tracker entry not present for '{:s}'.."
-				"creating table in control node for this time in database '{:s}'. "
-				"You may want to talk to dba to move to a proper node".format(
-					_Model.__name__, _Model._db_name_
-				)
+		if(collection_tracker):
+			_Model._db_nodes_ = tuple(
+				DatabaseNode(**_db_node)
+					for _db_node in collection_tracker.db_nodes
 			)
-
-			# check if the _Model already has _db_nodes_
-			_collection_tracker_node = CollectionTracker._db_nodes_[0]
-			db_node = {
-				"hosts": _collection_tracker_node.hosts,
-				"replicaset": _collection_tracker_node.replicaset,
-				"at": 0,
-				"username": _collection_tracker_node.username,
-				"password": _collection_tracker_node.password,
-				"db_name": _Model._db_name_
-			}
-
-			collection_tracker = CollectionTracker(
-				_id=_Model._collection_tracker_key_,
-				db_nodes=[db_node],
-				is_primary_shard=1 if not _Model._is_secondary_shard else 0,
-				primary_shard_key=_Model._shard_key_,
-				secondary_shard_keys=list(_Model._secondary_shards_.keys()),
-				pk_attrs=list(_Model._pk_attrs.keys()),
-				attrs=list(_Model._attrs_.keys())
-			).commit(force=True)
-
-		# version < 101 support
-		if(not collection_tracker.attrs):
-			collection_tracker.attrs = list(_Model._attrs_.keys())
-			collection_tracker.commit()
-
-		_Model._db_nodes_ = tuple(
-			DatabaseNode(**_db_node)
-			for _db_node in collection_tracker.db_nodes
-		)
-		# TODO: find new secondary shards by comparing 
-		# collection_tracker.secondary_shard_keys, _Model._secondary_shards_.keys()
-		# and create a job to create and reindex all data to secondary index
-		if(
-			not _Model._is_secondary_shard
-			and _Model._secondary_shards_
-			and collection_tracker.primary_shard_key != _Model._shard_key_
-		):
-			raise Exception(
-				"\n\n#MONGO_EXCEPTION: Primary shard key changed for ",
-				_Model, 
-				"It has secondary shards, that point to primary shard key. ",
-				"You will have to drop shard secondary shards and force reindex everything again. "
+			if(
+				not _Model._is_secondary_shard
+				and _Model._secondary_shards_
+				and collection_tracker.primary_shard_key != _Model._shard_key_
+			):
+				raise Exception(
+					"\n\n#MONGO_EXCEPTION: Primary shard key changed for ",
+					_Model,
+					"It has secondary shards, that point to primary shard key. ",
+					"You will have to drop shard secondary shards and force reindex everything again. "
+				)
+		else:
+			# just single db node, initialize on the default db node given
+			init_db_node = CollectionTracker._db_nodes_[0]
+			_Model._db_nodes_ = (  # tuple
+				DatabaseNode(
+					**{
+						"hosts": init_db_node.hosts,
+						"replicaset": init_db_node.replicaset,
+						"at": 0,
+						"username": init_db_node.username,
+						"password": init_db_node.password,
+						"db_name": _Model._db_name_
+					}
+				),
 			)
 
 		# check if new attribute added to secondary shard
@@ -1976,12 +1950,12 @@ def initialize_mongo(db_nodes, default_db_name=None):
 		raise Exception(
 			f"argument must be a list of dicts, or a single dict, not {type(db_nodes)}"
 		)
-	# check connection to mongodb
+	# check connection to mongodbs
 	[db_node.mongo_client.server_info() for db_node in db_nodes]
 
 	# initialize control db
 	CollectionTracker._db_nodes_ = db_nodes
-	initialize_model([CollectionTracker])
+	initialize_model(CollectionTracker)
 
 	# set default db name for each class
 	for cls in all_subclasses(Model):

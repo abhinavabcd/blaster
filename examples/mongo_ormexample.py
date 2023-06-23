@@ -23,8 +23,6 @@ class SalesAgent(Model):
 				(company, load, {"unique": False})
 			]
 
-
-
 #call this function after you import all mongo db classes/models
 def initialize_mongo():
 	nodes = []
