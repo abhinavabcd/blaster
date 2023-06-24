@@ -749,7 +749,7 @@ def decode_signed_value(name, value, secret, expiry_check=True) -> bytes:
 
 
 def hmac_hexdigest(secret, *parts) -> bytes:
-	hash = hmac.new(utf8(secret), digestmod=hashlib.sha1)
+	hash = hmac.new(utf8(secret), digestmod=hashlib.sha256)
 	for part in parts:
 		hash.update(utf8(part))
 	return utf8(hash.hexdigest())
