@@ -24,7 +24,7 @@ from .tools.sanitize_html import SanitizedDict
 from .utils import events
 from .utils.data_utils import FILE_EXTENSION_TO_MIME_TYPE
 from .logging import LOG_ERROR, LOG_SERVER, LOG_WARN, LOG_DEBUG
-from .schema import Int, Object, Required, schema as schema_func
+from .schema import Object, Required, schema as schema_func
 from .websocket.server import WebSocketServerHandler
 from .config import IS_DEV, BLASTER_HTTP_TOOK_LONG_WARN_THRESHOLD
 
@@ -343,16 +343,13 @@ class Request:
 			raise MissingBlasterArgumentException(name, _type)
 		return wrapper
 
-	# create the value of the argument based on type, default
 	@classmethod
 	def arg_generator(cls, name, _type, default):
-		if(_type in (str, int, float)):
-			return lambda req: (_type(_val) if _val != None else None)\
-				if (_val := req.get(name, default)) != _OBJ_END_\
-				else raise_ex(
-					MissingBlasterArgumentException(name, _type)
-			)
-		elif(_type == Request):  # req: Request
+		'''
+			This should PREPROCESS as much as possible and return a function 
+			that create the argument from the request
+		'''
+		if(_type == Request):  # req: Request
 			return lambda req: req
 		elif(_type == Query):  # query: Query
 			return lambda req: req._params
@@ -360,19 +357,14 @@ class Request:
 			return lambda req: req._headers
 		elif(_type == Body):  # headers: Headers
 			return lambda req: req._body
-		elif(isinstance(_type, (Int, str))):
-			return lambda req: _type.validate(req.get(name), default=default)
 		elif(isinstance(_type, Query)):  # Query(id=str, abc=str)
 			return lambda req: _type.from_dict(req._params, default=default)
-
 		elif(isinstance(_type, Headers)):  # Headers('user-agent')
 			return lambda req: _type.from_dict(req._headers, default=default)
-
 		elif(isinstance(_type, Body)):
 			return lambda req: _type.from_dict(req._body, default=default)
 
-		# type should be class at this point
-		# if has an arg injector, use it
+		# prefer arg injector first if available
 		has_arg_creator_hook = _argument_creator_hooks.get(_type)
 		if(has_arg_creator_hook):
 			return Request.wrap_arg_hook_for_defaults(has_arg_creator_hook, name, _type, default)
@@ -390,6 +382,8 @@ class Request:
 			return lambda req: _type.from_dict(req, default=default)
 
 		else:
+			_, validate = schema_func(_type, _default=default)
+
 			def _no_type_arg(req):
 				ret = req.get(name, default=_OBJ_END_)
 				if(ret == _OBJ_END_):
@@ -397,7 +391,7 @@ class Request:
 						# Unknown field type
 						raise TypeError("{:s} field is required".format(name))
 					return default
-				return ret
+				return validate(ret)
 			return _no_type_arg
 
 	def to_dict(self):
@@ -794,6 +788,7 @@ class App:
 			return
 		post_data = None
 		req = req_ctx.req = Request(buffered_socket, req_ctx)
+		# set all usable timestamp variables at once
 		cur_millis \
 			= req_ctx.timestamp \
 			= req.timestamp \
@@ -1040,7 +1035,7 @@ class App:
 					wallclockms=_wallclock_ms
 				)
 				if(_wallclock_ms > BLASTER_HTTP_TOOK_LONG_WARN_THRESHOLD):
-					LOG_ERROR(
+					LOG_WARN(
 						"http_took_long", response_status=status, request_type=request_type,
 						path=request_path, content_length=content_length,
 						body_len=req._body_raw and len(req._body_raw),

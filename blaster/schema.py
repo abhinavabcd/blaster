@@ -66,9 +66,9 @@ class Number:
 			raise TypeError("should be valid int")
 		e = self._type(e)
 		if(self._min != _OBJ_END_ and e < self._min):
-			raise TypeError("should be minlen {:d}".format(self._min))
+			raise TypeError("should be min {:d}".format(self._min))
 		if(self._max != _OBJ_END_ and e > self._max):
-			raise TypeError("more than maxlen {:d}".format(self._max))
+			raise TypeError("more than max {:d}".format(self._max))
 		if(self.one_of and e not in self.one_of):
 			raise TypeError("should be one of {:d}".format(str(self.one_of)))
 		return e
@@ -88,6 +88,7 @@ class Bool:
 	def __init__(self, default=_OBJ_END_, _name=None):
 		self._schema_ = _schema = {"type": "boolean"}
 		self._name = _name
+		self._default = default
 		if(default != _OBJ_END_):
 			_schema["default"] = default
 
@@ -197,7 +198,7 @@ class Array:
 
 
 # Type definitions:
-# - Object 
+# - Object
 #  {"a": b, 1: 2...}
 
 # - Object(Str, Str)
@@ -378,7 +379,10 @@ def array_validation(_type, arr, simple_types=None, complex_validations=None, mi
 		raise TypeError("Cannot be none")
 
 	if(not isinstance(arr, list)):
-		arr = json.loads(arr)
+		if(isinstance(arr, str) and arr.startswith("[")):
+			arr = json.loads(arr)
+		else:
+			raise TypeError("Not an array type")
 
 	_prev_type = _OBJ_END_
 	for i in range(len(arr)):

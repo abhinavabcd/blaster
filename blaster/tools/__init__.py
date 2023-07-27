@@ -5,7 +5,7 @@ Created on 04-Nov-2017
 '''
 
 from gevent.threading import Thread
-from gevent.queue import Queue
+from gevent.queue import Queue, Empty as QueueEmptyException
 import os
 import sys
 import weakref
@@ -855,7 +855,7 @@ def is_valid_email(email):
 	return EMAIL_REGEX.match(email)
 
 
-SANITIZE_EMAIL_REGEX_NO_PLUS_ALLOWED = re.compile("\+[^@]*")
+SANITIZE_EMAIL_REGEX_NO_PLUS_ALLOWED = re.compile(r"\+[^@]*")
 
 
 def sanitize_email_id(email_id, plus_allowed=True):
@@ -1537,15 +1537,20 @@ _joinables = []
 
 
 # partioned queues
-_partitioned_background_task_queues = tuple(Queue() for _ in range(4))
+_partitioned_background_task_queues = None
 
 
 def _process_task_queue(_queue):
 	while _process_task_queue.can_process or not _queue.empty():
-		func, args, kwargs = _queue.get()
-		_start_time = time.time()
+		posted_at = 0
+		start_at = 0
 		try:
+			posted_at, func, args, kwargs = _queue.get(timeout=300)
+			start_at = cur_ms()
 			func(*args, **kwargs)
+		except QueueEmptyException:
+			LOG_DEBUG("background_task_queue_empty", _id=id(_queue))
+			continue
 		except Exception as ex:
 			stacktrace_string = traceback.format_exc()
 			LOG_ERROR(
@@ -1556,25 +1561,39 @@ def _process_task_queue(_queue):
 			)
 			IS_DEV and traceback.print_exc()
 
-		if((_elapsed_time := (time.time() - _start_time)) > 3):
-			# background tasks shouldn't run longer than 5 seconds
+		end_at = cur_ms()
+		exec_ms = end_at - start_at
+		delay_ms = end_at - posted_at
+		if(delay_ms > 10000):
+			# background tasks should be executed fast
+			# some tasks may be blocking the queue
 			LOG_WARN(
 				"background_task_perf",
 				func_name=func.__name__,
-				elapsed_millis=int(_elapsed_time * 1000),
+				delay_ms=delay_ms,
+				exec_ms=exec_ms
+			)
+		if(exec_ms > 3000):
+			LOG_WARN(
+				"background_task_took_long",
+				func_name=func.__name__,
+				delay_ms=delay_ms,
+				exec_ms=exec_ms
 			)
 
 
 _process_task_queue.can_process = True
-_process_task_queue._background_thread_started = False
 # singleton
 
 
-def start_background_task_processors():
-	if(_process_task_queue._background_thread_started):
+def start_background_task_processors(n):
+	global _partitioned_background_task_queues
+	if(_partitioned_background_task_queues != None):
 		return
-	_process_task_queue._background_thread_started = True
-	for _queue in _partitioned_background_task_queues:
+	_partitioned_background_task_queues = tuple()  # empty tuple, so we don't run this twice
+	_queues = []
+	for _ in range(n):
+		_queues.append(_queue := Queue())
 		_thread_to_start = Thread(
 			target=_process_task_queue,
 			args=(_queue,),
@@ -1585,6 +1604,7 @@ def start_background_task_processors():
 		)
 		_thread_to_start.start()
 		_joinables.append(_thread_to_start)
+	_partitioned_background_task_queues = tuple(_queues)
 
 
 # submit a task:func to a partition
@@ -1592,17 +1612,32 @@ def start_background_task_processors():
 # same order as submitted
 def submit_background_task(partition_key, func, *args, **kwargs):
 	# start processors if not started already
+	now_millis = cur_ms()
 	if(partition_key == None):
-		partition_key = cur_ms()  # choose a random key
+		partition_key = now_millis  # choose a random key
 
 	if(not _process_task_queue.can_process):
 		raise Exception("Cannot submit tasks to a queue which is not processing")
 
-	if(not _process_task_queue._background_thread_started):
-		start_background_task_processors()
+	# wait for processors to start
+	while(not _partitioned_background_task_queues):
+		from blaster.config import NUM_BACKGROUND_TASK_PROCESSORS
+		start_background_task_processors(NUM_BACKGROUND_TASK_PROCESSORS or 4)
+		LOG_APP_INFO(
+			"background_threads_starting",
+			msg="waiting for background tasks processors to start",
+		)
+		sleep(0.1)
 
-	_partitioned_background_task_queues[hash(str(partition_key)) % len(_partitioned_background_task_queues)]\
-		.put((func, args, kwargs))
+	_queue = _partitioned_background_task_queues[hash(str(partition_key)) % len(_partitioned_background_task_queues)]
+	_queue.put((now_millis, func, args, kwargs))
+	try:
+		_item = _queue.peek(block=False)  # this won't block or raise exception
+		delay = _item[0] - now_millis
+		if(delay > 15000):
+			LOG_WARN("background_task_queue_long_delay", queue_id=id(_queue), delay_ms=delay)
+	except QueueEmptyException:
+		pass
 
 
 # decorator to be used for a short io tasks to be
@@ -1622,9 +1657,10 @@ def background_task(func):
 def exit_0():
 	# start of exit - background threads cannot run
 	# push an empty function to queues to flush them off
-	_process_task_queue.can_process = False
-	for _queue in _partitioned_background_task_queues:
-		_queue.put((empty_func, [], {}))
+	if(_partitioned_background_task_queues):
+		_process_task_queue.can_process = False
+		for _queue in _partitioned_background_task_queues:
+			_queue.put((cur_ms(), empty_func, [], {}))
 
 # Background tasks END
 
