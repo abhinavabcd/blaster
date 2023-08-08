@@ -47,11 +47,11 @@
         "mime_type": "application/font-tdpfr",
         "description": ""
     },
-    ".gz": {
+    ".tgz": {
         "mime_type": "application/x-gzip",
         "description": ""
     },
-    ".tgz": {
+    ".gz": {
         "mime_type": "application/x-gzip",
         "description": ""
     },
@@ -91,15 +91,15 @@
         "mime_type": "application/marc",
         "description": ""
     },
-    ".ma": {
-        "mime_type": "application/mathematica",
-        "description": ""
-    },
     ".mb": {
         "mime_type": "application/mathematica",
         "description": ""
     },
     ".nb": {
+        "mime_type": "application/mathematica",
+        "description": ""
+    },
+    ".ma": {
         "mime_type": "application/mathematica",
         "description": ""
     },
@@ -123,10 +123,6 @@
         "mime_type": "application/mp4",
         "description": ""
     },
-    ".doc": {
-        "mime_type": "application/msword",
-        "description": "Microsoft Word is a popular word processor program which has existed in a number of versions for DOS, Windows, and the Macintosh. It is often distributed as part of the Microsoft Office suite. Various native file formats have been used, and some other non-Word-specific formats can also be opened and saved.Please note the more modern .docx file extension does not use this mime type."
-    },
     ".dot": {
         "mime_type": "application/msword",
         "description": "Microsoft Word is a popular word processor program which has existed in a number of versions for DOS, Windows, and the Macintosh. It is often distributed as part of the Microsoft Office suite. Various native file formats have been used, and some other non-Word-specific formats can also be opened and saved.Please note the more modern .docx file extension does not use this mime type."
@@ -135,15 +131,15 @@
         "mime_type": "application/msword",
         "description": "Microsoft Word is a popular word processor program which has existed in a number of versions for DOS, Windows, and the Macintosh. It is often distributed as part of the Microsoft Office suite. Various native file formats have been used, and some other non-Word-specific formats can also be opened and saved.Please note the more modern .docx file extension does not use this mime type."
     },
+    ".doc": {
+        "mime_type": "application/msword",
+        "description": "Microsoft Word is a popular word processor program which has existed in a number of versions for DOS, Windows, and the Macintosh. It is often distributed as part of the Microsoft Office suite. Various native file formats have been used, and some other non-Word-specific formats can also be opened and saved.Please note the more modern .docx file extension does not use this mime type."
+    },
     ".mxf": {
         "mime_type": "application/mxf",
         "description": ""
     },
     ".a": {
-        "mime_type": "application/octet-stream",
-        "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
-    },
-    ".bin": {
         "mime_type": "application/octet-stream",
         "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
     },
@@ -208,6 +204,10 @@
         "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
     },
     ".so": {
+        "mime_type": "application/octet-stream",
+        "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
+    },
+    ".bin": {
         "mime_type": "application/octet-stream",
         "description": "This MIME type is used for binary files, it's usuall a fallback for unknown/generic MIMEs with no specific designation."
     },
@@ -619,11 +619,11 @@
         "mime_type": "application/vnd.data-vision.rdz",
         "description": ""
     },
-    ".deb": {
+    ".udeb": {
         "mime_type": "application/x-debian-package",
         "description": ""
     },
-    ".udeb": {
+    ".deb": {
         "mime_type": "application/x-debian-package",
         "description": ""
     },
@@ -1203,15 +1203,15 @@
         "mime_type": "application/vnd.ms-excel",
         "description": ""
     },
-    ".xls": {
-        "mime_type": "application/vnd.ms-excel",
-        "description": ""
-    },
     ".xlt": {
         "mime_type": "application/vnd.ms-excel",
         "description": ""
     },
     ".xlw": {
+        "mime_type": "application/vnd.ms-excel",
+        "description": ""
+    },
+    ".xls": {
         "mime_type": "application/vnd.ms-excel",
         "description": ""
     },
@@ -1267,11 +1267,11 @@
         "mime_type": "application/vnd.ms-powerpoint",
         "description": ""
     },
-    ".ppt": {
+    ".pwz": {
         "mime_type": "application/vnd.ms-powerpoint",
         "description": ""
     },
-    ".pwz": {
+    ".ppt": {
         "mime_type": "application/vnd.ms-powerpoint",
         "description": ""
     },
@@ -1295,11 +1295,11 @@
         "mime_type": "application/vnd.ms-powerpoint.template.macroenabled.12",
         "description": ""
     },
-    ".mpp": {
+    ".mpt": {
         "mime_type": "application/vnd.ms-project",
         "description": ""
     },
-    ".mpt": {
+    ".mpp": {
         "mime_type": "application/vnd.ms-project",
         "description": ""
     },
@@ -1667,10 +1667,6 @@
         "mime_type": "application/vnd.sqlite3",
         "description": "SQLite is a self-contained, serverless, zero-configuration, transactional SQL database engine. The code for SQLite is in the public domain and is thus free for use for any purpose, commercial or private."
     },
-    ".sqlite": {
-        "mime_type": "application/vnd.sqlite3",
-        "description": "SQLite is a self-contained, serverless, zero-configuration, transactional SQL database engine. The code for SQLite is in the public domain and is thus free for use for any purpose, commercial or private."
-    },
     ".sqlite3": {
         "mime_type": "application/vnd.sqlite3",
         "description": "SQLite is a self-contained, serverless, zero-configuration, transactional SQL database engine. The code for SQLite is in the public domain and is thus free for use for any purpose, commercial or private."
@@ -1688,6 +1684,10 @@
         "description": "SQLite is a self-contained, serverless, zero-configuration, transactional SQL database engine. The code for SQLite is in the public domain and is thus free for use for any purpose, commercial or private."
     },
     ".sqlite-shm": {
+        "mime_type": "application/vnd.sqlite3",
+        "description": "SQLite is a self-contained, serverless, zero-configuration, transactional SQL database engine. The code for SQLite is in the public domain and is thus free for use for any purpose, commercial or private."
+    },
+    ".sqlite": {
         "mime_type": "application/vnd.sqlite3",
         "description": "SQLite is a self-contained, serverless, zero-configuration, transactional SQL database engine. The code for SQLite is in the public domain and is thus free for use for any purpose, commercial or private."
     },
@@ -2311,11 +2311,11 @@
         "mime_type": "application/x-pkcs7-certificates",
         "description": ""
     },
-    ".pyc": {
+    ".pyo": {
         "mime_type": "application/x-python-code",
         "description": ""
     },
-    ".pyo": {
+    ".pyc": {
         "mime_type": "application/x-python-code",
         "description": ""
     },
@@ -2419,15 +2419,15 @@
         "mime_type": "application/xhtml+xml",
         "description": ""
     },
-    ".xml": {
-        "mime_type": "application/xml",
-        "description": ""
-    },
     ".xpdl": {
         "mime_type": "application/xml",
         "description": ""
     },
     ".xsl": {
+        "mime_type": "application/xml",
+        "description": ""
+    },
+    ".xml": {
         "mime_type": "application/xml",
         "description": ""
     },
@@ -2539,11 +2539,11 @@
         "mime_type": "audio/mpeg",
         "description": "MP3 is the name commonly given to the audio formats specified by MPEG-1 Layer III and MPEG-2 Layer III, standardized as ISO/IEC 11172-3:1993, with some additions in ISO/IEC 13818-3:1995. It uses lossy compressed data.MP3 is based in part on work by the Fraunhofer Institute, which held patents in the format. Other companies may also have held patents encumbering its implementation. One of the relevant patents was U.S. Patent 5,812,672, which expired in September 2015; many other related patents in various countries expired earlier. The final expiration of all relevant patents took until 2017, however, due to some \"submarine patents\" which were kept in the application process for years, extending their expiration dates. A modified version of DCT compression (Discrete cosine transform) is used, a lossy compression method also used in JPEG images.ID3 tags are often used to provide metadata in MP3 files, though they aren't part of the MP3 specification."
     },
-    ".mp3": {
+    ".mpga": {
         "mime_type": "audio/mpeg",
         "description": "MP3 is the name commonly given to the audio formats specified by MPEG-1 Layer III and MPEG-2 Layer III, standardized as ISO/IEC 11172-3:1993, with some additions in ISO/IEC 13818-3:1995. It uses lossy compressed data.MP3 is based in part on work by the Fraunhofer Institute, which held patents in the format. Other companies may also have held patents encumbering its implementation. One of the relevant patents was U.S. Patent 5,812,672, which expired in September 2015; many other related patents in various countries expired earlier. The final expiration of all relevant patents took until 2017, however, due to some \"submarine patents\" which were kept in the application process for years, extending their expiration dates. A modified version of DCT compression (Discrete cosine transform) is used, a lossy compression method also used in JPEG images.ID3 tags are often used to provide metadata in MP3 files, though they aren't part of the MP3 specification."
     },
-    ".mpga": {
+    ".mp3": {
         "mime_type": "audio/mpeg",
         "description": "MP3 is the name commonly given to the audio formats specified by MPEG-1 Layer III and MPEG-2 Layer III, standardized as ISO/IEC 11172-3:1993, with some additions in ISO/IEC 13818-3:1995. It uses lossy compressed data.MP3 is based in part on work by the Fraunhofer Institute, which held patents in the format. Other companies may also have held patents encumbering its implementation. One of the relevant patents was U.S. Patent 5,812,672, which expired in September 2015; many other related patents in various countries expired earlier. The final expiration of all relevant patents took until 2017, however, due to some \"submarine patents\" which were kept in the application process for years, extending their expiration dates. A modified version of DCT compression (Discrete cosine transform) is used, a lossy compression method also used in JPEG images.ID3 tags are often used to provide metadata in MP3 files, though they aren't part of the MP3 specification."
     },
@@ -2551,11 +2551,11 @@
         "mime_type": "audio/ogg",
         "description": ""
     },
-    ".ogg": {
+    ".spx": {
         "mime_type": "audio/ogg",
         "description": ""
     },
-    ".spx": {
+    ".ogg": {
         "mime_type": "audio/ogg",
         "description": ""
     },
@@ -2675,11 +2675,11 @@
         "mime_type": "gcode",
         "description": "GCODE files are created by slicing programs, such as Simplify3D and Slic3r, that translate CAD drawings into G-Code, which a 3D printer can read.There's no official mimetype assigned as far as the author is aware, however these are the ones commonly reported."
     },
-    ".avif": {
+    ".avifs": {
         "mime_type": "image/avif",
         "description": "AVIF (AV1 Image File Format) is an image and animation file format, an extension of HEIF allowing images encoded with AV1. Most files will only have AV1-encoded images, but a mixture of different encodings is allowed. Early draft versions were named AV1 Still Image File Format."
     },
-    ".avifs": {
+    ".avif": {
         "mime_type": "image/avif",
         "description": "AVIF (AV1 Image File Format) is an image and animation file format, an extension of HEIF allowing images encoded with AV1. Most files will only have AV1-encoded images, but a mixture of different encodings is allowed. Early draft versions were named AV1 Still Image File Format."
     },
@@ -2751,11 +2751,11 @@
         "mime_type": "image/prs.btif",
         "description": ""
     },
-    ".svg": {
+    ".svgz": {
         "mime_type": "image/svg+xml",
         "description": ""
     },
-    ".svgz": {
+    ".svg": {
         "mime_type": "image/svg+xml",
         "description": ""
     },
@@ -3047,11 +3047,11 @@
         "mime_type": "model/vrml",
         "description": ""
     },
-    ".ics": {
+    ".ifb": {
         "mime_type": "text/calendar",
         "description": ""
     },
-    ".ifb": {
+    ".ics": {
         "mime_type": "text/calendar",
         "description": ""
     },
@@ -3075,10 +3075,6 @@
         "mime_type": "text/javascript",
         "description": "JavaScript (sometimes abbreviated JS) is a scripting language commonly implemented as part of a web browser in order to create enhanced user interfaces and dynamic websites, but also used in other contexts (such as server-side JavaScript).This is not the same as Java. People constantly get confused about that.JavaScript was originally developed at Netscape by Brendan Eich (who later became Mozilla CEO... very briefly), where it was originally called LiveScript while under development, but became JavaScript (with the name licensed from Sun) in order to capitalize on the popularity of Java, though the languages aren't really related (although there are some similarities in syntax). Later, a Microsoft implementation designed to be (more or less) compatible was called JScript, and an attempt at a formally standardized version of the language was published by ECMA as ECMAScript.The node.js runtime environment is (mostly) implemented in JavaScript, as are applications running within it.Due to its status as the only scripting language for browsers, JavaScript skyrocketed in popularity in the 2000's and 2010's and as of 2017 serves as a lingua franca of Web development. Arguably, it is currently the world's most popular programming language (it tops GitHub and StackOverflow currently)."
     },
-    ".md": {
-        "mime_type": "text/markdown",
-        "description": "Markdown is a lightweight and human readable markup format for text formatting created by John Gruber and Aaron Swartz. It is similar to various forms of wiki markup. There is no formal specification for the original Markdown, and it has ambiguities that are handled inconsistently by different implementations.An attempt to improve on this situation was done (released 2014-09) by a group unrelated to the originators of Markdown, and was originally dubbed Standard Markdown until John Gruber objected to this name, and it was first renamed \"Common Markdown\" and later CommonMark. Markdeep is an extended Markdown implemented in JavaScript for web use."
-    },
     ".markdown": {
         "mime_type": "text/markdown",
         "description": "Markdown is a lightweight and human readable markup format for text formatting created by John Gruber and Aaron Swartz. It is similar to various forms of wiki markup. There is no formal specification for the original Markdown, and it has ambiguities that are handled inconsistently by different implementations.An attempt to improve on this situation was done (released 2014-09) by a group unrelated to the originators of Markdown, and was originally dubbed Standard Markdown until John Gruber objected to this name, and it was first renamed \"Common Markdown\" and later CommonMark. Markdeep is an extended Markdown implemented in JavaScript for web use."
@@ -3088,6 +3084,10 @@
         "description": "Markdown is a lightweight and human readable markup format for text formatting created by John Gruber and Aaron Swartz. It is similar to various forms of wiki markup. There is no formal specification for the original Markdown, and it has ambiguities that are handled inconsistently by different implementations.An attempt to improve on this situation was done (released 2014-09) by a group unrelated to the originators of Markdown, and was originally dubbed Standard Markdown until John Gruber objected to this name, and it was first renamed \"Common Markdown\" and later CommonMark. Markdeep is an extended Markdown implemented in JavaScript for web use."
     },
     ".markdn": {
+        "mime_type": "text/markdown",
+        "description": "Markdown is a lightweight and human readable markup format for text formatting created by John Gruber and Aaron Swartz. It is similar to various forms of wiki markup. There is no formal specification for the original Markdown, and it has ambiguities that are handled inconsistently by different implementations.An attempt to improve on this situation was done (released 2014-09) by a group unrelated to the originators of Markdown, and was originally dubbed Standard Markdown until John Gruber objected to this name, and it was first renamed \"Common Markdown\" and later CommonMark. Markdeep is an extended Markdown implemented in JavaScript for web use."
+    },
+    ".md": {
         "mime_type": "text/markdown",
         "description": "Markdown is a lightweight and human readable markup format for text formatting created by John Gruber and Aaron Swartz. It is similar to various forms of wiki markup. There is no formal specification for the original Markdown, and it has ambiguities that are handled inconsistently by different implementations.An attempt to improve on this situation was done (released 2014-09) by a group unrelated to the originators of Markdown, and was originally dubbed Standard Markdown until John Gruber objected to this name, and it was first renamed \"Common Markdown\" and later CommonMark. Markdeep is an extended Markdown implemented in JavaScript for web use."
     },
@@ -3247,10 +3247,6 @@
         "mime_type": "text/x-asm",
         "description": ""
     },
-    ".c": {
-        "mime_type": "text/x-c",
-        "description": ""
-    },
     ".cc": {
         "mime_type": "text/x-c",
         "description": ""
@@ -3275,8 +3271,8 @@
         "mime_type": "text/x-c",
         "description": ""
     },
-    ".f": {
-        "mime_type": "text/x-fortran",
+    ".c": {
+        "mime_type": "text/x-c",
         "description": ""
     },
     ".f77": {
@@ -3288,6 +3284,10 @@
         "description": ""
     },
     ".for": {
+        "mime_type": "text/x-fortran",
+        "description": ""
+    },
+    ".f": {
         "mime_type": "text/x-fortran",
         "description": ""
     },
@@ -3363,15 +3363,15 @@
         "mime_type": "video/mj2",
         "description": ""
     },
-    ".mp4": {
-        "mime_type": "video/mp4",
-        "description": "MP4 usually refers to the multimedia file format defined in Part 14 (and to a lesser extent Part 1) of the MPEG-4 standard. \"MP4\" could also mean the entire MPEG-4 standard, or some other subset of MPEG-4. MPEG-4 Part 14 is an application of Part 12. The recommended extension for it is \".mp4\", though \".m4a\" is often used for audio-only files. It is standardized by ISO/IEC 14496-14."
-    },
     ".mp4v": {
         "mime_type": "video/mp4",
         "description": "MP4 usually refers to the multimedia file format defined in Part 14 (and to a lesser extent Part 1) of the MPEG-4 standard. \"MP4\" could also mean the entire MPEG-4 standard, or some other subset of MPEG-4. MPEG-4 Part 14 is an application of Part 12. The recommended extension for it is \".mp4\", though \".m4a\" is often used for audio-only files. It is standardized by ISO/IEC 14496-14."
     },
     ".mpg4": {
+        "mime_type": "video/mp4",
+        "description": "MP4 usually refers to the multimedia file format defined in Part 14 (and to a lesser extent Part 1) of the MPEG-4 standard. \"MP4\" could also mean the entire MPEG-4 standard, or some other subset of MPEG-4. MPEG-4 Part 14 is an application of Part 12. The recommended extension for it is \".mp4\", though \".m4a\" is often used for audio-only files. It is standardized by ISO/IEC 14496-14."
+    },
+    ".mp4": {
         "mime_type": "video/mp4",
         "description": "MP4 usually refers to the multimedia file format defined in Part 14 (and to a lesser extent Part 1) of the MPEG-4 standard. \"MP4\" could also mean the entire MPEG-4 standard, or some other subset of MPEG-4. MPEG-4 Part 14 is an application of Part 12. The recommended extension for it is \".mp4\", though \".m4a\" is often used for audio-only files. It is standardized by ISO/IEC 14496-14."
     },
@@ -3391,11 +3391,11 @@
         "mime_type": "video/mpeg",
         "description": ""
     },
-    ".mpeg": {
+    ".mpg": {
         "mime_type": "video/mpeg",
         "description": ""
     },
-    ".mpg": {
+    ".mpeg": {
         "mime_type": "video/mpeg",
         "description": ""
     },
@@ -3403,11 +3403,11 @@
         "mime_type": "video/ogg",
         "description": ""
     },
-    ".mov": {
+    ".qt": {
         "mime_type": "video/quicktime",
         "description": ""
     },
-    ".qt": {
+    ".mov": {
         "mime_type": "video/quicktime",
         "description": ""
     },
@@ -3415,11 +3415,11 @@
         "mime_type": "video/vnd.fvt",
         "description": ""
     },
-    ".m4u": {
+    ".mxu": {
         "mime_type": "video/vnd.mpegurl",
         "description": ""
     },
-    ".mxu": {
+    ".m4u": {
         "mime_type": "video/vnd.mpegurl",
         "description": ""
     },

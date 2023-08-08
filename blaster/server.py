@@ -17,7 +17,7 @@ from gevent.socket import socket as GeventSocket
 from gevent.server import StreamServer
 from requests_toolbelt.multipart import decoder
 
-from . import req_ctx
+from . import req_ctx, __version__
 from .tools import set_socket_fast_close_options,\
 	BufferedSocket, ltrim, _OBJ_END_
 from .tools.sanitize_html import SanitizedDict
@@ -143,7 +143,7 @@ class MissingBlasterArgumentException(Exception):
 		super().__init__(*args)
 
 	def __str__(self) -> str:
-		return super().__str__() + f" {self.arg_name}: {self.arg_type}"
+		return super().__str__() + f"missing argument: {self.arg_name}"
 
 
 def raise_ex(ex):
@@ -417,7 +417,7 @@ class App:
 		self.route_handlers = []
 		self.request_handlers = []
 		# error
-		self.server_exception_handlers = server_exception_handlers or []
+		self.server_exception_handlers = server_exception_handlers or [App.default_server_exception_handler]
 
 	def route(
 		self,
@@ -453,6 +453,11 @@ class App:
 			return func
 
 		return wrapper
+
+	@staticmethod
+	def default_server_exception_handler(req: Request, ex: Exception):
+		if(isinstance(ex, MissingBlasterArgumentException)):
+			return 502, [], str(ex)
 
 	def start(self, port=80, handlers=[], **ssl_args):
 		# sort descending order of the path lengths
@@ -625,7 +630,7 @@ class App:
 		regex_path = regex_path\
 			.replace("\\.", ".")\
 			.replace("{+", "{")\
-			.replace("{*", "{")  # openapi doesn't support yet
+			.replace("{*", "{")  # openapi doesn't support regex yet
 
 		self.openapi["paths"][regex_path] = _api = {}
 		func = handler["func"]
@@ -1123,7 +1128,10 @@ def stop_all_apps():
 
 
 # create a global app for generic single server use
-DefaultApp = App(title="Blaster", description="Built for speed and rapid prototyping..", version="0.0.368")
+DefaultApp = App(
+	title="Blaster", description="Built for speed and rapid prototyping..",
+	version=__version__
+)
 
 # generic global route handler
 route = DefaultApp.route
