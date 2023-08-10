@@ -417,7 +417,8 @@ class App:
 		self.route_handlers = []
 		self.request_handlers = []
 		# error
-		self.server_exception_handlers = server_exception_handlers or [App.default_server_exception_handler]
+		self.server_exception_handlers = server_exception_handlers\
+			if server_exception_handlers != None else []
 
 	def route(
 		self,
@@ -453,11 +454,6 @@ class App:
 			return func
 
 		return wrapper
-
-	@staticmethod
-	def default_server_exception_handler(req: Request, ex: Exception):
-		if(isinstance(ex, MissingBlasterArgumentException)):
-			return 502, [], str(ex)
 
 	def start(self, port=80, handlers=[], **ssl_args):
 		# sort descending order of the path lengths
