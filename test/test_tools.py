@@ -18,13 +18,27 @@ class TestSanitization(unittest.TestCase):
 		self.assertTrue(sd.get("a") == sd["a"] == "&lt;a&gt;")
 		self.assertTrue(sd["d"]["e"] == "&lt;e&gt;")
 
+		# test iterator
+		for k, v in sd.items():
+			if(isinstance(v, SanitizedDict)):
+				for k1, v1 in v.items():
+					self.assertTrue(">" not in v1)
+			else:
+				self.assertTrue(">" not in v)
+
 		sl = SanitizedList(["<a>", "<b>"])
 		sl.append({"c": "<c>", "d": "<d>"})
-		sl.extend(["<e>", "<f>"])
-
+		sl.extend(["<e>", "<f> <>><><><<<>>"])
+		sl.append(["<g>", "<h>"])
 		self.assertTrue(sl[0] == "&lt;a&gt;")
-		self.assertTrue(sl[2]["c"] == "&lt;c&gt;")
-		self.assertTrue(sl[3] == "&lt;e&gt;")
+		self.assertTrue(sl[2]["c"] == "&lt;c&gt;")  # test dict in a list
+		# test iterator
+		for i in sl:
+			if(isinstance(i, SanitizedList)):
+				for j in i:
+					self.assertTrue(">" not in j)
+			else:
+				self.assertTrue(">" not in i)
 
 
 class TestAuth(unittest.TestCase):
@@ -38,6 +52,7 @@ class TestAuth(unittest.TestCase):
 
 		self.assertEqual(decode_signed_value("abcd", "asdasda", secret), None)
 		print("Auth tests passed")
+
 
 class TestTools(unittest.TestCase):
 	def test_overlaps(self):
@@ -150,7 +165,7 @@ class TestTools(unittest.TestCase):
 
 		l2 = tools.remove_duplicates([{"a": 1}, {"a":1}, {"a": 2}, {"a": 2}], key=lambda x:x.get("a"))
 		self.assertEqual(l2, [{"a": 1}, {"a": 2}])
-		
+
 	def test_expiring_cache(self):
 		c = ExpiringCache(10, ttl=1000)
 		c.set(1, 2)
@@ -167,8 +182,6 @@ class TestTools(unittest.TestCase):
 			c.set(i, i) 
 		# when last item is added, it expired first 4 items
 		self.assertEqual(len(c.to_son()), 5)
-
-		
 
 
 if __name__ == "__main__":

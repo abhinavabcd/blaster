@@ -49,10 +49,10 @@ class Config:
                     setattr(self, k, v)
 
     def __setattr__(self, key, val):
-        if(self._config == None):
+        if(self._config is None):
             super().__setattr__(key, val)
             return
-        if(self.frozen_keys and self.frozen_keys.get(key) != None):
+        if(self.frozen_keys and self.frozen_keys.get(key) is not None):
             # don't set frozen keys if already set
             return
         self._config[key] = val

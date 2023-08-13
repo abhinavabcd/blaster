@@ -135,7 +135,7 @@ class ExpiringCache:
 
 	def get(self, key, default=None):
 		timestamp_and_value = self.cache.get(key, _OBJ_END_)
-		if(timestamp_and_value == _OBJ_END_):
+		if(timestamp_and_value is _OBJ_END_):
 			return default
 		if(timestamp_and_value[0] > cur_ms()):
 			return timestamp_and_value[1]
@@ -187,7 +187,7 @@ class ExpiringCache:
 def to_son(obj):
 	ret = obj.__dict__
 	for k in ret.keys():
-		if(ret[k] == None):
+		if(ret[k] is None):
 			del ret[k]
 	return ret
 
@@ -593,9 +593,9 @@ def get_str_id():
 
 
 def is_almost_equal(a, b, max_diff=0.01):
-	if(a == None and b == None):
+	if(a is None and b is None):
 		return True
-	if(a == None or b == None):
+	if(a is None or b is None):
 		return False
 	diff = abs(a - b)
 	if(diff < max_diff):
@@ -884,7 +884,7 @@ def list_diff(first, second):
 def list_diff2(first, second, key=None):
 	if(not first and second):
 		return [], list(second)
-	if(second == None):
+	if(second is None):
 		return list(first), []
 	if(key):
 		second_keys = set(map(key, second))
@@ -905,10 +905,9 @@ class DummyObject:
 	entries = None
 
 	def __init__(self, entries=None, **kwargs):
-		self.entries = entries or {}
+		self.entries = entries if entries is not None else {}
 		if(kwargs):
-			self.entries = _entries = dict(entries)
-			_entries.update(kwargs)
+			self.entries.update(kwargs)
 
 	def __setattr__(self, key, val):
 		if(self.entries):
@@ -1205,7 +1204,7 @@ class BufferedSocket():
 
 	def __getattr__(self, key):
 		ret = getattr(self.sock, key, _OBJ_END_)
-		if(ret == _OBJ_END_):
+		if(ret is _OBJ_END_):
 			raise AttributeError()
 		return ret
 
@@ -1336,7 +1335,7 @@ CommandLineArgs, CommandLineNamedArgs = parse_cmd_line_arguments()
 def run_shell(cmd, output_parser=None, shell=False, max_buf=5000, fail=True, state=None, env=None, **kwargs):
 
 	DEBUG_PRINT_LEVEL > 2 and print(f"#RUNNING: {cmd}")
-	state = state if state != None else DummyObject()
+	state = state if state is not None else DummyObject()
 	state.total_output = ""
 	state.total_err = ""
 
@@ -1516,12 +1515,12 @@ def retry(num_retries=2, ignore_exceptions=None, max_time=5000):
 
 def original_function(func):
 	_original = getattr(func, "_original", _OBJ_END_)
-	if(_original != _OBJ_END_):
+	if(_original is not _OBJ_END_):
 		return _original
 
 	while(True):
 		func_wrapped = getattr(func, "__wrapped__", _OBJ_END_)
-		if(func_wrapped == _OBJ_END_):
+		if(func_wrapped is _OBJ_END_):
 			break
 		func = func_wrapped
 
@@ -1535,76 +1534,87 @@ def empty_func():
 # when server shutsdown
 _joinables = []
 
+# BACKGROUND TASKS
+tasks_queue = Queue()  # all tasks queued including their parition keys
+partitioned_task_runners = {}  # threads that are running tasks for each partition
+partitioned_task_queues = {}
 
-# partioned queues
-_partitioned_background_task_queues = None
+paritions_signalled_to_reap = Queue()  # signal that a parition has finished it's tasks
 
 
-def _process_task_queue(_queue):
-	while _process_task_queue.can_process or not _queue.empty():
-		posted_at = 0
-		start_at = 0
+def _partitioned_tasks_runner(partition_key):
+	_queue = partitioned_task_queues[partition_key]
+	while(_task := _queue.get()):  # idenfinitely waits for task until None (flushed)
+		_, queued_at, func, args, kwargs = _task
+		# call the function
+		now_millis = cur_ms()
+		if((delay := now_millis - queued_at) > 4000):
+			LOG_WARN("background_task_delay", delay=delay, func=func.__name__, partition_key=partition_key)
+
 		try:
-			posted_at, func, args, kwargs = _queue.get(timeout=300)
-			start_at = cur_ms()
 			func(*args, **kwargs)
-		except QueueEmptyException:
-			LOG_DEBUG("background_task_queue_empty", _id=id(_queue))
-			continue
 		except Exception as ex:
-			stacktrace_string = traceback.format_exc()
-			LOG_ERROR(
-				"background_task_run_error",
-				func_name=func.__name__,
-				exception_str=str(ex),
-				stacktrace_string=stacktrace_string
-			)
-			IS_DEV and traceback.print_exc()
+			LOG_ERROR("background_task", desc=str(ex), stracktrace_string=traceback.format_exc())
 
-		end_at = cur_ms()
-		exec_ms = end_at - start_at
-		delay_ms = end_at - posted_at
-		if(delay_ms > 10000):
-			# background tasks should be executed fast
-			# some tasks may be blocking the queue
-			LOG_WARN(
-				"background_task_perf",
-				func_name=func.__name__,
-				delay_ms=delay_ms,
-				exec_ms=exec_ms
-			)
-		if(exec_ms > 3000):
-			LOG_WARN(
-				"background_task_took_long",
-				func_name=func.__name__,
-				delay_ms=delay_ms,
-				exec_ms=exec_ms
-			)
+		# signal the main thread to cleanup this parition
+		if(_queue.empty()):
+			paritions_signalled_to_reap.put(partition_key)
 
 
-_process_task_queue.can_process = True
-# singleton
+def tasks_runner():
+	'''
+		Single thread: it reaps any pending tasks, and then spaws new tasks and track them
+	'''
+	while(
+		tasks_runner._can_process
+		or partitioned_task_runners
+		or not tasks_queue.empty()
+	):
+		try:
+			# reap completed paritioned by flushing them and repaing them
+			while(_partition_key := paritions_signalled_to_reap.get(False)):
+				if((_queue := partitioned_task_queues[_partition_key]).empty()):
+					partitioned_task_queues.pop(_partition_key)
+					_queue.put(None)  # flush it
+					# wait for the thread to finish, should be almost instant finish
+					# we are sure no other tasks are queued into the partition because
+					# it's not running, the code is running after this
+					partitioned_task_runners.pop(_partition_key).join()
+					DEBUG_PRINT_LEVEL > 7 and print("reaped :", _partition_key)
+		except QueueEmptyException:
+			DEBUG_PRINT_LEVEL > 7 and print("nothing to reap")
+			pass
+
+		# wait for new tasks and spawn
+		try:
+			if(_task := tasks_queue.get(timeout=5)):
+				_partition_key = _task[0]
+				pt_queue = partitioned_task_queues.get(_partition_key)  # partitioned task queue
+				if(not pt_queue):
+					pt_queue = Queue()
+					pt_queue.put(_task)
+					pt_runner = Thread(
+						target=_partitioned_tasks_runner, args=(_partition_key,)
+					)
+					# track and spawn new runner
+					DEBUG_PRINT_LEVEL > 7 and print(
+						"spawning new partition runner: ", _partition_key, _task,
+						"running partitions: ", len(partitioned_task_runners)
+					)
+					partitioned_task_queues[_partition_key] = pt_queue
+					partitioned_task_runners[_partition_key] = pt_runner
+					pt_runner.start()
+				else:
+					# queue another task
+					pt_queue.put(_task)
+		except QueueEmptyException:
+			DEBUG_PRINT_LEVEL > 7 and print("tasks emtpy")
+			pass
+	LOG_DEBUG("background_threads_runner", msg="tasks runner finished")
 
 
-def start_background_task_processors(n):
-	global _partitioned_background_task_queues
-	if(_partitioned_background_task_queues != None):
-		return
-	_partitioned_background_task_queues = tuple()  # empty tuple, so we don't run this twice
-	_queues = []
-	for _ in range(n):
-		_queues.append(_queue := Queue())
-		_thread_to_start = Thread(
-			target=_process_task_queue,
-			args=(_queue,),
-		)
-		LOG_APP_INFO(
-			"background_threads", msg="starting background tasks processor thread",
-			func=_process_task_queue.__name__
-		)
-		_thread_to_start.start()
-		_joinables.append(_thread_to_start)
-	_partitioned_background_task_queues = tuple(_queues)
+tasks_runner._can_process = True
+tasks_runner._thread = None
 
 
 # submit a task:func to a partition
@@ -1613,31 +1623,16 @@ def start_background_task_processors(n):
 def submit_background_task(partition_key, func, *args, **kwargs):
 	# start processors if not started already
 	now_millis = cur_ms()
-	if(partition_key == None):
-		partition_key = now_millis  # choose a random key
+	if(partition_key is None):
+		partition_key = now_millis % 50  # 50 parallel buckets to run tasks
 
-	if(not _process_task_queue.can_process):
-		raise Exception("Cannot submit tasks to a queue which is not processing")
+	if(not tasks_runner._thread):
+		LOG_DEBUG("background_threads_runner", msg="starting")
+		tasks_runner._thread = _tasks_runner_thread = Thread(target=tasks_runner)
+		_tasks_runner_thread.start()
+		_joinables.append(_tasks_runner_thread)
 
-	# wait for processors to start
-	while(not _partitioned_background_task_queues):
-		from blaster.config import NUM_BACKGROUND_TASK_PROCESSORS
-		start_background_task_processors(NUM_BACKGROUND_TASK_PROCESSORS or 4)
-		LOG_APP_INFO(
-			"background_threads_starting",
-			msg="waiting for background tasks processors to start",
-		)
-		sleep(0.1)
-
-	_queue = _partitioned_background_task_queues[hash(str(partition_key)) % len(_partitioned_background_task_queues)]
-	_queue.put((now_millis, func, args, kwargs))
-	try:
-		_item = _queue.peek(block=False)  # this won't block or raise exception
-		delay = _item[0] - now_millis
-		if(delay > 15000):
-			LOG_WARN("background_task_queue_long_delay", queue_id=id(_queue), delay_ms=delay)
-	except QueueEmptyException:
-		pass
+	tasks_queue.put((str(partition_key), now_millis, func, args, kwargs))
 
 
 # decorator to be used for a short io tasks to be
@@ -1653,17 +1648,10 @@ def background_task(func):
 
 
 # Blaster exit functions
-@events.register_listener(["blaster_exit0"])
-def exit_0():
-	# start of exit - background threads cannot run
-	# push an empty function to queues to flush them off
-	if(_partitioned_background_task_queues):
-		_process_task_queue.can_process = False
-		for _queue in _partitioned_background_task_queues:
-			_queue.put((cur_ms(), empty_func, [], {}))
-
-# Background tasks END
-
+@events.register_listener(["blaster_exit1"])
+def exit_1():
+	tasks_runner._can_process = False
+	tasks_queue.put(None)
 
 @events.register_listener(["blaster_exit5"])
 def exit_5():

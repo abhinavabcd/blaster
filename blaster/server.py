@@ -83,7 +83,7 @@ def parse_qs_modified(qs, keep_blank_values=True, strict_parsing=False):
 	for name, value in urllib.parse.parse_qsl(qs, keep_blank_values, strict_parsing):
 		if name.endswith("[]"):
 			_values = _dict.get(name)
-			if(_values == None):
+			if(_values is None):
 				_dict[name] = _values = []
 			elif(not isinstance(_values, list)):  # make it a list of values
 				_dict[name] = _values = [_values]
@@ -99,7 +99,7 @@ class HeadersDict(dict):
 
 	def get(self, k, default=None):
 		header_value = super().get(k.lower(), _OBJ_END_)
-		if(header_value == _OBJ_END_):
+		if(header_value is _OBJ_END_):
 			return default
 		return header_value
 
@@ -216,10 +216,10 @@ class Request:
 		if(self._body):
 			val = self._body.get(key, default=_OBJ_END_, **kwargs)
 		# try get param next
-		if(val == _OBJ_END_ and self._params):
+		if(val is _OBJ_END_ and self._params):
 			val = self._params.get(key, default=_OBJ_END_, **kwargs)
 
-		if(val == _OBJ_END_):
+		if(val is _OBJ_END_):
 			return default
 		return val
 
@@ -228,40 +228,40 @@ class Request:
 
 	def __getitem__(self, key):
 		ret = self.get(key, default=_OBJ_END_)
-		if(ret == _OBJ_END_):
+		if(ret is _OBJ_END_):
 			raise LookupError()
 		return ret
 
 	def __getattr__(self, key):
 		ret = self.get(key, default=_OBJ_END_)
-		if(ret == _OBJ_END_):
+		if(ret is _OBJ_END_):
 			raise AttributeError("{} not found".format(key))
 		return ret
 
 	def PARAMS(self, key=None, **kwargs):
-		if(key == None):
+		if(key is None):
 			return self._params
 		return self._params.get(key, **kwargs)
 
 	def BODY(self, key=None, **kwargs):
-		if(key == None):
+		if(key is None):
 			return self._body
 		if(self._body):
 			return self._body.get(key, **kwargs)
 		return None
 
 	def HEADERS(self, key=None, default=None):
-		if(key == None):
+		if(key is None):
 			return self._headers
 		return self._headers.get(key, default=default)
 
 	def COOKIES(self, key=None, default=None):
-		if(key == None):
+		if(key is None):
 			return self._cookies
 		return self._cookies.get(key, default)
 
 	def SET_COOKIE(self, key, cookie_value):
-		if(self._cookies_to_set == None):
+		if(self._cookies_to_set is None):
 			self._cookies_to_set = {}
 		if(isinstance(cookie_value, dict)):
 			_cookie_val = str(cookie_value.pop("value", "1"))
@@ -296,7 +296,7 @@ class Request:
 						val = key_val[1].strip(b'"\'').decode()
 						attrs[key] = val
 				name = attrs.pop(b'name', _OBJ_END_)
-				if(name != _OBJ_END_):
+				if(name is not _OBJ_END_):
 					# if no additional headers, and no other attributes,
 					# it's just a plain input field
 					if(not part.headers and not attrs):
@@ -323,7 +323,7 @@ class Request:
 
 	@staticmethod
 	def set_arg_type_hook(_type, hook=None):
-		if(hook == None):
+		if(hook is None):
 			# using as decorator  @Request.set_arg_type_hook(User)
 			def wrapper(func):
 				_argument_creator_hooks[_type] = func
@@ -336,9 +336,9 @@ class Request:
 	def wrap_arg_hook_for_defaults(arg_type_hook, name, _type, default):
 		def wrapper(req):
 			ret = arg_type_hook(req)
-			if(ret != None):
+			if(ret is not None):
 				return ret
-			elif(default != _OBJ_END_):
+			elif(default is not _OBJ_END_):
 				return default
 			raise MissingBlasterArgumentException(name, _type)
 		return wrapper
@@ -386,8 +386,8 @@ class Request:
 
 			def _no_type_arg(req):
 				ret = req.get(name, default=_OBJ_END_)
-				if(ret == _OBJ_END_):
-					if(default == _OBJ_END_):
+				if(ret is _OBJ_END_):
+					if(default is _OBJ_END_):
 						# Unknown field type
 						raise TypeError("{:s} field is required".format(name))
 					return default
@@ -418,7 +418,7 @@ class App:
 		self.request_handlers = []
 		# error
 		self.server_exception_handlers = server_exception_handlers\
-			if server_exception_handlers != None else []
+			if server_exception_handlers is not None else []
 
 	def route(
 		self,
@@ -832,7 +832,7 @@ class App:
 			for regex, method_handlers in self.request_handlers:
 				request_path_match = regex.match(request_path)
 
-				if(request_path_match != None):
+				if(request_path_match is not None):
 					# check if handler has request type handler
 					if(handler := method_handlers.get(request_type)):
 						# found the handler
@@ -851,7 +851,7 @@ class App:
 				data = buffered_socket.readuntil('\r\n', max_headers_data_size, True)
 				if(data == b''):
 					break
-				elif(data == None):
+				elif(data is None):
 					return  # won't resuse socket
 
 				header_name_value_pair = data.split(b':', 1)
@@ -967,7 +967,7 @@ class App:
 							if(key not in response_headers):
 								buffered_socket.send(key, b': ', val, b'\r\n')
 
-					elif(response_headers == None):  # no headers => use default stream headers
+					elif(response_headers is None):  # no headers => use default stream headers
 						response_headers = default_stream_headers
 
 					# send all basic headers

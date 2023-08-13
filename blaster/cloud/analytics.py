@@ -18,7 +18,7 @@ def bq_push(table_id, bq_client=None):
 
 
 def bq_insert_rows(table_id, rows):
-	if((_pending_to_push := _table_pending_data_to_push.get(table_id)) == None):
+	if((_pending_to_push := _table_pending_data_to_push.get(table_id)) is None):
 		_pending_to_push = _table_pending_data_to_push[table_id] = deque()
 	_pending_to_push.extend(rows)
 	return bq_push(table_id)  # deferred call

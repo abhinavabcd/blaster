@@ -48,26 +48,26 @@ class Number:
 		self._type = _type
 		# make schema
 		self._schema_ = _schema = {"type": "integer"}
-		if(default != _OBJ_END_):
+		if(default is not _OBJ_END_):
 			_schema["default"] = default
-		if(self._min != _OBJ_END_):
+		if(self._min is not _OBJ_END_):
 			_schema["minimum"] = self._min
-		if(self._max != _OBJ_END_):
+		if(self._max is not _OBJ_END_):
 			_schema["maximum"] = self._max
 		if(self.one_of):
 			_schema["enum"] = list(self.one_of)
 
 	def validate(self, e):
-		if(e == None):
-			if(self._default != _OBJ_END_):
+		if(e is None):
+			if(self._default is not _OBJ_END_):
 				return self._default
 			raise TypeError("should be int")
 		if(isinstance(e, str) and len(e) > 50):
 			raise TypeError("should be valid int")
 		e = self._type(e)
-		if(self._min != _OBJ_END_ and e < self._min):
+		if(self._min is not _OBJ_END_ and e < self._min):
 			raise TypeError("should be min {:d}".format(self._min))
-		if(self._max != _OBJ_END_ and e > self._max):
+		if(self._max is not _OBJ_END_ and e > self._max):
 			raise TypeError("more than max {:d}".format(self._max))
 		if(self.one_of and e not in self.one_of):
 			raise TypeError("should be one of {:d}".format(str(self.one_of)))
@@ -89,12 +89,12 @@ class Bool:
 		self._schema_ = _schema = {"type": "boolean"}
 		self._name = _name
 		self._default = default
-		if(default != _OBJ_END_):
+		if(default is not _OBJ_END_):
 			_schema["default"] = default
 
 	def validate(self, e):
-		if(e == None):
-			if(self._default != _OBJ_END_):
+		if(e is None):
+			if(self._default is not _OBJ_END_):
 				return self._default
 			raise TypeError("should be boolean")
 		return bool(e)
@@ -125,7 +125,7 @@ class Str:
 
 		# make schema
 		self._schema_ = _schema = {"type": "string"}
-		if(default != _OBJ_END_):
+		if(default is not _OBJ_END_):
 			_schema["default"] = default
 		_schema = {"type": "string"}
 		if(self.minlen):
@@ -141,10 +141,10 @@ class Str:
 
 	def validate(self, e):
 		if(self.before):
-			e = (e != None) and self.before(e)
+			e = (e is not None) and self.before(e)
 		_default = self._default
-		if(e == None):
-			if(_default != _OBJ_END_):
+		if(e is None):
+			if(_default is not _OBJ_END_):
 				return _default
 			raise TypeError("should be string")
 		if(not isinstance(e, str)):
@@ -152,7 +152,7 @@ class Str:
 		# e is a string now
 		if(len(e) < self.minlen):
 			if(not e):  # empty string allowed if minlen is 0 or default is set
-				if(_default != _OBJ_END_):
+				if(_default is not _OBJ_END_):
 					return _default
 			raise TypeError("should be minlen {:d}".format(self.minlen))
 		if(len(e) > self.maxlen):
@@ -176,7 +176,7 @@ class Array:
 		_s, _item_validation = schema(self._types)
 
 		self._schema_ = _schema = {"type": "array", "items": _s}
-		if(default != _OBJ_END_):
+		if(default is not _OBJ_END_):
 			_schema["default"] = default
 			self._default = default
 		self._mix = isinstance(self._types, tuple)
@@ -226,13 +226,13 @@ class _Dict:
 		}
 
 	def validate(self, e):
-		if(e == None or not isinstance(e, dict)):
-			if(self._default != _OBJ_END_):
-				return dict(self._default) if self._default != None else None
+		if(e is None or not isinstance(e, dict)):
+			if(self._default is not _OBJ_END_):
+				return dict(self._default) if self._default is not None else None
 			raise TypeError("should be a dict")
 
 		for k in list(e.keys()):
-			if(self.key_ype_validator(k) == None):
+			if(self.key_ype_validator(k) is None):
 				e.pop(k)
 				continue
 			e[k] = self.val_type_validator(e[k])
@@ -268,7 +268,7 @@ class Object:
 			self._property_types[k] = _type
 
 		self._schema_ = _schema = {"type": "object", "properties": self._properties}
-		if(default != _OBJ_END_):
+		if(default is not _OBJ_END_):
 			_schema["default"] = default
 
 	# validates Object(a=str, b=int, h=Test).validate({} or obj or string)
@@ -286,13 +286,13 @@ class Object:
 		try:
 			for k, attr_validation in cls._validations.items():
 				attr_value = e.get(k, _OBJ_END_)
-				if(attr_value != _OBJ_END_):
+				if(attr_value is not _OBJ_END_):
 					_validated_attr = attr_validation(attr_value)
 				else:
 					# try getting class attribute default (declaration)
 					_validated_attr = getattr(cls, k, None)
 
-				if(_validated_attr == None and k in cls._required):
+				if(_validated_attr is None and k in cls._required):
 					raise TypeError("Field is required")
 
 				if(_validated_attr != attr_value):
@@ -320,7 +320,7 @@ class Object:
 			cls.validate(_dict, set_obj=ret)
 			return ret
 		except Exception as ex:
-			if(default != _OBJ_END_):
+			if(default is not _OBJ_END_):
 				return default
 			raise ex
 
@@ -344,7 +344,7 @@ def to_float(e):
 
 
 def item_validation(e, simple_types=(), complex_validations=(), nullable=True):
-	if(e == None and not nullable):
+	if(e is None and not nullable):
 		raise TypeError("Cannot be none")
 
 	valid = False
@@ -370,10 +370,10 @@ def item_validation(e, simple_types=(), complex_validations=(), nullable=True):
 
 def array_validation(_type, arr, simple_types=None, complex_validations=None, mix=False, nullable=True):
 	# sequece
-	if(arr == None):
-		if(_type._default != _OBJ_END_):
+	if(arr is None):
+		if(_type._default is not _OBJ_END_):
 			# None or copy of default
-			return list(_type._default) if _type._default != None else None
+			return list(_type._default) if _type._default is not None else None
 		if(nullable):
 			return None
 		raise TypeError("Cannot be none")
@@ -390,7 +390,7 @@ def array_validation(_type, arr, simple_types=None, complex_validations=None, mi
 		# check types should not mixed
 		if(not mix):  # single type, so check type matches with previous
 			_cur_type = type(e)
-			if(_prev_type == _OBJ_END_):
+			if(_prev_type is _OBJ_END_):
 				_prev_type = _cur_type
 			elif(_prev_type != _cur_type):
 				raise TypeError(f"Array values should not be mixed types: {_prev_type} != {_cur_type}")
@@ -434,7 +434,7 @@ def schema(x, _default=_OBJ_END_):
 
 			# pure type to instance of schema types
 			_default_value = x.__dict__.get(k, _OBJ_END_)  # declaration default
-			is_required = _default_value == _OBJ_END_
+			is_required = _default_value is _OBJ_END_
 
 			if(
 				_type.__module__ == 'typing'
@@ -519,37 +519,37 @@ def schema(x, _default=_OBJ_END_):
 		)
 
 	elif(isinstance(x, Str)):
-		if(_default != _OBJ_END_):
+		if(_default is not _OBJ_END_):
 			x._default = _default
 			x._schema_["default"] = _default
 		return x._schema_, x.validate
 
 	elif(isinstance(x, Int)):
-		if(_default != _OBJ_END_):
+		if(_default is not _OBJ_END_):
 			x._default = _default
 			x._schema_["default"] = _default
 		return x._schema_, x.validate
 
 	elif(isinstance(x, _Dict)):
-		if(_default != _OBJ_END_):
+		if(_default is not _OBJ_END_):
 			x._default = _default
 			x._schema_["default"] = _default
 		return x._schema_, x.validate
 
 	elif(isinstance(x, Array)):  # Array(_types)
-		if(_default != _OBJ_END_):
+		if(_default is not _OBJ_END_):
 			x._default = _default
 			x._schema_["default"] = _default
 		return x._schema_, x.validate
 
 	elif(isinstance(x, Bool)):
-		if(_default != _OBJ_END_):
+		if(_default is not _OBJ_END_):
 			x._default = _default
 			x._schema_["default"] = _default
 		return x._schema_, x.validate
 
 	elif(isinstance(x, Object)):  # Object(id=Array)
-		if(_default != _OBJ_END_):
+		if(_default is not _OBJ_END_):
 			x._default = _default
 		return x._schema_, x.validate
 

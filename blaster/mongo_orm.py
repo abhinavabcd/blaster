@@ -108,10 +108,10 @@ class MongoList(list):
 	def remove(self, item):  # can raise value exception
 		super(MongoList, self).remove(item)
 		_pull = self._model_obj._other_query_updates.get("$pull")
-		if(_pull == None):
+		if(_pull is None):
 			self._model_obj._other_query_updates["$pull"] = _pull = {}
 		value_to_remove = _pull.get(self.path, _OBJ_END_)
-		if(value_to_remove == _OBJ_END_):
+		if(value_to_remove is _OBJ_END_):
 			_pull[self.path] = item  # first item to remove
 		else: 
 			# if there are multiple items to remove, use $in
@@ -124,7 +124,7 @@ class MongoList(list):
 				_pull[self.path] = {"$in": [value_to_remove, item]}
 
 	def pop(self, i=None):
-		if(i == None):
+		if(i is None):
 			i = 1
 			ret = super(MongoList, self).pop()
 		elif(i == 0):
@@ -137,7 +137,7 @@ class MongoList(list):
 
 		if(not self._initializing):
 			_pop = self._model_obj._other_query_updates.get("$pop")
-			if(_pop == None):
+			if(_pop is None):
 				self._model_obj._other_query_updates["$pop"] = _pop = {}
 			_pop[self.path] = i
 		# convert them to original object types
@@ -150,7 +150,7 @@ class MongoList(list):
 	def insert(self, pos, item):
 		if(not self._initializing):
 			_push = self._model_obj._other_query_updates.get("$push")
-			if(_push == None):
+			if(_push is None):
 				self._model_obj._other_query_updates["$push"] = _push = {}
 
 			_push_path_values = _push.get(self.path)
@@ -172,7 +172,7 @@ class MongoList(list):
 
 		if(not self._initializing):
 			_push = self._model_obj._other_query_updates.get("$push")
-			if(_push == None):
+			if(_push is None):
 				_push = self._model_obj._other_query_updates["$push"] = {}
 
 			_push_path_values = _push.get(self.path)
@@ -234,7 +234,7 @@ class MongoDict(dict):
 	def pop(self, k, default=None):
 		# not in initializing mode
 		popped_val = super(MongoDict, self).pop(k, _OBJ_END_)
-		if(popped_val == _OBJ_END_):
+		if(popped_val is _OBJ_END_):
 			return default
 		# if not initializing and has value set remove it form mongo
 		elif(not self._initializing):
@@ -332,7 +332,7 @@ class Model(object):
 	# YourTable.get(SOMEID) # this will kick in cache use
 	@classmethod
 	def get(cls: ModelType, _pk=None, use_cache=True, **kwargs) -> ModelType:
-		if(_pk != None):
+		if(_pk is not None):
 			is_single_item = False
 			_pks = None
 			if(not isinstance(_pk, (list, set))):
@@ -446,7 +446,7 @@ class Model(object):
 			# change type of objects when setting them
 			_attr_obj_type = _attr_obj._type
 			# impllicit type corrections for v
-			if(v != None and not isinstance(v, _attr_obj_type)):
+			if(v is not None and not isinstance(v, _attr_obj_type)):
 				if(_attr_obj_type == int or _attr_obj_type == float):
 					# force cast between int/float
 					v = _attr_obj_type(v or 0)
@@ -490,7 +490,7 @@ class Model(object):
 
 		for k, _attr in self.__class__._attrs_.items():
 			v = getattr(self, k, _OBJ_END_)
-			if(v != _OBJ_END_):
+			if(v is not _OBJ_END_):
 				attr_read_auth: set = getattr(_attr, "r", None)
 				if(r and attr_read_auth):
 					for i in r:
@@ -501,7 +501,7 @@ class Model(object):
 					_json[k] = v
 
 		_id = getattr(self, '_id', _OBJ_END_)
-		if(_id != _OBJ_END_):
+		if(_id is not _OBJ_END_):
 			_json['_id'] = str(_id)
 		return _json
 
@@ -530,7 +530,7 @@ class Model(object):
 			# if the value is not the document initialise defaults
 			if(attr_name not in doc):
 				# if there is a default value
-				if(_default != _OBJ_END_):
+				if(_default is not _OBJ_END_):
 					if(isinstance(_default, types.FunctionType)):
 						_default = _default()
 					if(attr_obj._type == dict):
@@ -584,7 +584,7 @@ class Model(object):
 	'''given a shard key, says which database node it resides in'''
 	@classmethod
 	def get_db_node(_Model, shard_key):
-		shard_key = str(shard_key) if shard_key != None else ""
+		shard_key = str(shard_key) if shard_key is not None else ""
 		# get 16 bit int
 		shard_key = metrohash.hash64_int(shard_key.encode())
 		# do a bin search to find (i, j] segment
@@ -618,8 +618,8 @@ class Model(object):
 	def get_collections_to_query(cls, _query, sort):
 		shard_key = _query.get(cls._shard_key_, _OBJ_END_)
 		if(
-			shard_key == None
-			or shard_key == _OBJ_END_
+			shard_key is None
+			or shard_key is _OBJ_END_
 		):
 			return None
 
@@ -643,7 +643,7 @@ class Model(object):
 
 		elif(isinstance(shard_key, dict)):
 			_in_values = shard_key.get("$in", _OBJ_END_)
-			if(_in_values != _OBJ_END_):
+			if(_in_values is not _OBJ_END_):
 				collections_to_update = {}
 				# group all shards into one set
 				for shard_key_value in _in_values:
@@ -652,7 +652,7 @@ class Model(object):
 				return collections_to_update.values()
 
 			_eq_value = shard_key.get("$eq", _OBJ_END_)
-			if(_eq_value != _OBJ_END_):
+			if(_eq_value is not _OBJ_END_):
 				return [cls.get_collection(_eq_value)]
 
 		return None
@@ -703,13 +703,13 @@ class Model(object):
 
 				if(
 					_transaction is True
-					or (after_mongo_update and _transaction == None)
+					or (after_mongo_update and _transaction is None)
 				):
 					_transaction = {}  # use transaction
 
 				#: VVIMPORTANT: set `_` -> to current timestamp
 				_to_set = _update_query.get("$set", _OBJ_END_)
-				if(_to_set == _OBJ_END_):
+				if(_to_set is _OBJ_END_):
 					_update_query["$set"] = _to_set = {}
 
 				_to_set["_"] = max(
@@ -735,7 +735,7 @@ class Model(object):
 						return_document=ReturnDocument.AFTER,
 						session=(
 							_with_transaction(primary_shard_collection, _transaction, stack)
-							if _transaction != None
+							if _transaction is not None
 							else None
 						),
 						**kwargs
@@ -797,10 +797,10 @@ class Model(object):
 					_old_secondary_collection = None
 					_new_secondary_collection = None
 
-					if(_old_shard_key_val != None):
+					if(_old_shard_key_val is not None):
 						_old_secondary_collection = _SecondayModel\
 							.get_collection(_old_shard_key_val)
-					if(_new_shard_key_val != None):
+					if(_new_shard_key_val is not None):
 						_new_secondary_collection = _SecondayModel\
 							.get_collection(_new_shard_key_val)
 
@@ -820,7 +820,7 @@ class Model(object):
 						is_shard_data_changed = False
 						for _k in _shard.attrs:
 							_v = updated_doc.get(_k, _OBJ_END_)
-							if(_v != _OBJ_END_):
+							if(_v is not _OBJ_END_):
 								_to_insert[_k] = _v
 							if(_v != original_doc.get(_k, _OBJ_END_)):
 								# changed during update
@@ -900,7 +900,7 @@ class Model(object):
 		queries = None
 		# split or queries to separate it to shards
 		if(not isinstance(_query, list)):
-			if((or_queries := _query.pop("$or", None)) != None):  # top level $or query
+			if((or_queries := _query.pop("$or", None)) is not None):  # top level $or query
 				if(not _query):
 					queries = or_queries
 				else:  # merge remaining query with all $or queries
@@ -941,7 +941,7 @@ class Model(object):
 				for collection_shard in collection_shards:
 					_key = id(collection_shard)
 					shard_and_queries = collections_to_query.get(_key)
-					if(shard_and_queries == None):
+					if(shard_and_queries is None):
 						collections_to_query[_key]\
 							= shard_and_queries \
 							= (collection_shard, [], cls)
@@ -955,7 +955,7 @@ class Model(object):
 					for collection_shard in secondary_collection_shards:
 						_key = id(collection_shard)
 						shard_and_queries = collections_to_query.get(_key)
-						if(shard_and_queries == None):
+						if(shard_and_queries is None):
 							collections_to_query[_key] \
 								= shard_and_queries \
 								= (collection_shard, [], _shard._Model_)
@@ -993,13 +993,13 @@ class Model(object):
 					if(sort_direction > 0):
 						if(value1 == value2):
 							continue
-						if(value1 == None or value2 == None):
+						if(value1 is None or value2 is None):
 							return True if not value1 else False
 						return value1 < value2
 					else:
 						if(value1 == value2):
 							continue
-						if(value1 == None or value2 == None):
+						if(value1 is None or value2 is None):
 							return False if not value1 else True
 						return value1 > value2
 				return True
@@ -1202,11 +1202,11 @@ class Model(object):
 			events = [events]
 		for event in events:
 			event_listeners = getattr(cls, "_event_listeners_", _OBJ_END_)
-			if(event_listeners == _OBJ_END_):
+			if(event_listeners is _OBJ_END_):
 				event_listeners = {}
 				setattr(cls, "_event_listeners_", event_listeners)
 			handlers = event_listeners.get(event)
-			if(handlers == None):
+			if(handlers is None):
 				event_listeners[event] = handlers = []
 			handlers.append(func)
 
@@ -1238,7 +1238,7 @@ class Model(object):
 				return self  # nothing to update
 			shard_key_name = cls._shard_key_
 			if(
-				self._id == None
+				self._id is None
 				and (
 					(cls._is_sharding_enabled_ and shard_key_name == "_id")
 					or cls._attrs_["_id"]._type != ObjectId
@@ -1261,7 +1261,7 @@ class Model(object):
 			try:
 				# find which shard we should insert to and insert into that
 				with ExitStack() as stack:
-					_transaction = _transaction if _transaction != None else {}
+					_transaction = _transaction if _transaction is not None else {}
 
 					self._insert_result = primary_shard_collection.insert_one(
 						self._set_query_updates,
@@ -1278,11 +1278,11 @@ class Model(object):
 					for _secondary_shard_key, _shard in cls._secondary_shards_.items():
 						_SecondaryModel = _shard._Model_
 						_shard_key_val = self._set_query_updates.get(_secondary_shard_key)
-						if(_shard_key_val != None):
+						if(_shard_key_val is not None):
 							_to_insert = {}
 							for attr in _shard.attrs:
 								_attr_val = self._set_query_updates.get(attr, _OBJ_END_)
-								if(_attr_val != _OBJ_END_):
+								if(_attr_val is not _OBJ_END_):
 									_to_insert[attr] = _attr_val
 							secondary_collection = _SecondaryModel.get_collection(_shard_key_val)
 							if(_to_insert):
@@ -1385,7 +1385,7 @@ class Model(object):
 		lock_name = f"_lock_{name}"
 		start_timestamp = cur_ms()
 
-		if(self.__locks == None):
+		if(self.__locks is None):
 			self.__locks = {}
 
 		# non db lock
@@ -1575,7 +1575,7 @@ class DatabaseNode:
 	# slight optimization to cache and return
 	def get_collection(self, _Model):
 		ret = self._cached_pymongo_collections.get(_Model, None)
-		if(ret == None):
+		if(ret is None):
 			self._cached_pymongo_collections[_Model] \
 				= ret \
 				= self.mongo_client[_Model._db_name_][_Model._collection_name_with_shard_]
@@ -1596,7 +1596,7 @@ def initialize_model(_Model):
 	_Model._indexes_ = getattr(_Model, "_indexes_", [])
 	# create a default cache if nothing specified
 	_Model_cache = getattr(_Model, "_cache_", _OBJ_END_)
-	if(_Model_cache == _OBJ_END_ and not _Model._is_secondary_shard):
+	if(_Model_cache is _OBJ_END_ and not _Model._is_secondary_shard):
 		_Model.__cache__ = ExpiringCache(10000)  # default cache
 
 	# temp usage _id_attr
@@ -1821,8 +1821,8 @@ def initialize_model(_Model):
 					"mongo_indexes_error", desc="Indexes are different on nodes",
 					collection_a=COLLECTION_NAME(current_node_collection),
 					collection_b=COLLECTION_NAME(previous_node_collection),
-					index_a=json.dumps(indexesA) if indexesA != None else None,
-					index_b=json.dumps(indexesB) if indexesB != None else None
+					index_a=json.dumps(indexesA) if indexesA is not None else None,
+					index_b=json.dumps(indexesB) if indexesB is not None else None
 				)
 
 	# check unused indexes

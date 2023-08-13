@@ -1,106 +1,92 @@
 import html
-from ..config import DEFAULT_HTML_SANITIZE_ESCAPE_QUOTES
 
 
 # custom containers ##########
 # SanitizedList and SanitizedDict are used for HTML safe operation
 # the idea is to wrap them to sanitizeContainers, and escapt them while retrieving
 # rather than during inserting/parsing stage
-class SanitizedSetterGetter(object):
-	def __getitem__(self, k, escape_quotes=DEFAULT_HTML_SANITIZE_ESCAPE_QUOTES or False, escape_html=True):
-		val = super().__getitem__(k)
-		if(escape_html and isinstance(val, str)):
-			# make it html safe
+def _sanitize(val, escape_html=True, escape_quotes=False):
+	if(isinstance(val, str)):
+		if(escape_html):
 			return html.escape(val, quote=escape_quotes)
-		return val
+	elif(isinstance(val, list)):
+		return SanitizedList(val)
+	elif(isinstance(val, dict)):
+		return SanitizedDict(val)
+	return val
+
+
+class SanitizedObject:
+	entries = None
+
+	def __getitem__(self, key):
+		return _sanitize(self.entries[key])
 
 	def __setitem__(self, key, val):
-		if(isinstance(val, dict)):
-			new_val = SanitizedDict()
-			for k, v in val.items():
-				new_val[k] = v  # calls __setitem__ nested way
-			super().__setitem__(key, new_val)
+		self.entries[key] = val
 
-		elif(isinstance(val, list)):
-			new_val = SanitizedList()
-			for i in val:
-				new_val.append(i)
-			super().__setitem__(key, new_val)
-		else:
-			super().__setitem__(key, val)
+	def __getattr__(self, attr):
+		return getattr(self.entries, attr)
 
-
-class SanitizedList(SanitizedSetterGetter, list):
+	def __contains__(self, key):
+		return key in self.entries
 
 	def __iter__(self):
-		# unoptimized but for this it's okay, always returns sanitized one
-		def sanitized(val):
-			if(isinstance(val, str)):
-				return html.escape(val, quote=True)
-			return val
-		return map(sanitized, list.__iter__(self))
+		return map(_sanitize, self.entries.__iter__())
 
-	def at(self, k, escape_quotes=True, escape_html=True):
-		self.__getitem__(
-			k,
-			escape_quotes=escape_quotes,
-			escape_html=escape_html
-		)
+	def __len__(self):
+		return len(self.entries)
 
-	def extend(self, _list):
-		for val in _list:
-			# calls __setitem__ again
-			self.append(val)
-		# allow chaining
-		return self
+	def __str__(self):
+		return str(self.entries)
 
-	def append(self, val):
-		if(isinstance(val, dict)):
-			new_val = SanitizedDict()
-			for k, v in val.items():
-				new_val[k] = v  # calls __setitem__ nested way
-			super().append(new_val)
+	def __repr__(self):
+		return repr(self.entries)
 
-		elif(isinstance(val, list)):
-			new_val = SanitizedList()
-			for i in val:
-				new_val.append(i)
-			super().append(new_val)
-		else:
-			super().append(val)
-		# allow chaining
-		return self
+	def __eq__(self, other):
+		if(isinstance(other, SanitizedObject)):
+			return self.entries == other.entries
+		return self.entries == other
+
+	def __ne__(self, other):
+		return not self.__eq__(other)
 
 
-# intercepts all values setting and
-class SanitizedDict(SanitizedSetterGetter, dict):
-	# can pass escape_html=false if you want raw data
-	def get(self, key, default=None, escape_html=True, escape_quotes=True):
-		try:
-			val = self.__getitem__(
-				key,
-				escape_html=escape_html,
-				escape_quotes=escape_quotes
-			)
-			return val
-		except KeyError:
+class SanitizedDict(SanitizedObject):
+
+	def __init__(self, entries=None, **kwargs):
+		self.entries = entries if entries is not None else {}
+		if(kwargs):
+			self.entries.update(kwargs)
+
+	@property
+	def __class__(self):  # Faking
+		return dict
+
+	def get(self, key, default=None):
+		v = self.entries.get(key, _sanitize)  # just sentinel
+		if(v is _sanitize):
 			return default
+		return _sanitize(v)
 
 	def items(self):
-		# unoptimized but for this it's okay, always returns sanitized one
-		def sanitized(key_val):
-			key, val = key_val
-			if(isinstance(val, str)):
-				return (key, html.escape(val, quote=True))
-			return key_val
-		return map(sanitized, dict.items(self))
+		return map(lambda kv: (kv[0], _sanitize(kv[1])), self.entries.items())
 
-	def update(self, another):
-		for k, v in another.items():
-			# calls __setitem__ again
-			self[k] = v
-		# allow chaining
-		return self
+
+class SanitizedList(SanitizedObject):
+	# list
+	def __init__(self, entries=None):
+		if(isinstance(entries, SanitizedList)):
+			self.entries = entries.entries
+		else:
+			self.entries = entries if entries is not None else []
+
+	@property
+	def __class__(self):  # Faking
+		return list
+
+	def at(self, i, escape_html=True, escape_quotes=False):
+		return _sanitize(self.entries[i], escape_html=escape_html, escape_quotes=escape_quotes)
 
 
 class LowerKeyDict(dict):
