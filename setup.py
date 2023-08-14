@@ -19,7 +19,7 @@ setup(
 		"gevent>=22.9.0",
 		"greenlet>=2.0.1",
 		"pymongo>=3.12.0",
-		"ujson>=2.0.3",
+		"ujson>=5.8.0",
 		"python-dateutil>=2.8.1",
 		"requests>=2.25.1",
 		"requests-toolbelt>=0.9.1",

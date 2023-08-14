@@ -1,6 +1,7 @@
 import unittest
 from blaster import tools
 import time
+import ujson as json
 from blaster.tools import get_time_overlaps, retry,\
 	ExpiringCache, create_signed_value, decode_signed_value
 from blaster.tools.sanitize_html import SanitizedDict, SanitizedList
@@ -26,6 +27,7 @@ class TestSanitization(unittest.TestCase):
 			else:
 				self.assertTrue(">" not in v)
 
+		self.assertTrue(isinstance(sd, dict))
 		sl = SanitizedList(["<a>", "<b>"])
 		sl.append({"c": "<c>", "d": "<d>"})
 		sl.extend(["<e>", "<f> <>><><><<<>>"])
@@ -39,6 +41,11 @@ class TestSanitization(unittest.TestCase):
 					self.assertTrue(">" not in j)
 			else:
 				self.assertTrue(">" not in i)
+
+		# test serialization deserialization
+		self.assertTrue(isinstance(sl, list))
+
+		print(json.dumps(sl))
 
 
 class TestAuth(unittest.TestCase):

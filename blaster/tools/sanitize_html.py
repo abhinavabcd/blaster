@@ -1,5 +1,5 @@
 import html
-
+from functools import partial
 
 # custom containers ##########
 # SanitizedList and SanitizedDict are used for HTML safe operation
@@ -25,6 +25,9 @@ class SanitizedObject:
 	def __setitem__(self, key, val):
 		self.entries[key] = val
 
+	def __delitem__(self, key):
+		del self.entries[key]
+
 	def __getattr__(self, attr):
 		return getattr(self.entries, attr)
 
@@ -38,7 +41,7 @@ class SanitizedObject:
 		return len(self.entries)
 
 	def __str__(self):
-		return str(self.entries)
+		return f"sanitized_{self.entries}"
 
 	def __repr__(self):
 		return repr(self.entries)
@@ -51,6 +54,12 @@ class SanitizedObject:
 	def __ne__(self, other):
 		return not self.__eq__(other)
 
+	def __add__(self, other):
+		return self.entries + other
+
+	def __sub__(self, other):
+		return self.entries - other
+
 
 class SanitizedDict(SanitizedObject):
 
@@ -60,14 +69,14 @@ class SanitizedDict(SanitizedObject):
 			self.entries.update(kwargs)
 
 	@property
-	def __class__(self):  # Faking
+	def __class__(self):
 		return dict
 
-	def get(self, key, default=None):
+	def get(self, key, default=None, escape_html=True, escape_quotes=False):
 		v = self.entries.get(key, _sanitize)  # just sentinel
 		if(v is _sanitize):
 			return default
-		return _sanitize(v)
+		return _sanitize(v, escape_html=escape_html, escape_quotes=escape_quotes)
 
 	def items(self):
 		return map(lambda kv: (kv[0], _sanitize(kv[1])), self.entries.items())
@@ -82,7 +91,7 @@ class SanitizedList(SanitizedObject):
 			self.entries = entries if entries is not None else []
 
 	@property
-	def __class__(self):  # Faking
+	def __class__(self):
 		return list
 
 	def at(self, i, escape_html=True, escape_quotes=False):
@@ -95,3 +104,62 @@ class LowerKeyDict(dict):
 
 	def get(self, k, default=None):
 		return super().get(k.lower(), default)
+
+
+#  MONKEY PATCHING
+def default_json_encoder(enc, obj):
+	if(isinstance(obj, SanitizedObject)):
+		return obj.entries
+	return JSONEncoder.default(enc, obj)
+
+
+try:
+	from json import JSONEncoder
+	JSONEncoder._olddefault = JSONEncoder.default
+	JSONEncoder.default = default_json_encoder
+except ImportError:
+	pass
+
+
+def default_ujson_encoder(obj):
+	if(isinstance(obj, SanitizedObject)):
+		return obj.entries
+	return TypeError(f"Object of type {type(obj).__name__} is not JSON serializable" )
+
+
+try:
+	import ujson
+	ujson.dumps = partial(ujson.dumps, default=default_ujson_encoder)
+except ImportError:
+	pass
+
+try:
+	import simplejson
+	simplejson.dumps = partial(simplejson.dumps, default=default_ujson_encoder)
+except ImportError:
+	pass
+
+# bson patching
+try:
+	from bson.codec_options import TypeEncoder, DEFAULT_CODEC_OPTIONS
+
+	class SanitizedListBsonTypeEncoder(TypeEncoder):
+		python_type = SanitizedList  # the Python type acted upon by this type codec
+		bson_type = list  # the BSON type acted upon by this type codec
+
+		def transform_python(self, value: SanitizedList):
+			return value.entries
+
+	class SanitizedDictBsonTypeEncoder(TypeEncoder):
+		python_type = SanitizedDict
+		bson_type = dict
+
+		def transform_python(self, value: SanitizedDict):
+			return value.entries
+
+	DEFAULT_CODEC_OPTIONS.type_registry._encoder_map[SanitizedList] = SanitizedListBsonTypeEncoder()
+	for enc in [SanitizedListBsonTypeEncoder(), SanitizedDictBsonTypeEncoder()]:
+		DEFAULT_CODEC_OPTIONS.type_registry._encoder_map[enc.python_type] = enc.transform_python
+
+except ImportError:
+	pass
