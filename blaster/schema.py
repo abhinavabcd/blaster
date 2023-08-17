@@ -148,7 +148,7 @@ class Str:
 				return _default
 			raise TypeError("should be string")
 		if(not isinstance(e, str)):
-			e = str(e)
+			raise TypeError("should be string")
 		# e is a string now
 		if(len(e) < self.minlen):
 			if(not e):  # empty string allowed if minlen is 0 or default is set
@@ -274,7 +274,7 @@ class Object:
 	# validates Object(a=str, b=int, h=Test).validate({} or obj or string)
 	# validates ObjectClass.validate({} or )
 	def validate(self):
-		self.__class__.validate(self)  # resets internal dict
+		return self.__class__.validate(self)  # resets internal dict
 
 	@classmethod
 	def validate(cls, obj, set_obj=None):  # obj -> instance of dict, cls, str
@@ -314,6 +314,7 @@ class Object:
 	def from_dict(cls, _dict: dict, default=_OBJ_END_):
 		try:
 			ret = cls()
+			# remap keys
 			for _k, k in cls._dict_key_to_object_key.items():
 				if(_k in _dict):
 					_dict[k] = _dict.pop(_k)

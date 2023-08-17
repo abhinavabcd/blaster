@@ -26,6 +26,29 @@ class TestSanitization(unittest.TestCase):
 					self.assertTrue(">" not in v1)
 			else:
 				self.assertTrue(">" not in v)
+		# sanitized Dict 2
+
+		def is_sanitized(o):
+			if(isinstance(o, dict)):
+				for k, v in o.items():
+					if(not is_sanitized(v)):
+						return False
+				for k in o:
+					if(not is_sanitized(o[k])):
+						return False
+			elif(isinstance(o, list)):
+				for v in o:
+					if(not is_sanitized(v)):
+						return v
+			elif(isinstance(o, str)):
+				if(">" in o or "<" in o):
+					return False
+				return True
+
+			return is_sanitized(str(o))
+
+		sd2 = SanitizedDict({"1": "<1>", "2": ["<b>", "<c>"], "3": {"a3": "<v></v>"}})
+		self.assertTrue(is_sanitized(sd2))
 
 		self.assertTrue(isinstance(sd, dict))
 		sl = SanitizedList(["<a>", "<b>"])
@@ -41,6 +64,8 @@ class TestSanitization(unittest.TestCase):
 					self.assertTrue(">" not in j)
 			else:
 				self.assertTrue(">" not in i)
+
+		self.assertTrue(is_sanitized(sl[:]))
 
 		# test serialization deserialization
 		self.assertTrue(isinstance(sl, list))
