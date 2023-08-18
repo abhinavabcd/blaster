@@ -314,7 +314,6 @@ class Object:
 	def from_dict(cls, _dict: dict, default=_OBJ_END_):
 		try:
 			ret = cls()
-			# remap keys
 			for _k, k in cls._dict_key_to_object_key.items():
 				if(_k in _dict):
 					_dict[k] = _dict.pop(_k)

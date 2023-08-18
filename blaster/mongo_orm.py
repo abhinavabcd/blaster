@@ -1852,7 +1852,7 @@ def initialize_model(_Model):
 	if(IS_TEST):
 		# create indexes in test mode automatically
 		for pymongo_index, mongo_index_args in _pymongo_indexes_to_create.items():
-			print(
+			DEBUG_PRINT_LEVEL > 3 and print(
 				"\n\n#MONGO: creating_indexes automatically in test mode", _Model, pymongo_index, mongo_index_args
 			)
 			# in each node create indexes

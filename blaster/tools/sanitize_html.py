@@ -38,7 +38,7 @@ class SanitizedList(SanitizedSetterGetter, list):
 		return map(sanitized, list.__iter__(self))
 
 	def at(self, k, escape_html=True, escape_quotes=False):
-		self.__getitem__(
+		return self.__getitem__(
 			k,
 			escape_quotes=escape_quotes,
 			escape_html=escape_html

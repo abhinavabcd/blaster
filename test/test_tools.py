@@ -178,6 +178,11 @@ class TestTools(unittest.TestCase):
 
 		)
 
+	def test_find(self):
+		from blaster.tools import find_nth
+		self.assertEqual(find_nth("abcabcabcx", "abc", 2), 3)
+		self.assertEqual(find_nth("abcabcabcx", "abc", 3), 6)
+
 	@retry(2)
 	def test_can_retry(self):
 		raise Exception

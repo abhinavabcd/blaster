@@ -459,14 +459,14 @@ def get_time_overlaps(
 	for x in include:
 		try:
 			it = iter_time_overlaps(a, b, x, tz_delta, partial=partial)
-			heapq.heappush(buffer, (next(it), it))
+			heapq.heappush(buffer, (next(it), x, it))
 		except StopIteration:
 			pass
 	ret = []
 	while(len(ret) < limit and len(buffer) > 0):
-		time_range, it = heapq.heappop(buffer)
+		time_range, x, it = heapq.heappop(buffer)
 		try:
-			heapq.heappush(buffer, (next(it), it))
+			heapq.heappush(buffer, (next(it), x, it))
 		except StopIteration:
 			pass
 		# check if it's excluded
@@ -498,9 +498,9 @@ def get_start_of_day_millis(millis):
 	return (millis // MILLIS_IN_DAY) * MILLIS_IN_DAY
 
 
-def find_index(a_list, value):
+def find_index(a_list, value, start=0):
 	try:
-		return a_list.index(value)
+		return a_list.index(value, start)
 	except ValueError:
 		return -1
 
@@ -509,9 +509,9 @@ def find_nth(haystack, needle, n):
 	''' Find position of nth occurance in a string'''
 	if(not haystack):
 		return -1
-	start = haystack.find(needle)
+	start = find_index(haystack, needle)
 	while start >= 0 and n > 1:
-		start = haystack.find(needle, start + len(needle))
+		start = find_index(haystack, needle, start + len(needle))
 		n -= 1
 	return start
 
@@ -844,7 +844,7 @@ def sanitize_to_id_allow_case(text):
 	return non_alpha_regex.sub("", text)
 
 
-def sanitize_to_id2(text):
+def sanitize_to_underscore_id(text):
 	return non_alpha_groups_regex.sub("_", text.strip().lower())
 
 
