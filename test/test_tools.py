@@ -5,7 +5,7 @@ import ujson as json
 from blaster.tools import get_time_overlaps, retry,\
 	ExpiringCache, create_signed_value, decode_signed_value
 from blaster.tools.sanitize_html import SanitizedDict, SanitizedList
-from datetime import datetime
+from datetime import datetime, timedelta
 from blaster.utils.data_utils import parse_string_to_units,\
 	parse_currency_string
 
@@ -153,7 +153,8 @@ class TestTools(unittest.TestCase):
 				datetime(year=2021, month=10, day=1),
 				datetime(year=2021, month=10, day=20),
 				["5/10/2021 10:30 - 6/10/2021 11:30"],
-				milliseconds=True
+				milliseconds=True,
+				tz_delta=timedelta(hours=2)
 			),
 			[(1633422600000, 1633512600000, [])]
 		)
@@ -186,6 +187,10 @@ class TestTools(unittest.TestCase):
 	@retry(2)
 	def test_can_retry(self):
 		raise Exception
+
+	def test_run_shell(self):
+		from blaster.tools import run_shell
+		s = run_shell("sh ./test/test_run_shell.sh")
 
 	def test_string_to_units(self):
 		print(parse_string_to_units(".9 units"))

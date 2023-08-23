@@ -21,9 +21,7 @@ import heapq
 from gevent import sleep
 from functools import reduce as _reduce
 from gevent.lock import BoundedSemaphore
-from datetime import timezone
-from datetime import datetime
-from datetime import timedelta
+from datetime import timezone, timedelta, datetime
 import time
 import hmac
 import base64
@@ -41,17 +39,24 @@ from ..websocket._core import WebSocket
 from ..env import IS_DEV, DEBUG_PRINT_LEVEL
 from ..utils.xss_html import XssHtml
 from ..utils import events
-from ..logging import LOG_APP_INFO, LOG_WARN, LOG_ERROR, LOG_DEBUG
+from ..logging import LOG_WARN, LOG_ERROR, LOG_DEBUG
+
+
+LOCAL_TZ_TIMEDELTA = datetime.now(timezone.utc)\
+	.astimezone().tzinfo.utcoffset(datetime.now())
 
 os.environ['TZ'] = 'UTC'
 time.tzset()
 
 # some useful constants
 INT64_MAX = 9223372036854775807
-MILLIS_IN_HOUR = 60 * 60 * 1000
+MILLIS_IN_MINUTE = 60 * 1000
+MILLIS_IN_HOUR = 60 * MILLIS_IN_MINUTE
 MILLIS_IN_DAY = 24 * MILLIS_IN_HOUR
-SECONDS_IN_HOUR = 60 * 60
-SECONDS_IN_DAY = 24 * 60 * 60
+
+SECONDS_IN_MINUTE = 60
+SECONDS_IN_HOUR = 60 * SECONDS_IN_MINUTE
+SECONDS_IN_DAY = 24 * SECONDS_IN_HOUR
 
 EPOCH = datetime.utcfromtimestamp(0)
 
@@ -295,7 +300,8 @@ def zlfill(tup, n):
 	return tuple(0 for x in range(n - len(tup))) + tup
 
 
-DATE_REGEX = re.compile(r"(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})")
+DATE_DD_MM_YYYY_REGEX = re.compile(r"(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})")
+DATE_YYYY_MM_DD_REGEX = re.compile(r"(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})")
 TIME_REGEX = re.compile(r"(\d{1,2}):(\d{0,2})?[:]*(\d{0,2})?(?:\s?((?:A|P).?M))?", re.IGNORECASE)
 DAY_REGEX = re.compile(
 	r"(mon|tues|wed(nes)?|thur(s)?|fri|sat(ur)?|sun)(day)?",
@@ -318,9 +324,9 @@ def _bound_time(start, end, a, b, partial, params):
 			return (start, end, params)
 
 
-# tz_delta = UTC - local ( to dereive UTC times in current timezone)
+# tz_delta = local - UTC ( to dereive UTC times in current timezone)
 
-def iter_time_overlaps(a, b, x: str, tz_delta, partial=False):
+def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False):
 	x, *params = x.split("|")
 	if(isinstance(a, int)):
 		a = timestamp2date(a)
@@ -328,7 +334,7 @@ def iter_time_overlaps(a, b, x: str, tz_delta, partial=False):
 	if(isinstance(b, int)):
 		b = timestamp2date(b)
 	x = x.strip()
-	date_matches = DATE_REGEX.findall(x)
+	date_matches = DATE_DD_MM_YYYY_REGEX.findall(x)
 	time_matches = [
 		[int(h or 0), int(m or 0), int(s or 0), am_pm.lower()]
 		for h, m, s, am_pm in TIME_REGEX.findall(x)
@@ -391,7 +397,7 @@ def iter_time_overlaps(a, b, x: str, tz_delta, partial=False):
 				year = 2000 + year
 			time_range_end = datetime(year=year, month=month, day=day) + offset_check_y
 
-		_ret = _bound_time(time_range_start + tz_delta, time_range_end + tz_delta, a, b, partial, params)
+		_ret = _bound_time(time_range_start - tz_delta, time_range_end - tz_delta, a, b, partial, params)
 		if(_ret):
 			yield _ret
 
@@ -421,8 +427,8 @@ def iter_time_overlaps(a, b, x: str, tz_delta, partial=False):
 			if(t.weekday() == start_day):
 				t_start_of_day = datetime(year=t.year, month=t.month, day=t.day)
 				_ret = _bound_time(
-					t_start_of_day + offset_check_x + tz_delta,
-					t_start_of_day + extra_offset_y + offset_check_y + tz_delta,
+					t_start_of_day + offset_check_x - tz_delta,
+					t_start_of_day + extra_offset_y + offset_check_y - tz_delta,
 					a, b, partial, params
 				)
 				if(_ret):
@@ -434,8 +440,8 @@ def iter_time_overlaps(a, b, x: str, tz_delta, partial=False):
 		t_start_of_day = datetime(a.year, a.month, a.day)
 		while(t_start_of_day < b):
 			_ret = _bound_time(
-				t_start_of_day + offset_check_x + tz_delta,
-				t_start_of_day + offset_check_y + tz_delta,
+				t_start_of_day + offset_check_x - tz_delta,
+				t_start_of_day + offset_check_y - tz_delta,
 				a, b, partial, params
 			)
 			if(_ret):
@@ -445,9 +451,9 @@ def iter_time_overlaps(a, b, x: str, tz_delta, partial=False):
 	return []
 
 
-def get_time_overlaps(
+def iter_time_overlaps(
 	a, b, include: list, exclude=None,
-	limit=10, partial=False, tz_delta=timedelta(), milliseconds=False
+	partial=False, tz_delta=timedelta(), milliseconds=False
 ):
 	if(isinstance(include, str)):
 		include = include.split(",")
@@ -458,12 +464,12 @@ def get_time_overlaps(
 	heapq.heapify(buffer)
 	for x in include:
 		try:
-			it = iter_time_overlaps(a, b, x, tz_delta, partial=partial)
+			it = _iter_time_overlaps(a, b, x, tz_delta, partial=partial)
 			heapq.heappush(buffer, (next(it), x, it))
 		except StopIteration:
 			pass
-	ret = []
-	while(len(ret) < limit and len(buffer) > 0):
+
+	while(len(buffer) > 0):
 		time_range, x, it = heapq.heappop(buffer)
 		try:
 			heapq.heappush(buffer, (next(it), x, it))
@@ -478,15 +484,31 @@ def get_time_overlaps(
 			)
 		):
 			if(milliseconds):
-				ret.append(
-					(
-						int(date2timestamp(time_range[0]) * 1000),
-						int(date2timestamp(time_range[1]) * 1000),
-						*time_range[2:]
-					)
+				yield (
+					int(date2timestamp(time_range[0]) * 1000),
+					int(date2timestamp(time_range[1]) * 1000),
+					*time_range[2:]
 				)
 			else:
-				ret.append(time_range)
+				yield time_range
+	return
+
+
+def get_time_overlaps(
+	a, b, include: list, exclude=None,
+	partial=False, tz_delta=timedelta(), milliseconds=False,
+	limit=10
+):
+	iter = iter_time_overlaps(
+		a, b, include, exclude=exclude, partial=partial,
+		tz_delta=tz_delta, milliseconds=milliseconds
+	)
+	ret = []
+	for i in range(limit):
+		time_range = next(iter, None)
+		if(not time_range):
+			break
+		ret.append(time_range)
 	return ret
 
 
@@ -1652,6 +1674,7 @@ def background_task(func):
 def exit_1():
 	tasks_runner._can_process = False
 	tasks_queue.put(None)
+
 
 @events.register_listener(["blaster_exit5"])
 def exit_5():
