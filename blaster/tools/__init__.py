@@ -8,6 +8,7 @@ from gevent.threading import Thread
 from gevent.queue import Queue, Empty as QueueEmptyException
 import os
 import sys
+import csv
 import weakref
 import subprocess
 import shlex
@@ -40,6 +41,13 @@ from ..env import IS_DEV, DEBUG_PRINT_LEVEL
 from ..utils.xss_html import XssHtml
 from ..utils import events
 from ..logging import LOG_WARN, LOG_ERROR, LOG_DEBUG
+
+# CUSTOM IMPORTS
+try:
+	import openpyxl
+	import xlrd
+except Exception:
+	pass
 
 
 LOCAL_TZ_TIMEDELTA = datetime.now(timezone.utc)\
@@ -1367,7 +1375,7 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000, fail=True, sta
 			_out = proc_out.read(1)
 			if(not _out):
 				break
-			_out = _out.decode('utf-8', 'ignore')
+			_out = _out.decode('utf-8', 'replace')
 			# add to our input
 			state.total_output += _out
 			if(len(state.total_output) > 2 * max_buf):
@@ -1387,7 +1395,7 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000, fail=True, sta
 			_err = proc_err.read(1)
 			if(not _err):
 				break
-			_err = _err.decode('utf-8', 'ignore')
+			_err = _err.decode('utf-8', 'replace')
 			# add to our input
 			state.total_err += _err
 			if(len(state.total_err) > 2 * max_buf):
@@ -1716,6 +1724,26 @@ def all_subclasses(cls):
 	return set(cls.__subclasses__()).union(
 		[s for c in cls.__subclasses__() for s in all_subclasses(c)]
 	)
+
+
+def read_rows_from_url(url, csv_delimiter=","):
+	with requests.get(url, stream=True) as resp:
+		rows_iter = None
+		if(url.endswith(".xlsx")):
+			xls_file = BytesIO()
+			for chunk in resp.iter_content(chunk_size=8192):
+				xls_file.write(chunk)  # unfortunately we read the whole file, may be we can cut off at 10MB or something
+			xls_file.seek(0)
+			excel_sheet = openpyxl.load_workbook(xls_file, read_only=True, data_only=True).active
+			rows_iter = excel_sheet.iter_rows(values_only=True)
+		if(url.endswith(".xls")):
+			sheet = xlrd.open_workbook(file_contents=resp.content).sheet_by_index(0)
+			rows_iter = map(lambda cells: [str(c.value) for c in cells] , sheet.get_rows())
+		else:
+			rows_iter = csv.reader(resp.iter_lines(decode_unicode=True), delimiter=csv_delimiter)
+
+		for row in rows_iter:
+			yield row
 
 
 # print debugging info for networks request called with requests

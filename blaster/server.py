@@ -162,6 +162,7 @@ class Request:
 	_params = None
 	_body = None
 	_body_raw = None
+	_attachments = None
 	_cookies = None
 	_headers = None
 	# cookies to send to client
@@ -250,6 +251,11 @@ class Request:
 			return self._body.get(key, **kwargs)
 		return None
 
+	def ATTACHMENTS(self, key):
+		if(key == None):
+			return self._attachments
+		return self._attachments[key]
+
 	def HEADERS(self, key=None, default=None):
 		if(key is None):
 			return self._headers
@@ -282,6 +288,7 @@ class Request:
 		if(not post_data_bytes):
 			return None
 		self._body = _body = SanitizedDict()
+		_attachements = None
 		content_type_header = headers.get("Content-Type", "")
 		if(headers and content_type_header.startswith("multipart/form-data")):
 			for part in decoder.MultipartDecoder(post_data_bytes, content_type_header).parts:
@@ -292,17 +299,19 @@ class Request:
 				for i in content_disposition.split(b';'):
 					key_val = i.split(b'=')
 					if(len(key_val) == 2):
-						key = key_val[0].strip()
+						key = key_val[0].strip().decode()
 						val = key_val[1].strip(b'"\'').decode()
 						attrs[key] = val
-				name = attrs.pop(b'name', _OBJ_END_)
+				name = attrs.pop('name', _OBJ_END_)
 				if(name is not _OBJ_END_):
 					# if no additional headers, and no other attributes,
 					# it's just a plain input field
 					if(not part.headers and not attrs):
 						_body[name] = part.text
 					else:  # could be a file or other type of data, preserve all data
-						_body[name] = {
+						if(self._attachments == None):
+							self._attachments = _attachements = {}
+						_attachements[name] = {
 							"attrs": attrs,
 							"data": part.content,
 							"headers": part.headers

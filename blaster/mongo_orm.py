@@ -1951,7 +1951,9 @@ def initialize_mongo(db_nodes, default_db_name=None):
 			f"argument must be a list of dicts, or a single dict, not {type(db_nodes)}"
 		)
 	# check connection to mongodbs
-	[db_node.mongo_client.server_info() for db_node in db_nodes]
+	for db_node in db_nodes:
+		server_info = db_node.mongo_client.server_info()
+		db_node.replicaset = server_info.get("setName")
 
 	# initialize control db
 	CollectionTracker._db_nodes_ = db_nodes
