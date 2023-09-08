@@ -1738,7 +1738,7 @@ def read_rows_from_url(url, csv_delimiter=","):
 			rows_iter = excel_sheet.iter_rows(values_only=True)
 		if(url.endswith(".xls")):
 			sheet = xlrd.open_workbook(file_contents=resp.content).sheet_by_index(0)
-			rows_iter = map(lambda cells: [str(c.value) for c in cells] , sheet.get_rows())
+			rows_iter = map(lambda cells: [str(c.value) for c in cells], sheet.get_rows())
 		else:
 			rows_iter = csv.reader(resp.iter_lines(decode_unicode=True), delimiter=csv_delimiter)
 

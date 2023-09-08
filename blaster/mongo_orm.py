@@ -1880,20 +1880,22 @@ def initialize_model(_Model):
 			# existing_options.pop("v")
 			# existing_options.pop("key")
 			# ignore some default
-			existing_is_unique = existing_options.get("unique") or False
-			is_unique = _options.get("unique") or False
-			if(existing_is_unique != is_unique):
-				index_options_changed = (
-					f"{existing_options} -> {_options} : you can delete and recreate "
-					f'Delete: db.{_Model._collection_name_with_shard_}.dropIndex("{existing_index[0]}") '
-					f"Create: db.{_Model._collection_name_with_shard_}"
-					f".createIndex({json.dumps({x:y for x,y in _index})}, "
-					f"{json.dumps(_options)})"  # options
-				)
-				LOG_ERROR("index_options_changed", desc=index_options_changed)
-				if("index_options_changed" not in _loading_errors):
-					_loading_errors["index_options_changed"] = []
-				_loading_errors["index_options_changed"].append(index_options_changed)
+			for prop, _default in (("unique", False), ("partialFilterExpression", None)):
+				existing_prop_val = existing_options.get(prop) or _default
+				new_prop_val = _options.get(prop) or _default
+				if(existing_prop_val != new_prop_val):
+					index_options_changed = (
+						f"{existing_options} -> {_options} : you can delete and recreate "
+						f'Delete: db.{_Model._collection_name_with_shard_}.dropIndex("{existing_index[0]}") '
+						f"Create: db.{_Model._collection_name_with_shard_}"
+						f".createIndex({json.dumps({x:y for x,y in _index})}, "
+						f"{json.dumps(_options)})"  # options
+					)
+					LOG_ERROR("index_options_changed", desc=index_options_changed)
+					if("index_options_changed" not in _loading_errors):
+						_loading_errors["index_options_changed"] = []
+					_loading_errors["index_options_changed"].append(index_options_changed)
+					break
 
 	# create secondary shards
 	for _secondary_shard_key in list(_Model._secondary_shards_.keys()):  # iterate on copy

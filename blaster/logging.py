@@ -184,6 +184,7 @@ def LOG(level, log_type, **kwargs):
 			_log["client"] = client_name
 
 	if(CONSOLE_LOG_RAW_JSON):
+		_log["severity"] = _log.pop("log_level")
 		print(json.dumps(_log))
 	else:
 		print(
