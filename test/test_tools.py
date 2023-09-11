@@ -32,16 +32,20 @@ class TestSanitization(unittest.TestCase):
 			if(isinstance(o, dict)):
 				for k, v in o.items():
 					if(not is_sanitized(v)):
+						print("not sanitized dict items", o, k, v)
 						return False
 				for k in o:
 					if(not is_sanitized(o[k])):
+						print("not sanitized dict", o, k, o[k])
 						return False
 			elif(isinstance(o, list)):
 				for v in o:
 					if(not is_sanitized(v)):
-						return v
+						print("not sanitized list item", o, v)
+						return False
 			elif(isinstance(o, str)):
 				if(">" in o or "<" in o):
+					print("not sanitized str", o)
 					return False
 				return True
 

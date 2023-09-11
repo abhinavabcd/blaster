@@ -10,14 +10,17 @@ class SanitizedSetterGetter(object):
 		val = super().__getitem__(k)
 		if(escape_html and isinstance(val, str)):
 			return html.escape(val, quote=escape_quotes)
-		return val
-
-	def __setitem__(self, key, val):
-		if(isinstance(val, dict)):
+		elif(isinstance(val, dict)):
+			if(isinstance(val, SanitizedDict)):
+				return val
 			val = SanitizedDict(val)
+			self.__setitem__(k, val)
 		elif(isinstance(val, list)):
+			if(isinstance(val, SanitizedList)):
+				return val
 			val = SanitizedList(val)
-		super().__setitem__(key, val)
+			self.__setitem__(k, val)
+		return val
 
 	def __str__(self):
 		return f"sanitized_{html.escape(super().__str__(), quote=False)}"
@@ -31,11 +34,7 @@ class SanitizedList(SanitizedSetterGetter, list):
 
 	def __iter__(self):
 		# unoptimized but for this it's okay, always returns sanitized one
-		def sanitized(val):
-			if(isinstance(val, str)):
-				return html.escape(val, quote=True)
-			return val
-		return map(sanitized, list.__iter__(self))
+		return map(self.__getitem__, range(len(self)))
 
 	def at(self, k, escape_html=True, escape_quotes=False):
 		return self.__getitem__(
@@ -43,30 +42,6 @@ class SanitizedList(SanitizedSetterGetter, list):
 			escape_quotes=escape_quotes,
 			escape_html=escape_html
 		)
-
-	def extend(self, _list):
-		for val in _list:
-			# calls __setitem__ again
-			self.append(val)
-		# allow chaining
-		return self
-
-	def append(self, val):
-		if(isinstance(val, dict)):
-			new_val = SanitizedDict()
-			for k, v in val.items():
-				new_val[k] = v  # calls __setitem__ nested way
-			super().append(new_val)
-
-		elif(isinstance(val, list)):
-			new_val = SanitizedList()
-			for i in val:
-				new_val.append(i)
-			super().append(new_val)
-		else:
-			super().append(val)
-		# allow chaining
-		return self
 
 
 # intercepts all values setting and
@@ -93,24 +68,9 @@ class SanitizedDict(SanitizedSetterGetter, dict):
 
 	def items(self):
 		# unoptimized but for this it's okay, always returns sanitized one
-		def sanitized(key_val):
-			key, val = key_val
-			if(isinstance(val, str)):
-				return (key, html.escape(val, quote=True))
-			return key_val
-		return map(sanitized, dict.items(self))
+		return map(lambda k: (k, self.__getitem__(k)), dict.keys(self))
 
-	def update(self, another):
-		for k, v in another.items():
-			# calls __setitem__ again
-			self[k] = v
-		# allow chaining
-		return self
-
-
-class LowerKeyDict(dict):
-	def __getitem__(self, k):
-		return super().__getitem__(k.lower())
-
-	def get(self, k, default=None):
-		return super().get(k.lower(), default)
+	# may or may not get all unsanitized results
+	# if items are previously accessed, it will return sanitized ones
+	def _items_unsanitized(self):
+		return super().items()

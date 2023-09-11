@@ -10,7 +10,6 @@
 # 1. verify  updates are propagated to the secondary shards and are available for query
 
 import blaster
-blaster.config.load("test.yaml")
 
 import unittest
 import time
@@ -30,6 +29,7 @@ class AModel(Model):
     e = Attribute(str)
     f = Attribute(str)
     g = Attribute(list)
+    h = Attribute(dict)
 
     INDEX(
         (a, b),
@@ -75,7 +75,7 @@ class CModel(Model):
 
 initialize_mongo(
     [
-        {"host": "mongo1-1:9042", "replicaset": "rs1"},
+        {"host": "blaster-test-mongo-1:9042", "replicaset": "rs1"},
         # {"host": "localhost:27017"}
     ],
     "test_" + str(int(time.time()))
@@ -146,7 +146,7 @@ class TestBasics(unittest.TestCase):
         a.c = "32"
 
         def after_mongo_update(self, old_doc, new_doc, _transaction=None):
-            raise Exception("some ex")
+            raise Exception(f"some ex with {_transaction}")
         try:
             a.update({}, after_mongo_update=after_mongo_update)
         except Exception as ex:
@@ -190,7 +190,7 @@ class TestListAndDict(unittest.TestCase):
         self.assertListEqual(a.g, [0, 1, 2, 3, 4])
         try:
             a.g.append(4)
-            a.g.insert(0, -1)            
+            a.g.insert(0, -1)
         except Exception:
             print("Exception raised - OK")
         a = AModel.get(a=11, use_cache=False)
@@ -203,6 +203,20 @@ class TestListAndDict(unittest.TestCase):
         a.commit()
         self.assertListEqual(a.g, [0, 1, 2, 3, 4, 5, 6, 7, 8])
         a = AModel.get(a=11, use_cache=False)
+
+    def test_new_object_append(self):
+        a = AModel(a=12)
+        a.g.append(100)
+        a.g.insert(0, 1)
+        a.commit()
+        self.assertListEqual(a.g, [1, 100])
+
+    def test_dont_update_empty_fields(self):
+        a = AModel(a=13)
+        a.g.append(100)
+        a.commit()
+        self.assertEqual(a._original_doc.get("h"), None)
+
 
 
 class TestSnippets(unittest.TestCase):
@@ -221,17 +235,17 @@ class TestUpdates(unittest.TestCase):
         self.assertTrue(b.c == "100")
 
     def test_list_insert(self):
-        c = CModel(_id="3").commit()
+        c = CModel(_id="403").commit()
         c.a.insert(0, 100)
         c.commit()
         self.assertTrue(c.a == [100])
 
-        c_from_db = CModel.get("3", use_cache=False)
+        c_from_db = CModel.get("403", use_cache=False)
         self.assertTrue(c_from_db.a == [100])
         c.a.insert(1, 150)
         c.commit()
 
-        c_from_db = CModel.get("3", use_cache=False)
+        c_from_db = CModel.get("403", use_cache=False)
         self.assertTrue(c_from_db.a == [100, 150])
 
 

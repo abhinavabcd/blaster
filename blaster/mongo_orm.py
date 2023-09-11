@@ -91,7 +91,9 @@ class MongoList(list):
 		if(initial_value):
 			for item in initial_value:
 				self.append(item)
-		self._initializing = False
+		self._initializing = _model_obj._is_new_  # Hack for new object
+		if(_model_obj._is_new_):
+			_model_obj._if_non_empty_set_query_update[path] = self
 
 	def __setitem__(self, k, v):
 		if(not self._initializing):
@@ -113,7 +115,7 @@ class MongoList(list):
 		value_to_remove = _pull.get(self.path, _OBJ_END_)
 		if(value_to_remove is _OBJ_END_):
 			_pull[self.path] = item  # first item to remove
-		else: 
+		else:
 			# if there are multiple items to remove, use $in
 			if(
 				isinstance(value_to_remove, dict)
@@ -160,6 +162,7 @@ class MongoList(list):
 				_push_path_values["$each"].append(item)
 			else:
 				raise Exception("You may be concurrently updating the list with insert/append. Commit it and update")
+		super(MongoList, self).insert(pos, item)
 
 	def append(self, item):
 		if(self._initializing):
@@ -202,20 +205,11 @@ class MongoDict(dict):
 		self.path = path
 		if(initial_value):
 			self.update(initial_value)
-		self._initializing = False
+		self._initializing = _model_obj._is_new_  # Hack for new object
+		if(_model_obj._is_new_):
+			_model_obj._if_non_empty_set_query_update[path] = self
 
 	def __setitem__(self, k, v):
-		if(self._model_obj._is_new_):
-			set_by_key_list(
-				self._model_obj._set_query_updates,
-				(self.path + "." + str(k)).split("."),  # split by dot
-				v
-			)
-			super(MongoDict, self).__setitem__(
-				self.path, self._model_obj._set_query_updates[self.path]
-			)
-			return
-
 		if(not self._initializing):
 			self._model_obj._set_query_updates[self.path + "." + str(k)] = v
 		else:
@@ -295,6 +289,7 @@ class Model(object):
 	_initializing = False
 	# pending query updates are stored in this
 	_set_query_updates = None
+	_if_non_empty_set_query_update = None
 	_other_query_updates = None
 	_original_doc = None
 	# we execute all functions inside this list,
@@ -310,6 +305,7 @@ class Model(object):
 		self._is_new_ = _is_new_
 		self._initializing = not _is_new_
 		self._set_query_updates = {}
+		self._if_non_empty_set_query_update = {}
 		self._other_query_updates = {}
 		cls = self.__class__
 		for k, v in cls._attrs_.items():
@@ -668,17 +664,20 @@ class Model(object):
 		cls._trigger_event(EVENT_BEFORE_UPDATE, self)
 
 		if(include_pending_updates):
+			if(self._if_non_empty_set_query_update):
+				# check an update them on $set query
+				for _path in list(self._if_non_empty_set_query_update.keys()):
+					if(_val := self._if_non_empty_set_query_update.pop(_path)):
+						self._set_query_updates[_path] = _val
 			if(self._set_query_updates):
-				_in_query = _update_query.get("$set") or {}
-				_to_set = dict(self._set_query_updates)
-				_to_set.update(_in_query)  # overwrite from query
-				_update_query["$set"] = _to_set
+				_set_query = _update_query.get("$set") or {}
+				_update_query["$set"] = {
+					**self._set_query_updates, **_set_query
+				}
 			if(self._other_query_updates):
 				for _ukey, _uval in self._other_query_updates.items():
-					_to_update = dict(_uval)
-					_in_query = _update_query.get(_ukey) or {}  # from update query
-					_to_update.update(_in_query)  # overwrite
-					_update_query[_ukey] = _to_update
+					_u_query = _update_query.get(_ukey) or {}  # from update query
+					_update_query[_ukey] = {**_uval, **_u_query}
 
 		if(not _update_query):
 			return True  # nothing to update, hence true
@@ -1234,8 +1233,15 @@ class Model(object):
 
 		if(self._is_new_):  # try inserting
 			cls._trigger_event(EVENT_BEFORE_CREATE, self)
+
+			if(self._if_non_empty_set_query_update):
+				for _path in list(self._if_non_empty_set_query_update.keys()):
+					if(_val := self._if_non_empty_set_query_update.pop(_path)):
+						self._set_query_updates[_path] = _val
+
 			if(not self._set_query_updates):
 				return self  # nothing to update
+
 			shard_key_name = cls._shard_key_
 			if(
 				self._id is None
@@ -1259,7 +1265,7 @@ class Model(object):
 					set_query=str(self._set_query_updates)
 				)
 			try:
-				# find which shard we should insert to and insert into that
+				# find which shard we should insert
 				with ExitStack() as stack:
 					_transaction = _transaction if _transaction is not None else {}
 
@@ -1536,21 +1542,19 @@ class DatabaseNode:
 	def __init__(
 		self, host=None, replicaset=None,
 		username=None, password=None, db_name=None,
-		hosts=None,
-		replica_set=None, at=0  # cleanup
+		hosts=None, at=0
 	):
 		if(isinstance(host, str)):
 			hosts = [host]
 		hosts.sort()
 		self.hosts = hosts
-		if(list(filter(lambda _host: "replSet=" in _host, hosts))):
-			raise Exception("use replicaset argument to indicate replicaset")
-		self.replicaset = replicaset
 		self.username = username
 		self.db_name = db_name
+		self.replicaset = replicaset
+		self.at = at
 		# use list of hosts, replicaset and username as cache key
 		# so as not to create multiple clients
-		_mongo_clients_cache_key = (",".join(sorted(hosts)), replicaset or "", username or "")
+		_mongo_clients_cache_key = (",".join(sorted(hosts)), username or "")
 		self.mongo_client = _cached_mongo_clients.get(_mongo_clients_cache_key)
 		if(not self.mongo_client):
 			self.mongo_client \
@@ -1940,25 +1944,21 @@ def initialize_model(_Model):
 
 # initialize control Tr
 # initialize all other nodes
-def initialize_mongo(db_nodes, default_db_name=None):
+def initialize_mongo(control_db_nodes, default_db_name=None):
 
 	default_db_name = default_db_name or "temp_db"
 	# initialize control db
-	if(isinstance(db_nodes, dict)):
-		db_nodes = [DatabaseNode(**db_nodes)]
-	elif(isinstance(db_nodes, list)):
-		db_nodes = [DatabaseNode(**db_node) for db_node in db_nodes]
+	if(isinstance(control_db_nodes, dict)):
+		control_db_nodes = [DatabaseNode(**control_db_nodes)]
+	elif(isinstance(control_db_nodes, list)):
+		control_db_nodes = [DatabaseNode(**db_node) for db_node in control_db_nodes]
 	else:
 		raise Exception(
-			f"argument must be a list of dicts, or a single dict, not {type(db_nodes)}"
+			f"argument must be a list of dicts, or a single dict, not {type(control_db_nodes)}"
 		)
-	# check connection to mongodbs
-	for db_node in db_nodes:
-		server_info = db_node.mongo_client.server_info()
-		db_node.replicaset = server_info.get("setName")
 
 	# initialize control db
-	CollectionTracker._db_nodes_ = db_nodes
+	CollectionTracker._db_nodes_ = control_db_nodes
 	initialize_model(CollectionTracker)
 
 	# set default db name for each class

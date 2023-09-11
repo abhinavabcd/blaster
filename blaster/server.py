@@ -371,7 +371,7 @@ class Request:
 		elif(isinstance(_type, Headers)):  # Headers('user-agent')
 			return lambda req: _type.from_dict(req._headers, default=default)
 		elif(isinstance(_type, Body)):
-			return lambda req: _type.from_dict(req._body, default=default)
+			return lambda req: _type.from_dict(dict(req._body._items_unsanitized()), default=default)
 
 		# prefer arg injector first if available
 		has_arg_creator_hook = _argument_creator_hooks.get(_type)
@@ -379,7 +379,7 @@ class Request:
 			return Request.wrap_arg_hook_for_defaults(has_arg_creator_hook, name, _type, default)
 
 		elif(isinstance(_type, type) and issubclass(_type, Body)):
-			return lambda req: _type.from_dict(req._body, default=default)
+			return lambda req: _type.from_dict(dict(req._body._items_unsanitized()), default=default)
 
 		elif(isinstance(_type, type) and issubclass(_type, Query)):
 			return lambda req: _type.from_dict(req._params, default=default)
