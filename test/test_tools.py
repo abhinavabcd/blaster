@@ -4,7 +4,7 @@ import time
 import ujson as json
 from blaster.tools import get_time_overlaps, retry,\
 	ExpiringCache, create_signed_value, decode_signed_value
-from blaster.tools.sanitize_html import SanitizedDict, SanitizedList
+from blaster.tools.sanitize_html import HtmlSanitizedDict, HtmlSanitizedList
 from datetime import datetime, timedelta
 from blaster.utils.data_utils import parse_string_to_units,\
 	parse_currency_string
@@ -12,7 +12,7 @@ from blaster.utils.data_utils import parse_string_to_units,\
 
 class TestSanitization(unittest.TestCase):
 	def test_sanitization(self):
-		sd = SanitizedDict(a="<a>", b="<b>")
+		sd = HtmlSanitizedDict(a="<a>", b="<b>")
 		sd["c"] = "<c>"
 		sd["d"] = {"e": "<e>", "f": "<f>"}
 
@@ -21,7 +21,7 @@ class TestSanitization(unittest.TestCase):
 
 		# test iterator
 		for k, v in sd.items():
-			if(isinstance(v, SanitizedDict)):
+			if(isinstance(v, HtmlSanitizedDict)):
 				for k1, v1 in v.items():
 					self.assertTrue(">" not in v1)
 			else:
@@ -51,11 +51,11 @@ class TestSanitization(unittest.TestCase):
 
 			return is_sanitized(str(o))
 
-		sd2 = SanitizedDict({"1": "<1>", "2": ["<b>", "<c>"], "3": {"a3": "<v></v>"}})
+		sd2 = HtmlSanitizedDict({"1": "<1>", "2": ["<b>", "<c>"], "3": {"a3": "<v></v>"}})
 		self.assertTrue(is_sanitized(sd2))
 
 		self.assertTrue(isinstance(sd, dict))
-		sl = SanitizedList(["<a>", "<b>"])
+		sl = HtmlSanitizedList(["<a>", "<b>"])
 		sl.append({"c": "<c>", "d": "<d>"})
 		sl.extend(["<e>", "<f> <>><><><<<>>"])
 		sl.append(["<g>", "<h>"])
@@ -63,7 +63,7 @@ class TestSanitization(unittest.TestCase):
 		self.assertTrue(sl[2]["c"] == "&lt;c&gt;")  # test dict in a list
 		# test iterator
 		for i in sl:
-			if(isinstance(i, SanitizedList)):
+			if(isinstance(i, HtmlSanitizedList)):
 				for j in i:
 					self.assertTrue(">" not in j)
 			else:
@@ -188,13 +188,24 @@ class TestTools(unittest.TestCase):
 		self.assertEqual(find_nth("abcabcabcx", "abc", 2), 3)
 		self.assertEqual(find_nth("abcabcabcx", "abc", 3), 6)
 
-	@retry(2)
 	def test_can_retry(self):
-		raise Exception
+		runs = []
+
+		@retry(2, ignore_exceptions=[Exception])
+		def _retry_func():
+			runs.append(1)
+			raise Exception
+
+		try:
+			_retry_func()
+		except Exception:
+			self.assertEqual(len(runs), 2)
 
 	def test_run_shell(self):
 		from blaster.tools import run_shell
 		s = run_shell("sh ./test/test_run_shell.sh")
+		self.assertEqual(s.total_output, "This is a message to stdout\n")
+		self.assertEqual(s.total_err, "This is an error message to stderr\n")
 
 	def test_string_to_units(self):
 		print(parse_string_to_units(".9 units"))

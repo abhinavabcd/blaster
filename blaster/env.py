@@ -6,7 +6,7 @@ IS_PROD = environ.get("IS_PROD") == "1"
 IS_STAGING = IS_PROD and environ.get("IS_STAGING") == "1"
 IS_DEV = 1 if not (IS_PROD or IS_STAGING) else 0
 IS_TEST = IS_DEV and environ.get("IS_TEST") == "1"
-
+IS_TEST_LOCAL = IS_TEST and environ.get("IS_TEST_LOCAL") == "1"
 # CRITICAL-50 ERROR-40  WARNING-30  INFO-20  DEBUG-10  NOTSET-0
 APP_NAME = environ.get("APP_NAME")
 APP_VERSION = environ.get("APP_VERSION")

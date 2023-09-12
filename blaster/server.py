@@ -20,7 +20,7 @@ from requests_toolbelt.multipart import decoder
 from . import req_ctx, __version__
 from .tools import set_socket_fast_close_options,\
 	BufferedSocket, ltrim, _OBJ_END_
-from .tools.sanitize_html import SanitizedDict
+from .tools.sanitize_html import HtmlSanitizedDict
 from .utils import events
 from .utils.data_utils import FILE_EXTENSION_TO_MIME_TYPE
 from .logging import LOG_ERROR, LOG_SERVER, LOG_WARN, LOG_DEBUG
@@ -205,7 +205,7 @@ class Request:
 		return self._headers.get("x-client") or ""
 
 	def __init__(self, buffered_socket, ctx):
-		self._params = SanitizedDict()  # empty params by default
+		self._params = HtmlSanitizedDict()  # empty params by default
 		self._headers = HeadersDict()
 		self.sock = buffered_socket
 		self.ctx = ctx
@@ -287,7 +287,7 @@ class Request:
 	def parse_request_body(self, post_data_bytes, headers):
 		if(not post_data_bytes):
 			return None
-		self._body = _body = SanitizedDict()
+		self._body = _body = HtmlSanitizedDict()
 		_attachements = None
 		content_type_header = headers.get("Content-Type", "")
 		if(headers and content_type_header.startswith("multipart/form-data")):
@@ -371,7 +371,7 @@ class Request:
 		elif(isinstance(_type, Headers)):  # Headers('user-agent')
 			return lambda req: _type.from_dict(req._headers, default=default)
 		elif(isinstance(_type, Body)):
-			return lambda req: _type.from_dict(dict(req._body._items_unsanitized()), default=default)
+			return lambda req: _type.from_dict(req._body, default=default)
 
 		# prefer arg injector first if available
 		has_arg_creator_hook = _argument_creator_hooks.get(_type)
@@ -379,7 +379,7 @@ class Request:
 			return Request.wrap_arg_hook_for_defaults(has_arg_creator_hook, name, _type, default)
 
 		elif(isinstance(_type, type) and issubclass(_type, Body)):
-			return lambda req: _type.from_dict(dict(req._body._items_unsanitized()), default=default)
+			return lambda req: _type.from_dict(req._body, default=default)
 
 		elif(isinstance(_type, type) and issubclass(_type, Query)):
 			return lambda req: _type.from_dict(req._params, default=default)

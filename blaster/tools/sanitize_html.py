@@ -2,23 +2,23 @@ import html
 
 
 # custom containers ##########
-# SanitizedList and SanitizedDict are used for HTML safe operation
+# HtmlSanitizedList and HtmlSanitizedDict are used for HTML safe operation
 # the idea is to wrap them to sanitizeContainers, and escapt them while retrieving
 # rather than during inserting/parsing stage
-class SanitizedSetterGetter(object):
+class HtmlSanitizedSetterGetter(object):
 	def __getitem__(self, k, escape_html=True, escape_quotes=False):
 		val = super().__getitem__(k)
 		if(escape_html and isinstance(val, str)):
 			return html.escape(val, quote=escape_quotes)
 		elif(isinstance(val, dict)):
-			if(isinstance(val, SanitizedDict)):
+			if(isinstance(val, HtmlSanitizedDict)):
 				return val
-			val = SanitizedDict(val)
+			val = HtmlSanitizedDict(val)
 			self.__setitem__(k, val)
 		elif(isinstance(val, list)):
-			if(isinstance(val, SanitizedList)):
+			if(isinstance(val, HtmlSanitizedList)):
 				return val
-			val = SanitizedList(val)
+			val = HtmlSanitizedList(val)
 			self.__setitem__(k, val)
 		return val
 
@@ -26,7 +26,7 @@ class SanitizedSetterGetter(object):
 		return f"sanitized_{html.escape(super().__str__(), quote=False)}"
 
 
-class SanitizedList(SanitizedSetterGetter, list):
+class HtmlSanitizedList(HtmlSanitizedSetterGetter, list):
 
 	def __init__(self, entries=None):
 		super().__init__()
@@ -45,7 +45,7 @@ class SanitizedList(SanitizedSetterGetter, list):
 
 
 # intercepts all values setting and
-class SanitizedDict(SanitizedSetterGetter, dict):
+class HtmlSanitizedDict(HtmlSanitizedSetterGetter, dict):
 
 	def __init__(self, entries=None, **kwargs):
 		super().__init__()

@@ -10,7 +10,6 @@ from . import env
 
 _this_ = sys.modules[__name__]
 
-
 class Config:
     _config = None
     frozen_keys = None
@@ -35,6 +34,8 @@ class Config:
                     config_files.append(os.path.join(path, "dev.yaml"))
                     if(self.IS_TEST):
                         config_files.append(os.path.join(path, "test.yaml"))
+                        if(self.IS_TEST_LOCAL):
+                            config_files.append(os.path.join(path, "test_local.yaml"))
                 elif(self.IS_PROD):
                     config_files.append(os.path.join(path, "prod.yaml"))
                     config_files.append(os.path.join(path, "prod.secrets.yaml"))
