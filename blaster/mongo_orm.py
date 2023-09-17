@@ -1005,21 +1005,21 @@ class Model(object):
 
 		# does local sorting on results from multiple query iterators using a heap
 		class MultiCollectionQueryResultIterator:
-			query_result_iters = None
 			query_count_funcs = None
 			buffer = None
 			results_returned = 0
 			__start_timestamp = 0
 
 			def __init__(self):
-				self.query_result_iters = []
 				self.query_count_funcs = []
 				self._cursors = []
 				self.results_returned = 0
 				self.__start_timestamp = 0
+				self.buffer = []
+				heapq.heapify(self.buffer)
 
 			def add(self, query_result_iter, _cursor, query_count_func=None):
-				self.query_result_iters.append(query_result_iter)
+				self.push_query_iter_into_heap(query_result_iter)
 				self._cursors.append(_cursor)
 				if(query_count_func):
 					self.query_count_funcs.append(query_count_func)
@@ -1043,13 +1043,6 @@ class Model(object):
 					pass
 
 			def __iter__(self):
-				# if(len(self.query_result_iters) == 1):
-				# 	return self.query_result_iters[0]
-				# else we sort results for each if there is a sorting key given
-				self.buffer = []
-				heapq.heapify(self.buffer)
-				for _query_result_iter in self.query_result_iters:
-					self.push_query_iter_into_heap(_query_result_iter)
 				return self
 
 			def __next__(self):
