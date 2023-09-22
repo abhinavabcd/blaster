@@ -277,10 +277,16 @@ class Object:
 		return self.__class__.validate(self)  # resets internal dict
 
 	@classmethod
-	def validate(cls, obj, set_obj=None):  # obj -> instance of dict, cls, str
+	def validate(cls, obj):  # obj -> instance of dict, cls, str
 		# regular class instance
 		# validate __dict__ of the instance inplace
-		e = obj.__dict__ if not isinstance(obj, dict) else obj
+
+		ret = obj
+		if(isinstance(obj, dict)):
+			ret = cls()
+			e = obj
+		else:
+			e = obj.__dict__
 		k = None
 		attr_value = None
 		try:
@@ -298,10 +304,8 @@ class Object:
 				if(_validated_attr != attr_value):
 					e[k] = _validated_attr
 
-				if(set_obj):
-					setattr(set_obj, k, _validated_attr)
-
-			return obj
+				setattr(ret, k, _validated_attr)
+			return ret
 		except Exception as ex:
 			raise TypeError({
 				"exception": (ex.args and ex.args[0]) or "Validation failed",
@@ -317,8 +321,7 @@ class Object:
 			for _k, k in cls._dict_key_to_object_key.items():
 				if(_k in _dict):
 					_dict[k] = _dict.pop(_k)
-			cls.validate(_dict, set_obj=ret)
-			return ret
+			return cls.validate(_dict)
 		except Exception as ex:
 			if(default is not _OBJ_END_):
 				return default

@@ -612,10 +612,18 @@ def int_to_str(integer, base=BASE_62_LIST):
 	return ret
 
 
+_pev_int_id = 0
+
+
 def get_int_id():
 	time_elapsed \
-		= time.time() * 10000 - SOME_TIME_WHEN_WE_STARTED_THIS_MILLIS_WITH_10
-	return int(time_elapsed)
+		= int(time.time() * 10000 - SOME_TIME_WHEN_WE_STARTED_THIS_MILLIS_WITH_10)
+
+	global _pev_int_id
+	if(time_elapsed <= _pev_int_id):
+		time_elapsed = _pev_int_id + 1
+	_pev_int_id = time_elapsed
+	return time_elapsed
 
 
 def get_str_id():
