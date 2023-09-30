@@ -179,9 +179,12 @@ def LOG(level, log_type, **kwargs):
 	}
 	# blaster request
 	if(req := req_ctx.req):
-		_log["ip"] = req.ip_port[0]
-		if(client_name := req.client_name):
-			_log["client"] = client_name
+		try:
+			_log["ip"] = req.ip_port[0]
+			if(client_name := req.client_name):
+				_log["client"] = client_name
+		except Exception:
+			pass
 
 	if(CONSOLE_LOG_RAW_JSON):
 		_log["severity"] = _log.pop("log_level")

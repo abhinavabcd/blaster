@@ -28,12 +28,13 @@ from .schema import Object, Required, schema as schema_func
 from .websocket.server import WebSocketServerHandler
 from .config import IS_DEV, BLASTER_HTTP_TOOK_LONG_WARN_THRESHOLD
 
+
+HTTP_SOCKET_MAX_TIMEOUT = 40
 if(IS_DEV):
 	# dev specific config
 	from .config import DEV_FORCE_ACCESS_CONTROL_ALLOW_ORIGIN
 
 
-_is_server_running = True
 default_stream_headers = {
 	'Content-Type': 'text/html; charset=utf-8',
 	'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
@@ -418,6 +419,7 @@ class App:
 	name = None
 	stream_server = None
 	server_exception_handlers = None
+	is_running = False
 
 	def __init__(self, server_exception_handlers=None, **kwargs):
 		self.info = {
@@ -627,6 +629,7 @@ class App:
 			**ssl_args
 		)
 		# keep a track
+		self.is_running = True
 
 		_all_apps.add(self)
 
@@ -771,6 +774,7 @@ class App:
 		self.stream_server.serve_forever()
 
 	def stop(self):
+		self.is_running = False
 		self.stream_server.stop()
 		_all_apps.remove(self)
 
@@ -871,12 +875,11 @@ class App:
 				_headers_data_size += len(data)
 
 			# check if there is a content length or transfer encoding chunked
-			content_length = int(headers.get("Content-Length", 0))
+			content_length = int(headers.get("content-length", 0))
 			_max_body_size = handler.get("max_body_size") or HTTP_MAX_REQUEST_BODY_SIZE
 			if(content_length > 0):
 				if(content_length < _max_body_size):
 					post_data = buffered_socket.recvn(content_length)
-
 			else:  # handle chuncked encoding
 				transfer_encoding = headers.get("transfer-encoding")
 				if(transfer_encoding and "chunked" in transfer_encoding):
@@ -1074,28 +1077,32 @@ class App:
 			status = str(status) if status else b'502 Server error'
 			body = body or b'Internal server error'
 
-			# err.2 send the error response
-			# err.2.1 send status line
-			buffered_socket.send(b'HTTP/1.1 ', status, b'\r\n')
+			try:
+				# err.2 send the error response
+				# err.2.1 send status line
+				buffered_socket.send(b'HTTP/1.1 ', status, b'\r\n')
 
-			# err.2.2 send all headers
-			for resp_header in resp_headers:
-				buffered_socket.send(resp_header, b'\r\n')
+				# err.2.2 send all headers
+				for resp_header in resp_headers:
+					buffered_socket.send(resp_header, b'\r\n')
 
-			# err.2.3 send final headers(content related only) and body
-			buffered_socket.send(
-				b'Connection: close', b'\r\n',
-				b'Content-Length: ', str(len(body)), b'\r\n\r\n',
-				body
-			)
-			log_handler(
-				"http",
-				exception_str=str(ex),
-				stacktrace_string=stacktrace_string,
-				request_type=request_type,
-				request_line=request_line,
-				req_str=str(req.to_dict())
-			)
+				# err.2.3 send final headers(content related only) and body
+				buffered_socket.send(
+					b'Connection: close', b'\r\n',
+					b'Content-Length: ', str(len(body)), b'\r\n\r\n',
+					body
+				)
+				log_handler(
+					"http",
+					exception_str=str(ex),
+					stacktrace_string=stacktrace_string,
+					request_type=request_type,
+					request_line=request_line,
+					req_str=str(req.to_dict())
+				)
+			except Exception:
+				resuse_socket_for_next_http_request = False
+
 			if(IS_DEV):
 				traceback.print_exc()
 			# BREAK THIS CONNECTION
@@ -1107,6 +1114,7 @@ class App:
 		all the connection handling magic happens here
 	'''
 	def handle_connection(self, socket, address):
+		socket.settimeout(HTTP_SOCKET_MAX_TIMEOUT)  # set a timeout of 40 seconds
 		buffered_socket = BufferedSocket(socket)
 		close_socket = True
 		while(True):
@@ -1124,10 +1132,6 @@ class App:
 @events.register_listener("blaster_exit0")
 def stop_all_apps():
 	LOG_DEBUG("server_info", data="exiting all servers")
-	global _is_server_running
-
-	_is_server_running = False
-
 	for app in list(_all_apps):
 		app.stop()  # should handle all connections gracefully
 
@@ -1163,10 +1167,6 @@ def redirect_http_to_https():
 	http_app.start(port=80, handlers=[("(.*)", redirect)])
 	gevent.spawn(http_app.serve)
 	return http_app
-
-
-def is_server_running():
-	return _is_server_running
 
 
 # additional utils

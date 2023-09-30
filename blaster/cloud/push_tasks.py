@@ -10,16 +10,18 @@ import pickle
 import traceback
 import ujson as json
 import gevent
-from ..server import route, Request, is_server_running
+from ..server import route, Request
 from ..tools import background_task, hmac_hexdigest, get_random_id, retry
 from ..connection_pool import use_connection_pool
 from ..utils import events
-from ..logging import LOG_ERROR, LOG_WARN, LOG_SERVER, LOG_DEBUG
+from ..logging import LOG_ERROR, LOG_WARN, LOG_SERVER
 from ..config import PUSH_TASKS_SQS_URL,\
 	GCLOUD_TASKS_QUEUE_PATH, GCLOUD_TASK_RUNNER_HOST, GCLOUD_TASKS_AUTH_SECRET
 
 push_tasks = {}
 sqs_reader_greenlets = []
+_is_processing = True
+
 
 @retry(2)
 def exec_push_task(raw_bytes_message: bytes, auth=None):
@@ -33,7 +35,7 @@ def exec_push_task(raw_bytes_message: bytes, auth=None):
 		and hmac_hexdigest(auth, func_name) != message_payload.get("signature")
 	):
 		LOG_ERROR("push_tasks", desc="authorization failed", func=func_name)
-		
+
 	# task_id = message_payload.get("task_id", "")
 	# TODO use task_id for logging
 	func = push_tasks.get(func_name, None)
@@ -42,17 +44,18 @@ def exec_push_task(raw_bytes_message: bytes, auth=None):
 	else:
 		LOG_WARN("server_exception", data="Not a push task", func=str(func))
 
+
 @use_connection_pool(sqs_client="sqs")
 def process_from_sqs(queue_url, msgs_per_batch=10, sqs_client=None):
-	while(is_server_running()):
+	while(_is_processing):
 		try:
 			response = sqs_client.receive_message(
-					QueueUrl=queue_url,
-					MessageAttributeNames=['All'],
-					MaxNumberOfMessages=msgs_per_batch,
-					VisibilityTimeout=60,
-					WaitTimeSeconds=20 # long polling gevent safe
-					# ,ReceiveRequestAttemptId=''   , make it unique for each instance , probably when bootup with an ip ?
+				QueueUrl=queue_url,
+				MessageAttributeNames=['All'],
+				MaxNumberOfMessages=msgs_per_batch,
+				VisibilityTimeout=60,
+				WaitTimeSeconds=20  # long polling gevent safe
+				# ,ReceiveRequestAttemptId=''   , make it unique for each instance , probably when bootup with an ip ?
 			)
 
 			for sqs_message in response.get("Messages", []):
@@ -71,7 +74,7 @@ def process_from_sqs(queue_url, msgs_per_batch=10, sqs_client=None):
 
 
 @route("/gcloudtask")
-def gcloud_task(request:Request):
+def gcloud_task(request: Request):
 	exec_push_task(request._post_data, auth=GCLOUD_TASKS_AUTH_SECRET)
 	return "OK"
 
@@ -85,6 +88,7 @@ def post_task_to_sqs(push_tasks_sqs_url, message_body, sqs_client=None):
 		DelaySeconds=1
 	)
 
+
 @use_connection_pool(gcloudtasks_client="google_cloudtasks")
 def post_task_to_gcloud_tasks(queue_path, host, message_body: dict, gcloudtasks_client=None):
 	if(GCLOUD_TASKS_AUTH_SECRET):
@@ -92,10 +96,10 @@ def post_task_to_gcloud_tasks(queue_path, host, message_body: dict, gcloudtasks_
 			GCLOUD_TASKS_AUTH_SECRET, message_body["func_v2"]
 		)
 
-	message_body = base64.a85encode(pickle.dumps(message_body)) # bytes
+	message_body = base64.a85encode(pickle.dumps(message_body))  # bytes
 	task = {
 		"http_request": {  # Specify the type of request.
-			"http_method": 1, #tasks_v2.HttpMethod.POST,
+			"http_method": 1,  # tasks_v2.HttpMethod.POST,
 			"url": host + "/gcloudtask",  # The full url path that the task will be sent to.
 			"headers": {"Content-type": "text/plain"},
 			"body": message_body
@@ -108,6 +112,7 @@ def post_task_to_gcloud_tasks(queue_path, host, message_body: dict, gcloudtasks_
 			"task": task
 		}
 	)
+
 
 @background_task
 def post_a_task(func, *args, **kwargs):
@@ -156,6 +161,7 @@ def run_later(func):
 	_original = getattr(func, "_original", func)
 	task_name = _original.__name__
 	push_tasks[task_name] = func
+
 	def wrapper(*args, **kwargs):
 		post_a_task(
 			task_name,
@@ -168,14 +174,17 @@ def run_later(func):
 
 def init_push_task_handlers(parallel=1):
 	if(PUSH_TASKS_SQS_URL):
+		global _is_processing
+		_is_processing = True
 		for _ in range(parallel):
 			sqs_reader_greenlets.append(gevent.spawn(process_from_sqs, PUSH_TASKS_SQS_URL))
-		
 
 
 # cleanup
 @events.register_listener("blaster_exit0")
 def wait_for_push_tasks_processing():
+	global _is_processing
+	_is_processing = False
 	if(sqs_reader_greenlets):
 		LOG_WARN("server_info", data="finishing pending push tasks via SQS")
 		gevent.joinall(sqs_reader_greenlets)

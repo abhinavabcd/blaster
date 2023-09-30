@@ -1171,8 +1171,6 @@ class BufferedSocket():
 		return ret
 
 	def recv(self, n):
-		if(self.is_eof):
-			return None
 		if(self.store):
 			ret = self.store
 			self.store = bytearray()
@@ -1180,13 +1178,11 @@ class BufferedSocket():
 		return self.sock.recv(n)
 
 	def recvn(self, n):
-		if(self.is_eof):
-			return None
 		while(len(self.store) < n):
 			data = self.sock.recv(4096)
 			if(not data):
 				self.is_eof = True
-				break
+				return self.store or None
 			self.store.extend(data)
 
 		# return n bytes for now
@@ -1197,8 +1193,6 @@ class BufferedSocket():
 
 	# fails if it couldn't find the delimiter until max_size
 	def readuntil(self, delimiter, max_size, discard_delimiter):
-		if(self.is_eof):
-			return None
 		# check in store
 		if(isinstance(delimiter, str)):
 			delimiter = delimiter.encode()
@@ -1626,6 +1620,8 @@ def tasks_runner():
 
 tasks_runner._thread = None
 
+_joinables = []
+
 
 # submit a task:func to a partition
 # parition is used when you want them to execute in the
@@ -1663,6 +1659,15 @@ def exit_1():
 		tasks_queue.put(None)  # flush the task
 		tasks_runner._thread.join()
 		LOG_DEBUG("background_threads", msg="cleanedup")
+
+
+@events.register_listener(["blaster_exit5"])
+def exit_5():
+	# reap all joinables of background threads,
+	# everything should be done by this point
+	for _joinable in _joinables:
+		_joinable.join()
+	_joinables.clear()
 
 
 # calls a function after the function returns given by argument after
