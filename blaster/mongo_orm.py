@@ -661,8 +661,6 @@ class Model(object):
 	):
 		cls = self.__class__
 
-		cls._trigger_event(EVENT_BEFORE_UPDATE, self)
-
 		if(include_pending_updates):
 			if(self._if_non_empty_set_query_update):
 				# check an update them on $set query
@@ -681,6 +679,8 @@ class Model(object):
 
 		if(not _update_query):
 			return True  # nothing to update, hence true
+
+		cls._trigger_event(EVENT_BEFORE_UPDATE, self)
 
 		with ExitStack() as stack:
 			for _update_retry_count in range(3):
@@ -1535,7 +1535,7 @@ class DatabaseNode:
 	def __init__(
 		self, host=None, replicaset=None,
 		username=None, password=None, db_name=None,
-		hosts=None, at=0
+		hosts=None, at=0, **_
 	):
 		if(isinstance(host, str)):
 			hosts = [host]

@@ -1609,7 +1609,7 @@ def tasks_runner():
 		or not tasks_queue.empty()
 	):
 		try:
-			# reap completed paritioned by flushing them and repaing them
+			# reap completed paritioned by flushing them and reaping them
 			while(_partition_key := paritions_signalled_to_reap.get(False)):
 				if((_queue := partitioned_task_queues[_partition_key]).empty()):
 					partitioned_task_queues.pop(_partition_key)
@@ -1831,3 +1831,10 @@ def memoized_method(func):
 	setattr(wrapper, "_original", func)
 	wrapper.clear_cache = cache.clear
 	return wrapper
+
+
+def NON_NULL(*args):
+	for a in args:
+		if a is not None:
+			return a
+	return None

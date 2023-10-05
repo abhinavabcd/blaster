@@ -87,6 +87,6 @@ config.BLASTER_HTTP_TOOK_LONG_WARN_THRESHOLD = 5000
 
 # MONGO ORM SPECIFIC CONFIGS
 config.MONGO_WARN_MAX_RESULTS_RATE = 1000  # can scan at a max of 1000 / sec
-config.MONGO_MAX_RESULTS_AT_HIGH_SCAN_RATE = 10000  # cannot scan more than this at high scan rate
+config.MONGO_MAX_RESULTS_AT_HIGH_SCAN_RATE = 30000  # cannot scan more than this at high scan rate
 config.MONGO_WARN_MAX_QUERY_RESPONSE_TIME_SECONDS = 3  # cannot take more than 3 seconds
 # Logging basics
