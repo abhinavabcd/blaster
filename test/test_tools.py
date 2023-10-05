@@ -1,9 +1,12 @@
 import unittest
-from blaster import tools
+import gevent
+from blaster import tools, blaster_exit
 import time
+import random
 import ujson as json
 from blaster.tools import get_time_overlaps, retry,\
-	ExpiringCache, create_signed_value, decode_signed_value
+	ExpiringCache, create_signed_value, decode_signed_value,\
+	submit_background_task
 from blaster.tools.sanitize_html import HtmlSanitizedDict, HtmlSanitizedList
 from datetime import datetime, timedelta
 from blaster.utils.data_utils import parse_string_to_units,\
@@ -232,13 +235,44 @@ class TestTools(unittest.TestCase):
 		self.assertIsNone(c.get(1))
 		self.assertIsNone(c.get(2))
 		self.assertEqual(c.get(3), 3)
-		time.sleep(1) # all items expired
+		time.sleep(1)  # all items expired
 		self.assertIsNone(c.get(3))
 		for i in range(9):
 			time.sleep(0.2)
-			c.set(i, i) 
+			c.set(i, i)
 		# when last item is added, it expired first 4 items
 		self.assertEqual(len(c.to_son()), 5)
+
+
+class TestBackgroundTasks(unittest.TestCase):
+	def test_background_threads(self):
+		partitions = {i: [] for i in range(10)}
+
+		def run(x, y):
+			partitions[x].append(y)
+
+		join_threads = []
+
+		def spin_at_random_times(i):
+			for j in range(10):
+				time.sleep(random.random() / 10)
+				join_threads.append(
+					gevent.spawn(submit_background_task, i, run, i, j)
+				)
+
+		for i in range(10):
+			join_threads.append(
+				gevent.spawn(spin_at_random_times, i)
+			)
+
+		gevent.joinall(join_threads)
+		# simulate blaster exit
+		time.sleep(5)
+		for i, j in partitions.items():
+			self.assertEqual(j, [i for i in range(10)])
+
+		# after blaster exit
+		blaster_exit()
 
 
 if __name__ == "__main__":

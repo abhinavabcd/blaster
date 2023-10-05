@@ -162,8 +162,10 @@ class ExpiringCache:
 			removed_entries.append(self.cache.popitem(last=False))
 		keys_to_remove = []
 		for _key, val in self.cache.items():
-			if(val[0] < cur_timestamp):
-				keys_to_remove.append(_key)
+			if(val[0] > cur_timestamp):
+				break
+			# remove expired keys
+			keys_to_remove.append(_key)
 
 		for _key in keys_to_remove:
 			removed_entries.append(self.cache.pop(_key))
@@ -1171,8 +1173,6 @@ class BufferedSocket():
 		return ret
 
 	def recv(self, n):
-		if(self.is_eof):
-			return None
 		if(self.store):
 			ret = self.store
 			self.store = bytearray()
@@ -1180,13 +1180,11 @@ class BufferedSocket():
 		return self.sock.recv(n)
 
 	def recvn(self, n):
-		if(self.is_eof):
-			return None
 		while(len(self.store) < n):
 			data = self.sock.recv(4096)
 			if(not data):
 				self.is_eof = True
-				break
+				return self.store or None
 			self.store.extend(data)
 
 		# return n bytes for now
@@ -1197,8 +1195,6 @@ class BufferedSocket():
 
 	# fails if it couldn't find the delimiter until max_size
 	def readuntil(self, delimiter, max_size, discard_delimiter):
-		if(self.is_eof):
-			return None
 		# check in store
 		if(isinstance(delimiter, str)):
 			delimiter = delimiter.encode()
@@ -1569,21 +1565,15 @@ def empty_func():
 	pass
 
 
-# when server shutsdown
-_joinables = []
-
 # BACKGROUND TASKS
 tasks_queue = Queue()  # all tasks queued including their parition keys
-partitioned_task_runners = {}  # threads that are running tasks for each partition
+idle_pt_queues = Queue()
 partitioned_task_queues = {}
 
-paritions_signalled_to_reap = Queue()  # signal that a parition has finished it's tasks
 
-
-def _partitioned_tasks_runner(partition_key):
-	_queue = partitioned_task_queues[partition_key]
+def _partitioned_tasks_runner(_queue):
 	while(_task := _queue.get()):  # idenfinitely waits for task until None (flushed)
-		_, queued_at, func, args, kwargs = _task
+		partition_key, queued_at, func, args, kwargs = _task
 		# call the function
 		now_millis = cur_ms()
 		if((delay := now_millis - queued_at) > 4000):
@@ -1596,63 +1586,43 @@ def _partitioned_tasks_runner(partition_key):
 
 		# signal the main thread to cleanup this parition
 		if(_queue.empty()):
-			paritions_signalled_to_reap.put(partition_key)
+			partitioned_task_queues.pop(partition_key, None)
+			idle_pt_queues.put(_queue)
 
 
 def tasks_runner():
 	'''
 		Single thread: it reaps any pending tasks, and then spaws new tasks and track them
 	'''
-	while(
-		tasks_runner._can_process
-		or partitioned_task_runners
-		or not tasks_queue.empty()
-	):
-		try:
-			# reap completed paritioned by flushing them and reaping them
-			while(_partition_key := paritions_signalled_to_reap.get(False)):
-				if((_queue := partitioned_task_queues[_partition_key]).empty()):
-					partitioned_task_queues.pop(_partition_key)
-					_queue.put(None)  # flush it
-					# wait for the thread to finish, should be almost instant finish
-					# we are sure no other tasks are queued into the partition because
-					# it's not running, the code is running after this
-					partitioned_task_runners.pop(_partition_key).join()
-					DEBUG_PRINT_LEVEL > 7 and print("reaped :", _partition_key)
-		except QueueEmptyException:
-			DEBUG_PRINT_LEVEL > 7 and print("nothing to reap")
-			pass
+	pt_runners_to_join = []
+	while(_task := tasks_queue.get()):  # until it's flushed with None
+		_partition_key = _task[0]
+		pt_queue = partitioned_task_queues.get(_partition_key)  # partitioned task queue
+		# reuse from idle_pt_queues if possible
+		if(not pt_queue):
+			try:
+				pt_queue = idle_pt_queues.get(False)
+			except QueueEmptyException:
+				_thread = Thread(
+					target=_partitioned_tasks_runner,
+					args=(pt_queue := Queue(),)
+				)
+				_thread.start()
+				pt_runners_to_join.append((_thread, pt_queue))
+			# mark it as being used by this partion key
+			partitioned_task_queues[_partition_key] = pt_queue
+		pt_queue.put(_task)
 
-		# wait for new tasks and spawn
-		try:
-			if(_task := tasks_queue.get(timeout=5)):
-				_partition_key = _task[0]
-				pt_queue = partitioned_task_queues.get(_partition_key)  # partitioned task queue
-				if(not pt_queue):
-					pt_queue = Queue()
-					pt_queue.put(_task)
-					pt_runner = Thread(
-						target=_partitioned_tasks_runner, args=(_partition_key,)
-					)
-					# track and spawn new runner
-					DEBUG_PRINT_LEVEL > 7 and print(
-						"spawning new partition runner: ", _partition_key, _task,
-						"running partitions: ", len(partitioned_task_runners)
-					)
-					partitioned_task_queues[_partition_key] = pt_queue
-					partitioned_task_runners[_partition_key] = pt_runner
-					pt_runner.start()
-				else:
-					# queue another task
-					pt_queue.put(_task)
-		except QueueEmptyException:
-			DEBUG_PRINT_LEVEL > 7 and print("tasks emtpy")
-			pass
+	for pt_runner, pt_queue in pt_runners_to_join:
+		pt_queue.put(None)  # flush
+		pt_runner.join()
+
 	LOG_DEBUG("background_threads_runner", msg="tasks runner finished")
 
 
-tasks_runner._can_process = True
 tasks_runner._thread = None
+
+_joinables = []
 
 
 # submit a task:func to a partition
@@ -1668,7 +1638,6 @@ def submit_background_task(partition_key, func, *args, **kwargs):
 		LOG_DEBUG("background_threads_runner", msg="starting")
 		tasks_runner._thread = _tasks_runner_thread = Thread(target=tasks_runner)
 		_tasks_runner_thread.start()
-		_joinables.append(_tasks_runner_thread)
 
 	tasks_queue.put((str(partition_key), now_millis, func, args, kwargs))
 
@@ -1688,8 +1657,10 @@ def background_task(func):
 # Blaster exit functions
 @events.register_listener(["blaster_exit1"])
 def exit_1():
-	tasks_runner._can_process = False
-	tasks_queue.put(None)
+	if(tasks_runner._thread):
+		tasks_queue.put(None)  # flush the task
+		tasks_runner._thread.join()
+		LOG_DEBUG("background_threads", msg="cleanedup")
 
 
 @events.register_listener(["blaster_exit5"])
@@ -1699,7 +1670,6 @@ def exit_5():
 	for _joinable in _joinables:
 		_joinable.join()
 	_joinables.clear()
-	LOG_DEBUG("background_threads", msg="cleanedup")
 
 
 # calls a function after the function returns given by argument after
