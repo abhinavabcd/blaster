@@ -865,27 +865,27 @@ def jump_hash(key, num_buckets):
 ##############
 
 
-number_regex = re.compile(r"([0-9\.]+)")
-non_alpha_num_space_dot_regex = re.compile(r"[^0-9a-zA-Z \.]", re.DOTALL)  # space, . allowed
-non_alpha_regex = re.compile(r"[^0-9a-zA-Z]", re.DOTALL)
-non_alpha_num_underscore_regex = re.compile(r"[^0-9a-zA-Z_]", re.DOTALL)
-non_alpha_groups_regex = re.compile(r"[^0-9a-zA-Z]+", re.DOTALL)  # multiple non-alpha groups
+NUMBER_REGEX = re.compile(r"([0-9\.]+)")
+NON_ALPHA_NUM_SPACE_DOT_REGEX = re.compile(r"[^0-9a-zA-Z \.]", re.DOTALL)  # space, . allowed
+NON_ALPHA_REGEX = re.compile(r"[^0-9a-zA-Z]", re.DOTALL)
+NON_ALPHA_NUM_UNDERSCORE_REGEX = re.compile(r"[^0-9a-zA-Z_]", re.DOTALL)
+NON_ALPHA_GROUPS_REGEX = re.compile(r"[^0-9a-zA-Z]+", re.DOTALL)  # multiple non-alpha groups
 
 
 def sanitize_string(text):
-	return non_alpha_num_space_dot_regex.sub("", text)
+	return NON_ALPHA_NUM_SPACE_DOT_REGEX.sub("", text)
 
 
 def sanitize_to_id(text):
-	return non_alpha_regex.sub("", text.lower())
+	return NON_ALPHA_REGEX.sub("", text.lower())
 
 
 def sanitize_to_id_allow_case(text):
-	return non_alpha_regex.sub("", text)
+	return NON_ALPHA_REGEX.sub("", text)
 
 
 def sanitize_to_underscore_id(text):
-	return non_alpha_groups_regex.sub("_", text.strip().lower())
+	return NON_ALPHA_GROUPS_REGEX.sub("_", text.strip().lower())
 
 
 EMAIL_REGEX = re.compile(r'^[_a-z0-9-]+(\.[_a-z0-9-]+)*(\+[_a-z0-9-]+)?\@[a-z0-9-]+(\.[a-z0-9-]+)*(\.[a-z]{2,6})$')
@@ -1476,13 +1476,16 @@ def condense_for_search(*args):
 			continue
 		word_map = {}
 		if(isinstance(arg, str)):
-			arg = arg.split()
-		for word in arg:
-			key = word[:5]
-			existing_words_of_key = word_map.get(key)
-			if(not existing_words_of_key):
-				word_map[key] = existing_words_of_key = []
-			existing_words_of_key.append(word)
+			arg = [arg]
+		for words in map(lambda x: NON_ALPHA_GROUPS_REGEX.split(x.lower()), arg):
+			for word in words:
+				if(not word):
+					continue
+				key = word[:5]
+				existing_words_of_key = word_map.get(key)
+				if(not existing_words_of_key):
+					word_map[key] = existing_words_of_key = []
+				existing_words_of_key.append(word)
 		for _key, words in word_map.items():
 			_words = global_word_map.get(_key)
 			# when existing matching words list

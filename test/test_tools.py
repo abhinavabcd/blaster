@@ -6,7 +6,7 @@ import random
 import ujson as json
 from blaster.tools import get_time_overlaps, retry,\
 	ExpiringCache, create_signed_value, decode_signed_value,\
-	submit_background_task
+	submit_background_task, background_task
 from blaster.tools.sanitize_html import HtmlSanitizedDict, HtmlSanitizedList
 from datetime import datetime, timedelta
 from blaster.utils.data_utils import parse_string_to_units,\
@@ -223,7 +223,7 @@ class TestTools(unittest.TestCase):
 		l2 = tools.remove_duplicates(["a", "a", "b", "c", "a", "b"])
 		self.assertEqual(l2, ["a", "b", "c"])
 
-		l2 = tools.remove_duplicates([{"a": 1}, {"a":1}, {"a": 2}, {"a": 2}], key=lambda x:x.get("a"))
+		l2 = tools.remove_duplicates([{"a": 1}, {"a": 1}, {"a": 2}, {"a": 2}], key=lambda x: x.get("a"))
 		self.assertEqual(l2, [{"a": 1}, {"a": 2}])
 
 	def test_expiring_cache(self):
@@ -273,6 +273,22 @@ class TestBackgroundTasks(unittest.TestCase):
 
 		# after blaster exit
 		blaster_exit()
+
+	def test_class_method_background_task(self):
+		class ABT:
+			def __init__(self):
+				self.a = 100
+
+			@background_task
+			def bg_task(self):
+				self.a = 200
+
+		abt = ABT()
+		abt.bg_task()
+		# exit blaster and wait for it to finish
+		blaster_exit()
+		self.assertEqual(abt.a, 200)
+
 
 
 if __name__ == "__main__":

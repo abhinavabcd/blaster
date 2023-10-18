@@ -69,8 +69,3 @@ class HtmlSanitizedDict(HtmlSanitizedSetterGetter, dict):
 	def items(self):
 		# unoptimized but for this it's okay, always returns sanitized one
 		return map(lambda k: (k, self.__getitem__(k)), dict.keys(self))
-
-	# may or may not get all unsanitized results
-	# if items are previously accessed, it will return sanitized ones
-	def _items_unsanitized(self):
-		return super().items()

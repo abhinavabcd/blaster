@@ -10,12 +10,18 @@ from blaster.tools import _OBJ_END_, _16KB_
 # bare minimum validations and schema generators
 
 
+class BlasterSchemaTypeError(TypeError):
+	def __init__(self, data: object) -> None:
+		self.data = data
+		super().__init__(data)
+
+
 def raise_exception(msg):
 	raise Exception(msg)
 
 
 def TYPE_ERR(msg):
-	raise TypeError(msg)
+	raise BlasterSchemaTypeError(msg)
 
 
 class _Optional:
@@ -307,10 +313,10 @@ class Object:
 				setattr(ret, k, _validated_attr)
 			return ret
 		except Exception as ex:
-			raise TypeError({
+			raise BlasterSchemaTypeError({
 				"exception": (ex.args and ex.args[0]) or "Validation failed",
 				"key": k,
-				"value": attr_value,
+				"value": attr_value if attr_value is not _OBJ_END_ else None,
 				"schema": cls._properties[k]
 			})
 
