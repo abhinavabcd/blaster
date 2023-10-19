@@ -245,34 +245,30 @@ class TestTools(unittest.TestCase):
 
 
 class TestBackgroundTasks(unittest.TestCase):
-	def test_background_threads(self):
-		partitions = {i: [] for i in range(10)}
+	def test_background_threads_and_order(self):
+		NUM_BUCKETS = 1000
+		partitions = {i: [] for i in range(NUM_BUCKETS)}
 
 		def run(x, y):
 			partitions[x].append(y)
 
-		join_threads = []
-
 		def spin_at_random_times(i):
-			for j in range(10):
-				time.sleep(random.random() / 10)
-				join_threads.append(
-					gevent.spawn(submit_background_task, i, run, i, j)
-				)
+			for j in range(100):
+				time.sleep(random.random() / 1000)
+				submit_background_task(i, run, i, j)
 
-		for i in range(10):
+		join_threads = []
+		for i in range(NUM_BUCKETS):
 			join_threads.append(
 				gevent.spawn(spin_at_random_times, i)
 			)
 
 		gevent.joinall(join_threads)
-		# simulate blaster exit
-		time.sleep(5)
-		for i, j in partitions.items():
-			self.assertEqual(j, [i for i in range(10)])
-
 		# after blaster exit
-		blaster_exit()
+		blaster_exit()  # this should flush the queues
+		# All background threads submitted
+		for i, j in partitions.items():
+			self.assertEqual(j, [i for i in range(1000)])
 
 	def test_class_method_background_task(self):
 		class ABT:

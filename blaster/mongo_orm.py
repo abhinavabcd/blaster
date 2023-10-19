@@ -278,7 +278,7 @@ class Model(object):
 	_attrs = None
 	_pk_attrs = None
 
-	__cache__ = None
+	_cache_ = None
 	# used to identify if it's a primary or secondary shard
 	_is_secondary_shard = False
 
@@ -364,8 +364,8 @@ class Model(object):
 				# check already in cache
 				_doc_in_cache = None
 				if(use_cache is True):
-					if(cls.__cache__):
-						_doc_in_cache = cls.__cache__.get(_pk_tuple)
+					if(cls._cache_):
+						_doc_in_cache = cls._cache_.get(_pk_tuple)
 				elif(use_cache):
 					# user supplied cache
 					_doc_in_cache = use_cache.get(_pk_tuple)
@@ -568,14 +568,14 @@ class Model(object):
 	def reset_and_update_cache(self, doc):
 		cls = self.__class__
 		# remove old pk_tuple in cache
-		if(cls.__cache__):
-			cls.__cache__.delete(self.pk_tuple())
+		if(cls._cache_):
+			cls._cache_.delete(self.pk_tuple())
 
 		self._reset(doc)
 
 		# update in cache
-		if(cls.__cache__):
-			cls.__cache__.set(self.pk_tuple(), doc)
+		if(cls._cache_):
+			cls._cache_.set(self.pk_tuple(), doc)
 
 	'''given a shard key, says which database node it resides in'''
 	@classmethod
@@ -1368,8 +1368,8 @@ class Model(object):
 				model=_Model.__name__, collection=COLLECTION_NAME(collection_shard),
 				delete_query=str(_delete_query)
 			)
-		if(_Model.__cache__):
-			_Model.__cache__.delete(self.pk_tuple())
+		if(_Model._cache_):
+			_Model._cache_.delete(self.pk_tuple())
 
 		_Model._trigger_event(EVENT_AFTER_DELETE, self)
 
@@ -1591,10 +1591,6 @@ def initialize_model(_Model):
 	_Model._shard_key_ = getattr(_Model, "_shard_key_", "_id")
 	_Model._secondary_shards_ = {}
 	_Model._indexes_ = getattr(_Model, "_indexes_", [])
-	# create a default cache if nothing specified
-	_Model_cache = getattr(_Model, "_cache_", _OBJ_END_)
-	if(_Model_cache is _OBJ_END_ and not _Model._is_secondary_shard):
-		_Model.__cache__ = ExpiringCache(10000)  # default cache
 
 	# temp usage _id_attr
 	_id_attr = Attribute(ObjectId)  # default is of type objectId

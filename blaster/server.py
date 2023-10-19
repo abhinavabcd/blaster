@@ -1186,8 +1186,7 @@ def static_file_handler(
 	if(url_path[-1] != "/"):
 		url_path += "/"  # it must be a folder
 
-	if(_base_folder_path_[-1] != "/"):
-		_base_folder_path_ += "/"  # it must be a folder
+	_base_folder_path_ = os.path.abspath(_base_folder_path_) + "/"
 
 	def get_file_resp(path):
 		file_path = os.path.abspath(_base_folder_path_ + str(path))

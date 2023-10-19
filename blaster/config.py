@@ -10,6 +10,7 @@ from . import env
 
 _this_ = sys.modules[__name__]
 
+
 class Config:
     _config = None
     frozen_keys = None
@@ -30,18 +31,21 @@ class Config:
                 config_files = [path]
             else:
                 config_files.append(os.path.join(path, "app.yaml"))
-                if(self.IS_DEV):
+                if(self.IS_DEV):  # DEV/LOCAL ENVIRONMENT
                     config_files.append(os.path.join(path, "dev.yaml"))
                     if(self.IS_TEST):
                         config_files.append(os.path.join(path, "test.yaml"))
                         if(self.IS_TEST_LOCAL):
                             config_files.append(os.path.join(path, "test_local.yaml"))
-                elif(self.IS_PROD):
+                elif(self.IS_PROD):  # PROD ENVIRONMENT
                     config_files.append(os.path.join(path, "prod.yaml"))
                     config_files.append(os.path.join(path, "prod.secrets.yaml"))
                     if(self.IS_STAGING):
                         config_files.append(os.path.join(path, "staging.yaml"))
                         config_files.append(os.path.join(path, "staging.secrets.yaml"))
+                        if(self.IS_STAGING_DEV):
+                            config_files.append(os.path.join(path, "staging.dev.yaml"))
+                            config_files.append(os.path.join(path, "staging.dev.secrets.yaml"))
             for f in config_files:
                 if(not os.path.isfile(f)):
                     continue
