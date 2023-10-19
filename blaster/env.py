@@ -4,6 +4,7 @@ import logging
 
 IS_PROD = environ.get("IS_PROD") == "1"
 IS_STAGING = IS_PROD and environ.get("IS_STAGING") == "1"
+IS_STAGING_DEV = IS_STAGING and environ.get("IS_STAGING_DEV") == "1"
 IS_DEV = 1 if not (IS_PROD or IS_STAGING) else 0
 IS_TEST = IS_DEV and environ.get("IS_TEST") == "1"
 IS_TEST_LOCAL = IS_TEST and environ.get("IS_TEST_LOCAL") == "1"
