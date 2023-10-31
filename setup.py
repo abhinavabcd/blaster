@@ -16,8 +16,8 @@ setup(
 	install_requires=[            # I get to this in a second
 		"wheel>=0.34.2",
 		"pytz>=2020.1",
-		"gevent>=22.9.0",
-		"greenlet>=2.0.1",
+		"gevent>=22.9.1",
+		"greenlet>=3.0.0",
 		"pymongo>=3.12.0",
 		"ujson>=5.8.0",
 		"python-dateutil>=2.8.1",
