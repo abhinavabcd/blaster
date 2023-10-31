@@ -8,7 +8,7 @@ import os
 from datetime import timedelta
 from ..connection_pool import use_connection_pool
 from ..utils.data_utils import FILE_EXTENSION_TO_MIME_TYPE
-from ..config import UPLOADS_S3_BUCKET, UPLOADS_S3_CLIENT_POOL_NAME,\
+from ..config import UPLOADS_S3_BUCKET, UPLOADS_S3_CLIENT_POOL_NAME, \
     UPLOADS_S3_BUCKET_REGION, \
     UPLOADS_GCLOUD_BUCKET
 
@@ -32,11 +32,12 @@ if(UPLOADS_GCLOUD_BUCKET):
             }
         )
         # bucket.cors = [{
-        #   'origin': ['http://localhost:3000', 'https://localhost'...],
+        #   'origin': ['http://localhost:3000', 'https://localhost', 'https://preludio.io'],
         #   'method': ['PUT', 'GET', 'HEAD'],
         #   'responseHeader': ['Content-Type', 'x-goog-resumable', 'x-goog-acl'],
         #   'maxAgeSeconds': 3600
         # }]
+        # bucket.patch()
 
         return {
             "url": url,
