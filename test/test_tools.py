@@ -6,7 +6,7 @@ import random
 import ujson as json
 from blaster.tools import get_time_overlaps, retry,\
 	ExpiringCache, create_signed_value, decode_signed_value,\
-	submit_background_task, background_task
+	submit_background_task, background_task, ignore_exceptions
 from blaster.tools.sanitize_html import HtmlSanitizedDict, HtmlSanitizedList
 from datetime import datetime, timedelta
 from blaster.utils.data_utils import parse_string_to_units,\
@@ -194,7 +194,7 @@ class TestTools(unittest.TestCase):
 	def test_can_retry(self):
 		runs = []
 
-		@retry(2, ignore_exceptions=[Exception])
+		@retry(2)
 		def _retry_func():
 			runs.append(1)
 			raise Exception
@@ -202,6 +202,26 @@ class TestTools(unittest.TestCase):
 		try:
 			_retry_func()
 		except Exception:
+			self.assertEqual(len(runs), 2)
+
+	def test_ignore_exceptions(self):
+		runs = []
+
+		@ignore_exceptions
+		def _retry_func():
+			runs.append(1)
+			raise Exception
+		self.assertIsNone(_retry_func())
+		self.assertEqual(len(runs), 1)
+
+		@ignore_exceptions(IndexError)
+		def _retry_func2():
+			runs.append(1)
+			raise Exception
+
+		try:
+			_retry_func2()
+		except Exception as ex:
 			self.assertEqual(len(runs), 2)
 
 	def test_run_shell(self):

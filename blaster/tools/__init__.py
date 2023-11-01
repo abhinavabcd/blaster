@@ -19,6 +19,7 @@ import socket
 import struct
 import fcntl
 import heapq
+import types
 from gevent import sleep
 from functools import reduce as _reduce
 from gevent.lock import BoundedSemaphore
@@ -1503,28 +1504,47 @@ def condense_for_search(*args):
 
 # returns None when there are exceptions instead of throwing
 def ignore_exceptions(*exceptions):
-	def decorator(func):
+	if(
+		exceptions
+		and isinstance(exceptions[0], types.FunctionType)
+	):
+		# using as a simple decorator
+		func = exceptions[0]
 		def new_func(*args, **kwargs):
 			try:
 				func(*args, **kwargs)
 			except Exception as ex:
-				for exception in exceptions:
-					if(isinstance(ex, exception)):
-						return None
-				raise ex
+				LOG_WARN("ignoring_exception", func=func.__name__, exception=str(ex))
+			return None
 
 		new_func._original = getattr(func, "_original", func)
 		return new_func
-	return decorator
+	else:
+		# decorator with exceptions arg
+		exceptions = tuple(exceptions) if exceptions else (Exception,)
+
+		def decorator(func):
+			def new_func(*args, **kwargs):
+				try:
+					func(*args, **kwargs)
+				except Exception as ex:
+					if(not isinstance(ex, exceptions)):
+						raise ex
+					LOG_WARN("ignoring_exception", func=func.__name__, exception=str(ex))
+				return None
+
+			new_func._original = getattr(func, "_original", func)
+			return new_func
+		return decorator
 
 
 # r etries all exceptions or specific given expections only
 # backoff = 1 => exponential sleep
 # max_time milliseconds for exception to sleep, not counts the func runtime
-def retry(num_retries=2, ignore_exceptions=None, max_time=5000):
+def retry(num_retries, ignore_exceptions=None, max_time=5000):
 	num_retries = max(2, num_retries)
 	sleep_time_on_fail = max_time / num_retries
-	ignore_exceptions = ignore_exceptions or []
+	ignore_exceptions = tuple(ignore_exceptions) if ignore_exceptions else (Exception,)
 
 	def decorator(func):
 		def new_func(*args, **kwargs):
@@ -1533,12 +1553,7 @@ def retry(num_retries=2, ignore_exceptions=None, max_time=5000):
 				try:
 					return func(*args, **kwargs)
 				except Exception as ex:
-					ignore_exception = False
-					for _ex_type in ignore_exceptions:
-						if(isinstance(ex, _ex_type)):
-							ignore_exception = True
-							break
-					if(not ignore_exception):
+					if(not isinstance(ex, ignore_exceptions)):
 						raise ex
 					LOG_WARN("retrying", func=func.__name__, exception=str(ex))
 					sleep(sleep_time_on_fail / 1000)
