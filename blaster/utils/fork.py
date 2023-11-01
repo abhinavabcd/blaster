@@ -53,7 +53,7 @@ def blaster_fork(num_procs):
 		else:
 			print("broadcaster:reading from cloned process:", CUR_PID)
 
-		while(_is_listening and (data_size_bytes:= sock.recvn(4))):
+		while(_is_listening and (data_size_bytes := sock.recvn(4))):
 			data_size = int.from_bytes(data_size_bytes, byteorder=sys.byteorder)
 			data_bytes = sock.recvn(data_size)
 			data = pickle.loads(data_bytes)

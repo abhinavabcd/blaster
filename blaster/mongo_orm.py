@@ -69,9 +69,10 @@ class Attribute(object):
 	_validator = None
 	_models = None
 
-	def __init__(self, _type, validator=None, **kwargs):
+	def __init__(self, _type, validator=_OBJ_END_, **kwargs):
 		self._type = _type
-		self._validator = validator or DEFAULT_VALIDATORS.get(_type)
+		self._validator = DEFAULT_VALIDATORS.get(_type)\
+			if validator is _OBJ_END_ else validator
 		self._models = set()
 		self.__dict__.update(kwargs)
 

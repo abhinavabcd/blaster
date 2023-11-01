@@ -85,9 +85,9 @@ def parse_qs_modified(qs, keep_blank_values=True, strict_parsing=False):
 		if name.endswith("[]"):
 			_values = _dict.get(name)
 			if(_values is None):
-				_dict[name] = _values = []
+				_dict[name] = _dict[name[:-2]] = _values = []
 			elif(not isinstance(_values, list)):  # make it a list of values
-				_dict[name] = _values = [_values]
+				_dict[name] = _dict[name[:-2]] = _values = [_values]
 			_values.append(value)
 		else:
 			_dict[name] = value
@@ -131,6 +131,12 @@ class Body(Object):
 		if(key):
 			kwargs[key] = Required[str]
 		super().__init__(**kwargs)
+
+	@classmethod
+	def from_raw_dict(cls, _dict):
+		if(isinstance(_dict, HtmlSanitizedDict)):
+			return super().from_dict(dict(_dict))
+		return super().from_dict(_dict)
 
 
 # custom argument hooks

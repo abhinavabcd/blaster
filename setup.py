@@ -22,7 +22,7 @@ setup(
 		"ujson>=5.8.0",
 		"python-dateutil>=2.8.1",
 		"requests>=2.25.1",
-		"requests-toolbelt>=0.9.1",
+		"requests-toolbelt>=1.0.0",
 		"urllib3>=1.26.4",
 		"metrohash>=0.3.3",
 		"PyYAML>=6.0"
