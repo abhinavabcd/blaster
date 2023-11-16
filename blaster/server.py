@@ -18,7 +18,7 @@ from gevent.server import StreamServer
 from requests_toolbelt.multipart import decoder
 
 from . import req_ctx, __version__
-from .tools import set_socket_fast_close_options,\
+from .tools import set_socket_fast_close_options, \
 	BufferedSocket, ltrim, _OBJ_END_
 from .tools.sanitize_html import HtmlSanitizedDict
 from .utils import events
@@ -886,6 +886,9 @@ class App:
 			if(content_length > 0):
 				if(content_length < _max_body_size):
 					post_data = buffered_socket.recvn(content_length)
+				else:
+					resuse_socket_for_next_http_request = False
+					raise Exception("Content length too large")
 			else:  # handle chuncked encoding
 				transfer_encoding = headers.get("transfer-encoding")
 				if(transfer_encoding and "chunked" in transfer_encoding):
