@@ -99,6 +99,16 @@ def get_gcloud_tasks_client():
     return tasks_v2.CloudTasksClient(credentials=gcloud_credentials)
 
 
+def get_gcloud_pubsub_client():
+    from google.cloud import pubsub_v1
+    return pubsub_v1.PublisherClient(credentials=gcloud_credentials)
+
+
+def get_gcloud_pubsub_subscriber():
+    from google.cloud import pubsub_v1
+    return pubsub_v1.SubscriberClient(credentials=gcloud_credentials)
+
+
 def get_gcloud_storage():
     from google.cloud import storage
     return storage.Client(credentials=gcloud_credentials)
@@ -113,9 +123,9 @@ register_pool_item_generator("dynamodb", get_dynamodb_conn)
 register_pool_item_generator("s3", get_s3_conn)
 register_pool_item_generator("sqs", get_sqs_conn)
 register_pool_item_generator("ses", get_ses_conn)
-register_pool_item_generator("google_cloudtasks", get_gcloud_tasks_client)
-register_pool_item_generator("google_cloudstorage", get_gcloud_storage)
-
+register_pool_item_generator("gcloud_tasks", get_gcloud_tasks_client)
+register_pool_item_generator("gcloud_storage", get_gcloud_storage)
+register_pool_item_generator("gcloud_pubsub", get_gcloud_pubsub_client)
 
 '''
 uses gevent.Queue to maintain pools

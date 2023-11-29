@@ -14,7 +14,7 @@ from ..config import UPLOADS_S3_BUCKET, UPLOADS_S3_CLIENT_POOL_NAME, \
 
 
 if(UPLOADS_GCLOUD_BUCKET):
-    @use_connection_pool(gcloud_storage="google_cloudstorage")
+    @use_connection_pool(gcloud_storage="gcloud_storage")
     def generate_upload_url(file_path, mime_type=None, gcloud_storage=None):
         if(not mime_type):
             mime_type = FILE_EXTENSION_TO_MIME_TYPE[os.path.splitext(file_path)[1]]
@@ -50,7 +50,7 @@ if(UPLOADS_GCLOUD_BUCKET):
             },
         }, f"https://storage.googleapis.com/{UPLOADS_GCLOUD_BUCKET}/{file_path}"
 
-    @use_connection_pool(gcloud_storage="google_cloudstorage")
+    @use_connection_pool(gcloud_storage="gcloud_storage")
     def upload_file_obj(file_path, file_obj, mime_type=None, gcloud_storage=None):
         if(not mime_type):
             mime_type = FILE_EXTENSION_TO_MIME_TYPE[os.path.splitext(file_path)[1]]
@@ -61,7 +61,7 @@ if(UPLOADS_GCLOUD_BUCKET):
         blob.make_public()
         return blob.public_url
 
-    @use_connection_pool(gcloud_storage="google_cloudstorage")
+    @use_connection_pool(gcloud_storage="gcloud_storage")
     def upload_file_obj_private(
         file_path, file_obj, mime_type=None,
         expires_in=8 * 3600, gcloud_storage=None  # seconds

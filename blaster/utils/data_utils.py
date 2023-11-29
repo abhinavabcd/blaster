@@ -43,7 +43,6 @@ def reload_exchange_rates():
 	# update with aliases
 	for i,j in _currency_aliases.items():
 		INR_EXCHANGE_RATE[i] = INR_EXCHANGE_RATE[j]
-	
 # currencies END
 
 

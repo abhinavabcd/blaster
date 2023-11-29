@@ -757,7 +757,6 @@ class Model(object):
 				if(not updated_doc):
 					# update was unsuccessful
 					# is this concurrent update by someone else?
-					# is this because of more conditions given by user?
 					_update_retry_count and time.sleep(0.03 * _update_retry_count)
 					# 1. fetch from db again
 					_doc_in_db = primary_shard_collection.find_one({"_id": self._id})
@@ -767,6 +766,7 @@ class Model(object):
 					self.reset_and_update_cache(_doc_in_db)
 					can_retry = False
 					# 3. check if basic consistency between local and remote
+					# if it's consistent but failed, it means because of conditions given by user
 					if(_doc_in_db.get("_", _OBJ_END_) != original_doc.get("_", _OBJ_END_)):
 						can_retry = True
 

@@ -1,7 +1,9 @@
 import metrohash
-from ..config import BQ_ANALYTICS_CLIENT_POOL_NAME, BQ_USER_PROPERTIES_TABLE,\
-	BQ_USER_EVENT_TABLE
-from ..connection_pool import use_connection_pool
+from ..config import BQ_USER_PROPERTIES_TABLE, \
+	BQ_USER_EVENT_TABLE, IS_DEV
+from ..connection_pool import use_connection_pool, \
+	register_pool_item_generator
+from ..logging import LOG_DEBUG, LOG_ERROR
 from ..tools import background_task, cur_ms, LRUCache
 from collections import deque
 
@@ -9,26 +11,43 @@ DEFAULT_EMPTY_PARAMS = {"": ""}
 
 _table_pending_data_to_push = {}
 
+try:
+	from google.cloud import bigquery
 
-@use_connection_pool(bq_client=BQ_ANALYTICS_CLIENT_POOL_NAME)
-def bq_push(table_id, bq_client=None):
-	l = len(q := _table_pending_data_to_push[table_id])
-	if(l > 0):
-		return bq_client.insert_rows_json(table_id, [q.popleft() for _ in range(l)])
+	register_pool_item_generator("blaster_analytics_bq_client", lambda: bigquery.Client())
 
+	@use_connection_pool(bq_client="blaster_analytics_bq_client")  # use from pool so that it is thread safe
+	def bq_push(table_id, bq_client=None):
+		num_rows = len(q := _table_pending_data_to_push[table_id])
+		if(num_rows > 0):
+			return bq_client.insert_rows_json(table_id, [q.popleft() for _ in range(num_rows)])
 
-def bq_insert_rows(table_id, rows):
-	if((_pending_to_push := _table_pending_data_to_push.get(table_id)) is None):
-		_pending_to_push = _table_pending_data_to_push[table_id] = deque()
-	_pending_to_push.extend(rows)
-	return bq_push(table_id)  # deferred call
+	def bq_insert_rows(table_id, rows):
+		if((_pending_to_push := _table_pending_data_to_push.get(table_id)) is None):
+			_pending_to_push = _table_pending_data_to_push[table_id] = deque()
+		_pending_to_push.extend(rows)
+		return bq_push(table_id)  # deferred call
+
+except Exception as e:
+	# BigQuery not configured for tracking events just log/warn
+	def bq_insert_rows(table_id, rows):
+		if(IS_DEV):
+			LOG_DEBUG(
+				"bq_insert_rows", desc="BigQuery not configured for tracking events",
+				table_id=table_id, rows=str(rows)
+			)
+		else:
+			LOG_ERROR(
+				"bq_insert_rows", desc="BigQuery not configured for tracking events",
+				table_id=table_id, rows=str(rows)
+			)
 
 
 @background_task
 def TRACK_EVENT(table_id, rows, ns=None):
 	if(ns):
 		table_id += f"_{ns}"
-	# collect all rows to push into a bucket to batch	
+	# collect all rows to push into a bucket to batch
 	bq_insert_rows(table_id, rows if isinstance(rows, list) else [rows])
 
 
