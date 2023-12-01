@@ -4,12 +4,12 @@ from blaster import tools, blaster_exit
 import time
 import random
 import ujson as json
-from blaster.tools import get_time_overlaps, retry,\
-	ExpiringCache, create_signed_value, decode_signed_value,\
+from blaster.tools import get_time_overlaps, retry, \
+	ExpiringCache, create_signed_value, decode_signed_value, \
 	submit_background_task, background_task, ignore_exceptions
 from blaster.tools.sanitize_html import HtmlSanitizedDict, HtmlSanitizedList
 from datetime import datetime, timedelta
-from blaster.utils.data_utils import parse_string_to_units,\
+from blaster.utils.data_utils import parse_string_to_units, parse_string_to_int, \
 	parse_currency_string
 
 
@@ -231,10 +231,14 @@ class TestTools(unittest.TestCase):
 		self.assertEqual(s.total_err, "This is an error message to stderr\n")
 
 	def test_string_to_units(self):
-		print(parse_string_to_units(".9 units"))
-		print(parse_string_to_units("0.9 units"))
-		print(parse_string_to_units("rs -1.9"))
-		print(parse_currency_string("INR 2000"))
+		self.assertEqual(parse_string_to_units(".9 units"), (0.9, "units"))
+		self.assertEqual(parse_string_to_units("0.9 units"), (0.9, "units"))
+		self.assertEqual(parse_string_to_units("rs -1.9"), (-1.9, "rs"))
+		self.assertEqual(parse_currency_string("INR 2000"), (2000000, "INR", 2000))
+		self.assertEqual(parse_string_to_int("20,00"), 2000)
+		self.assertEqual(parse_string_to_int("20.00"), 20)
+		self.assertIsNone(parse_string_to_int("20a", full_match=True))
+		self.assertIsNone(parse_string_to_int("20 ", full_match=True))
 
 	def remove_duplicates(self):
 		l2 = tools.remove_duplicates([1, 2, 3, 5, 3])

@@ -65,9 +65,11 @@ def make_nearrest_currency(val, f):
 '''
 	return UNITS (current absolute app units value), CURRENCY_CODE, VALUE_IN_CURRENCY_CODE
 '''
-NUM_REGEX = re.compile(r'[+-.]?[0-9][0-9,]*(?:\.[0-9]+)?')
+FLOAT_REGEX = re.compile(r'[+-.]?[0-9][0-9,]*(?:\.[0-9]+)?')
+FLOAT_REGEX_FULL = re.compile(r'^[+-.]?[0-9][0-9,]*(?:\.[0-9]+)?$')
+
 def parse_currency_string(currency_str, default_currency_code=DEFAULT_CURRENCY_CODE, country_code=None):
-	val = NUM_REGEX.findall(currency_str)
+	val = FLOAT_REGEX.findall(currency_str)
 	if(not val):
 		return 0, default_currency_code, 0
 
@@ -97,7 +99,7 @@ def convert_currency(val, from_currency='APP_CURRENCY', to_currency='INR'):
 
 # simply parse number , units
 def parse_string_to_units(full_str, default_unit="EUR"):
-	val = NUM_REGEX.findall(full_str)
+	val = FLOAT_REGEX.findall(full_str)
 	if(not val):
 		return 0, default_unit
 
@@ -113,3 +115,13 @@ def parse_string_to_units(full_str, default_unit="EUR"):
 		units_value = "0." + units_value[1:].replace(".", "", 1)
 
 	return float(units_value), units_code
+
+
+def parse_string_to_int(_str, full_match=False):
+	if(full_match):
+		val = FLOAT_REGEX_FULL.findall(_str)
+	else:
+		val = FLOAT_REGEX.findall(_str)
+	if(not val):
+		return None
+	return int(float(val[0].replace(",", "")))
