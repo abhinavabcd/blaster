@@ -1,8 +1,8 @@
 import metrohash
 from ..config import BQ_USER_PROPERTIES_TABLE, \
-	BQ_USER_EVENT_TABLE, IS_DEV
+	BQ_USER_EVENT_TABLE, IS_DEV, GCLOUD_CREDENTIALS
 from ..connection_pool import use_connection_pool, \
-	register_pool_item_generator
+	register_pool_item_generator, get_gcloud_bigquery
 from ..logging import LOG_DEBUG, LOG_ERROR
 from ..tools import background_task, cur_ms, LRUCache
 from collections import deque
@@ -11,10 +11,9 @@ DEFAULT_EMPTY_PARAMS = {"": ""}
 
 _table_pending_data_to_push = {}
 
-try:
-	from google.cloud import bigquery
 
-	register_pool_item_generator("blaster_analytics_bq_client", lambda: bigquery.Client())
+if(GCLOUD_CREDENTIALS):
+	register_pool_item_generator("blaster_analytics_bq_client", get_gcloud_bigquery)
 
 	@use_connection_pool(bq_client="blaster_analytics_bq_client")  # use from pool so that it is thread safe
 	def bq_push(table_id, bq_client=None):
@@ -28,8 +27,7 @@ try:
 		_pending_to_push.extend(rows)
 		return bq_push(table_id)  # deferred call
 
-except Exception as e:
-	# BigQuery not configured for tracking events just log/warn
+else:
 	def bq_insert_rows(table_id, rows):
 		if(IS_DEV):
 			LOG_DEBUG(

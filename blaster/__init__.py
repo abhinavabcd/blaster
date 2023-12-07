@@ -5,6 +5,13 @@ Created on 29-Nov-2017
 '''
 from gevent import monkey; monkey.patch_all()  # replaces read , write, send , sleep ...
 from gevent import local, signal_handler, signal
+# some other dependencies to patch
+try:
+	import grpc.experimental.gevent
+	grpc.experimental.gevent.init_gevent()
+except Exception:
+	pass
+
 import sys
 import os
 import inspect

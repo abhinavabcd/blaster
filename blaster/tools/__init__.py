@@ -1585,7 +1585,7 @@ def empty_func():
 
 # BACKGROUND TASKS
 tasks_queue = Queue()  # all tasks queued including their parition keys
-idle_pt_queues = Queue()
+idle_pt_queues = Queue()  # for reusing the gevent threads
 partitioned_task_queues = {}
 
 
@@ -1612,7 +1612,7 @@ def tasks_runner():
 	'''
 		Single thread: it reaps any pending tasks, and then spaws new tasks and track them
 	'''
-	pt_runners_to_join = []
+	pt_runners_to_join = []  # cleanup when exiting
 	while(_task := tasks_queue.get()):  # until it's flushed with None
 		_partition_key = _task[0]
 		pt_queue = partitioned_task_queues.get(_partition_key)  # partitioned task queue
@@ -1631,6 +1631,7 @@ def tasks_runner():
 			partitioned_task_queues[_partition_key] = pt_queue
 		pt_queue.put(_task)
 
+	# flush all partitioned task queues and cleanup
 	for pt_runner, pt_queue in pt_runners_to_join:
 		pt_queue.put(None)  # flush
 		pt_runner.join()

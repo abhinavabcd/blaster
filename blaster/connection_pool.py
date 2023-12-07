@@ -28,7 +28,7 @@ def release_to_pool(conn, pool_name):
 # decorator that supplies argument from a given pool and puts back after use
 
 def use_connection_pool(**pool_args):
-    # check and register None pool at load time, 
+    # check and register None pool at load time,
     # instead of checking runtime, to avoid runtime crashes
     for pool_arg, pool_name in pool_args.items():
         if(pool_name not in _pool_item_generators):
@@ -99,7 +99,7 @@ def get_gcloud_tasks_client():
     return tasks_v2.CloudTasksClient(credentials=gcloud_credentials)
 
 
-def get_gcloud_pubsub_client():
+def get_gcloud_pubsub_publisher():
     from google.cloud import pubsub_v1
     return pubsub_v1.PublisherClient(credentials=gcloud_credentials)
 
@@ -114,6 +114,11 @@ def get_gcloud_storage():
     return storage.Client(credentials=gcloud_credentials)
 
 
+def get_gcloud_bigquery():
+    from google.cloud import bigquery
+    return bigquery.Client(credentials=gcloud_credentials)
+
+
 # try autoloading if already set
 AWS_CREDENTIALS and init_aws_clients(AWS_CREDENTIALS)
 GCLOUD_CREDENTIALS and init_gcloud_clients(GCLOUD_CREDENTIALS)
@@ -125,7 +130,7 @@ register_pool_item_generator("sqs", get_sqs_conn)
 register_pool_item_generator("ses", get_ses_conn)
 register_pool_item_generator("gcloud_tasks", get_gcloud_tasks_client)
 register_pool_item_generator("gcloud_storage", get_gcloud_storage)
-register_pool_item_generator("gcloud_pubsub", get_gcloud_pubsub_client)
+register_pool_item_generator("gcloud_pubsub_publisher", get_gcloud_pubsub_publisher)
 
 '''
 uses gevent.Queue to maintain pools

@@ -23,10 +23,10 @@ push_tasks = {}
 server_threads = []
 _is_processing = True
 
+
 @retry(2)
 def exec_push_task(raw_bytes_message: bytes, auth=None):
 	message_payload = pickle.loads(base64.a85decode(raw_bytes_message))
-	print("received", message_payload)
 	kwargs = message_payload.get("kwargs", {})
 	args = message_payload.get("args", [])
 	func_name = message_payload.get("func", "")
@@ -48,38 +48,34 @@ def exec_push_task(raw_bytes_message: bytes, auth=None):
 
 def process_from_cloud_pubsub(subscription_path):
 
-	gcloud_pubsub_subscriber = get_gcloud_pubsub_subscriber()
+	def callback(message):
+		exec_push_task(message.data)
+		message.ack()
+
+	pull_feature = None
+
+	@events.register_listener("blaster_exit0")
+	def _stop():
+		pull_feature and pull_feature.cancel()
+
 	while(_is_processing):
-		response = gcloud_pubsub_subscriber.pull(
-			subscription=subscription_path, max_messages=50
-		)
-		if(not response.received_messages):
-			gevent.sleep(5)
-			continue
-		for received_message in response.received_messages:
+		with get_gcloud_pubsub_subscriber() as subscriber:
+			pull_feature = subscriber.subscribe(
+				subscription_path, callback=callback,
+				await_callbacks_on_shutdown=True
+			)
 			try:
-				exec_push_task(
-					received_message.message.data,
-					auth=GCLOUD_TASKS_AUTH_SECRET
-				)
-				gcloud_pubsub_subscriber.acknowledge(
-					subscription=subscription_path,
-					ack_ids=[received_message.ack_id]
-				)
+				pull_feature.result()  # Block until the feature is completed.
 			except Exception:
-				LOG_WARN("cloud_pubsub_exception", stack_trace=traceback.format_exc())
+				LOG_WARN("gcloud_pubsub_exception", stack_trace=traceback.format_exc())
+				pull_feature.cancel()
 
-	gcloud_pubsub_subscriber.close()
 
-
-@use_connection_pool(gcloud_pubsub_publisher="gcloud_pubsub")
+@use_connection_pool(gcloud_pubsub_publisher="gcloud_pubsub_publisher")
 def run_later_via_gcloud_pubsub(topic, message_body: dict, gcloud_pubsub_publisher=None):
-	print("posting to pubslisher", message_body)
 	message_body = base64.a85encode(pickle.dumps(message_body))  # bytes
-	return gcloud_pubsub_publisher.publish(
-		topic=topic,
-		data=message_body
-	)
+	ret = gcloud_pubsub_publisher.publish(topic, message_body)
+	ret.result()  # wait for it to be published
 
 
 @use_connection_pool(sqs_client="sqs")
@@ -226,11 +222,11 @@ def process_run_later_tasks():
 
 
 # cleanup
-@events.register_listener("blaster_exit0")
+@events.register_listener("blaster_exit1")
 def wait_for_push_tasks_processing():
 	global _is_processing
 	_is_processing = False
 	if(server_threads):
-		LOG_WARN("server_info", data="finishing pending push tasks via SQS")
+		LOG_WARN("server_info", data="stopping run later tasks")
 		gevent.joinall(server_threads)
 		del server_threads[:]
