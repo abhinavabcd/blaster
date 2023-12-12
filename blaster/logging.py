@@ -141,7 +141,6 @@ def stop_log_streaming():
 def flush_and_exit_log_streaming():
 	# don't remove it , it will push an empty function to queues to flush them off
 	LOG(DEBUG, "log_flushing", msg="flushing logs and exiting")
-
 	log_streaming_thread and log_streaming_thread.join()
 
 

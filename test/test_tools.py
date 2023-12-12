@@ -186,6 +186,15 @@ class TestTools(unittest.TestCase):
 
 		)
 
+	def test_thread_pool(self):
+		from blaster.tools import ThreadPool
+		tp = ThreadPool(5)
+		runs = []
+		for i in range(100):
+			tp.add_task(lambda i: runs.append(i), i)
+		tp.stop()
+		self.assertEqual(len(runs), 100)
+
 	def test_find(self):
 		from blaster.tools import find_nth
 		self.assertEqual(find_nth("abcabcabcx", "abc", 2), 3)
@@ -271,14 +280,15 @@ class TestTools(unittest.TestCase):
 class TestBackgroundTasks(unittest.TestCase):
 	def test_background_threads_and_order(self):
 		NUM_BUCKETS = 1000
+		NUM_BG_TASKS_PER_BUCKET = 100
 		partitions = {i: [] for i in range(NUM_BUCKETS)}
 
 		def run(x, y):
+			time.sleep(random.random() * 0.1)
 			partitions[x].append(y)
 
 		def spin_at_random_times(i):
-			for j in range(100):
-				time.sleep(random.random() / 1000)
+			for j in range(NUM_BG_TASKS_PER_BUCKET):
 				submit_background_task(i, run, i, j)
 
 		join_threads = []
@@ -289,10 +299,10 @@ class TestBackgroundTasks(unittest.TestCase):
 
 		gevent.joinall(join_threads)
 		# after blaster exit
-		blaster_exit()  # this should flush the queues
+		blaster_exit()  # this should flush the queues and wait
 		# All background threads submitted
 		for i, j in partitions.items():
-			self.assertEqual(j, [i for i in range(1000)])
+			self.assertEqual(j, [i for i in range(NUM_BG_TASKS_PER_BUCKET)])
 
 	def test_class_method_background_task(self):
 		class ABT:

@@ -38,10 +38,10 @@ import requests
 from http.client import HTTPConnection  # py3
 
 from ..websocket._core import WebSocket
-from ..env import IS_DEV, DEBUG_PRINT_LEVEL
+from ..env import DEBUG_PRINT_LEVEL
 from ..utils.xss_html import XssHtml
 from ..utils import events
-from ..logging import LOG_WARN, LOG_ERROR, LOG_DEBUG
+from ..logging import LOG_WARN, LOG_ERROR, LOG_DEBUG, LOG_APP_INFO
 
 # CUSTOM IMPORTS
 try:
@@ -73,6 +73,7 @@ EPOCH = datetime.utcfromtimestamp(0)
 _OBJ_END_ = object()
 _1KB_ = 1024
 _16KB_ = _1KB_ * 16
+_joinables = []  # all threads that exit on exit5
 
 
 def cur_ms():
@@ -931,14 +932,18 @@ def list_diff2(first, second, key=None):
 		second_keys = set(map(key, second))
 		first_keys = set(map(key, first))
 		# to add and delete
-		return [item for item in first if key(item) not in second_keys],\
+		return (
+			[item for item in first if key(item) not in second_keys],
 			[item for item in second if key(item) not in first_keys]
+		)
 	else:
 		second = set(second)
 		first = set(first)
 		# to add and delete
-		return [item for item in first if item not in second],\
+		return (
+			[item for item in first if item not in second],
 			[item for item in second if item not in first]
+		)
 
 
 # a dummy object with given keys,values
@@ -1047,61 +1052,37 @@ def set_non_blocking(fd):
 	fcntl.fcntl(fd, fcntl.F_SETFL, flags)
 
 
-# generic thread pool to submit tasks which will be
-# picked up wokers and processed
-class Worker(Thread):
-	is_running = True
-
-	""" Thread executing tasks from a given tasks queue """
-	def __init__(self, tasks=None, name="worker thread"):
-		self.tasks = tasks or Queue()
-		super().__init__(name=name)
-
-	def run(self):
-		while self.is_running:
+class ThreadPool:
+	def worker(self):
+		while(val := self.tasks.get()):
 			# get a task from queue
-			func, args, kargs = self.tasks.get()
+			func, args, kargs = val
 			try:
 				func(*args, **kargs)
 			except Exception as ex:
 				# An exception happened in this thread
-				stacktrace_string = traceback.format_exc()
 				LOG_ERROR(
 					"blaster_worker_thread",
 					exception_str=str(ex),
-					stacktrace_string=stacktrace_string
+					stacktrace_string=traceback.format_exc()
 				)
-				IS_DEV and traceback.print_exc()
-			finally:
-				# Mark this task as done, whether an exception happened or not
-				self.tasks.task_done()
-
-
-class ThreadPool:
-	""" Pool of threads consuming tasks from a single queue """
-	# queue of tasks
-	tasks = None
-	worker_threads = None
 
 	def __init__(self, num_threads):
 		self.tasks = Queue(num_threads)
 		self.worker_threads = []
 		for _ in range(num_threads):
-			worker_thread = Worker(self.tasks)
-			self.worker_threads.append(worker_thread)
-			# start the worker thread
-			worker_thread.start()
+			thread = Thread(target=self.worker)
+			self.worker_threads.append(thread)
+			thread.start()
 
 	def add_task(self, func, *args, **kargs):
 		""" Add a task to the queue """
 		self.tasks.put((func, args, kargs))
 
-	def join(self):
+	def stop(self):
 		""" Wait for completion of all the tasks in the queue """
-		self.tasks.join()
-		# stop processing
-		for worker_thread in self.worker_threads:
-			worker_thread.is_running = False
+		for _ in range(len(self.worker_threads)):
+			self.tasks.put(None)  # cleanup all threads
 		# join all threads
 		for worker_thread in self.worker_threads:
 			worker_thread.join()
@@ -1510,6 +1491,7 @@ def ignore_exceptions(*exceptions):
 	):
 		# using as a simple decorator
 		func = exceptions[0]
+
 		def new_func(*args, **kwargs):
 			try:
 				func(*args, **kwargs)
@@ -1583,82 +1565,101 @@ def empty_func():
 	pass
 
 
-# BACKGROUND TASKS
-tasks_queue = Queue()  # all tasks queued including their parition keys
-idle_pt_queues = Queue()  # for reusing the gevent threads
-partitioned_task_queues = {}
+# Main thread that spins of more threads to process tasks
+class PartitionedTasksRunner(Thread):
+	tasks_queue = None  # all tasks queued including their parition keys
+	idle_pt_queues = None  # for reusing, push a task, and thread continues
+	partitioned_task_queues = None  # running queues
+	started = False
 
+	def __init__(self, max_parallel=10000) -> None:
+		super().__init__()
+		self.tasks_queue = Queue()
+		self.idle_pt_queues = Queue()
+		self.partitioned_task_queues = {}
+		self.max_remaining = max_parallel
 
-def _partitioned_tasks_runner(_queue):
-	while(_task := _queue.get()):  # idenfinitely waits for task until None (flushed)
-		partition_key, queued_at, func, args, kwargs = _task
-		# call the function
-		now_millis = cur_ms()
-		if((delay := now_millis - queued_at) > 4000):
-			LOG_WARN("background_task_delay", delay=delay, func=func.__name__, partition_key=partition_key)
+	def worker(self, _queue):
+		LOG_DEBUG("partitioned_tasks_runner", msg="tasks runner worker started")
+		while(_task := _queue.get()):  # idenfinitely waits for task until None (flushed)
+			partition_key, queued_at, func, args, kwargs, on_complete = _task
+			# call the function
+			now_millis = cur_ms()
+			if((delay := now_millis - queued_at) > 4000):
+				LOG_WARN("background_task_delay", delay=delay, func=func.__name__, partition_key=partition_key)
 
-		try:
-			func(*args, **kwargs)
-		except Exception as ex:
-			LOG_ERROR("background_task", desc=str(ex), stracktrace_string=traceback.format_exc())
-
-		# signal the main thread to cleanup this parition
-		if(_queue.empty()):
-			partitioned_task_queues.pop(partition_key, None)
-			idle_pt_queues.put(_queue)
-
-
-def tasks_runner():
-	'''
-		Single thread: it reaps any pending tasks, and then spaws new tasks and track them
-	'''
-	pt_runners_to_join = []  # cleanup when exiting
-	while(_task := tasks_queue.get()):  # until it's flushed with None
-		_partition_key = _task[0]
-		pt_queue = partitioned_task_queues.get(_partition_key)  # partitioned task queue
-		# reuse from idle_pt_queues if possible
-		if(not pt_queue):
 			try:
-				pt_queue = idle_pt_queues.get(False)
-			except QueueEmptyException:
-				_thread = Thread(
-					target=_partitioned_tasks_runner,
-					args=(pt_queue := Queue(),)
-				)
-				_thread.start()
-				pt_runners_to_join.append((_thread, pt_queue))
-			# mark it as being used by this partion key
-			partitioned_task_queues[_partition_key] = pt_queue
-		pt_queue.put(_task)
+				func(*args, **kwargs)
+			except Exception as ex:
+				LOG_ERROR("background_task", desc=str(ex), stracktrace_string=traceback.format_exc())
 
-	# flush all partitioned task queues and cleanup
-	for pt_runner, pt_queue in pt_runners_to_join:
-		pt_queue.put(None)  # flush
-		pt_runner.join()
+			on_complete and on_complete()
 
-	LOG_DEBUG("background_threads_runner", msg="tasks runner finished")
+			# signal the main thread to ask for more tasks
+			if(_queue.empty()):
+				self.partitioned_task_queues.pop(partition_key, None)
+				self.idle_pt_queues.put(_queue)
+
+		LOG_DEBUG("partitioned_tasks_runner", msg="tasks runner worker stopped")
+
+	def run(self):
+		'''
+			Single thread: it reaps any pending tasks, and then spaws new tasks and track them
+		'''
+		LOG_APP_INFO("partitioned_threads_runner", msg="tasks runner started")
+		pt_runners_to_join = []  # cleanup when exiting
+		while(_task := self.tasks_queue.get()):  # until it's flushed with None
+			_partition_key = _task[0]
+			pt_queue = self.partitioned_task_queues.get(_partition_key)  # partitioned task queue
+			# reuse from idle_pt_queues if possible
+			if(not pt_queue):
+				try:
+					pt_queue = self.idle_pt_queues.get(self.max_remaining <= 0)  # raise exception if self.max_remaining > 0
+				except QueueEmptyException:
+					pt_queue = Queue()
+					_thread = Thread(  # each queue has a corresponding thread
+						target=self.worker,
+						args=(pt_queue,)
+					)
+					_thread.start()
+					pt_runners_to_join.append((_thread, pt_queue))
+					self.max_remaining -= 1
+				# mark it as being used by this partion key
+				self.partitioned_task_queues[_partition_key] = pt_queue
+			# submit task to the partitioned queue
+			pt_queue.put(_task)
+
+		# flush all partitioned task queues and cleanup
+		for pt_runner, pt_queue in pt_runners_to_join:
+			pt_queue.put(None)  # flush
+			pt_runner.join()
+
+		LOG_APP_INFO("partitioned_threads_runner", msg="tasks runner finished")
+
+	# will stop taking new tasks and wait for all existing tasks to finish
+	def stop(self):
+		self.tasks_queue.put(None)
+
+	def submit_task(self, partition_key, func, args, kwargs, on_complete=None):
+		now_millis = cur_ms()
+		if(partition_key is None):
+			partition_key = str(now_millis % 100)  # 50 parallel partitions
+		self.tasks_queue.put((partition_key, now_millis, func, args, kwargs, on_complete))
 
 
-tasks_runner._thread = None
-
-_joinables = []
+partitioned_tasks_runner = PartitionedTasksRunner()
 
 
 # submit a task:func to a partition
 # parition is used when you want them to execute in the
 # same order as submitted
 def submit_background_task(partition_key, func, *args, **kwargs):
-	# start processors if not started already
-	now_millis = cur_ms()
-	if(partition_key is None):
-		partition_key = now_millis % 50  # 50 parallel buckets to run tasks
+	if(not partitioned_tasks_runner.started):
+		partitioned_tasks_runner.started = True
+		partitioned_tasks_runner.start()
+		_joinables.append(partitioned_tasks_runner)
 
-	if(not tasks_runner._thread):
-		LOG_DEBUG("background_threads_runner", msg="starting")
-		tasks_runner._thread = _tasks_runner_thread = Thread(target=tasks_runner)
-		_tasks_runner_thread.start()
-
-	tasks_queue.put((str(partition_key), now_millis, func, args, kwargs))
+	partitioned_tasks_runner.submit_task(partition_key, func, args, kwargs)
 
 
 # decorator to be used for a short io tasks to be
@@ -1676,10 +1677,7 @@ def background_task(func):
 # Blaster exit functions
 @events.register_listener(["blaster_exit1"])
 def exit_1():
-	if(tasks_runner._thread):
-		tasks_queue.put(None)  # flush the task
-		tasks_runner._thread.join()
-		LOG_DEBUG("background_threads", msg="cleanedup")
+	partitioned_tasks_runner.stop()
 
 
 @events.register_listener(["blaster_exit5"])
