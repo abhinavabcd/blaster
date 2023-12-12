@@ -8,7 +8,7 @@ from gevent.queue import Queue
 from gevent.threading import Thread
 from logging import DEBUG, INFO, WARN, ERROR
 from .utils import events
-from .env import LOG_LEVEL, LOG_APP_NAME, LOG_APP_VERSION,\
+from .env import LOG_LEVEL, LOG_APP_NAME, LOG_APP_VERSION, \
 	CONSOLE_LOG_RAW_JSON
 from . import req_ctx
 
@@ -141,7 +141,6 @@ def stop_log_streaming():
 def flush_and_exit_log_streaming():
 	# don't remove it , it will push an empty function to queues to flush them off
 	LOG(DEBUG, "log_flushing", msg="flushing logs and exiting")
-
 	log_streaming_thread and log_streaming_thread.join()
 
 
