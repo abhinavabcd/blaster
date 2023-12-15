@@ -54,4 +54,4 @@ for i in range(1, len(stack)):
 			config.load(os.path.dirname(file))
 			break
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
