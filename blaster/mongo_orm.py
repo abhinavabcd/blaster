@@ -16,11 +16,11 @@ from collections import OrderedDict
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError, OperationFailure
 from pymongo import ReturnDocument, ReadPreference
-from .tools import ExpiringCache, all_subclasses,\
+from .tools import ExpiringCache, all_subclasses, \
 	cur_ms, list_diff2, batched_iter, set_by_key_list, _OBJ_END_
-from .config import IS_DEV, MONGO_WARN_MAX_RESULTS_RATE,\
-	MONGO_MAX_RESULTS_AT_HIGH_SCAN_RATE,\
-	MONGO_WARN_MAX_QUERY_RESPONSE_TIME_SECONDS,\
+from .config import IS_DEV, MONGO_WARN_MAX_RESULTS_RATE, \
+	MONGO_MAX_RESULTS_AT_HIGH_SCAN_RATE, \
+	MONGO_WARN_MAX_QUERY_RESPONSE_TIME_SECONDS, \
 	DEBUG_PRINT_LEVEL, IS_TEST
 from gevent.threading import Thread
 from gevent import time
@@ -544,14 +544,6 @@ class Model(object):
 					elif(attr_obj._type == list):
 						self.__dict__[attr_name] = MongoList(self, attr_name, [])  # copy
 
-	# when retrieving objects from db
-	# creates a new Model object
-	@classmethod
-	def get_instance_from_document(cls, doc):
-		ret = cls(False)  # not a new item
-		ret.reset_and_update_cache(doc)
-		return ret
-
 	def _reset(self, doc):
 		self._is_new_ = False  # this is not a new object
 		self._initializing = True
@@ -893,7 +885,6 @@ class Model(object):
 		projection=None,
 		offset=None,
 		limit=None,
-		read_preference=ReadPreference.PRIMARY,
 		force_primary=False,
 		**kwargs
 	) -> Iterator[ModelType]:
@@ -1143,7 +1134,15 @@ class Model(object):
 							yield item
 				ret = batched_requery_iter(ret)
 			else:
-				ret = map(cls.get_instance_from_document, ret)
+				def doc_to_obj(doc):
+					ret = cls(False)  # not a new item
+					if(projection is not None):
+						ret._reset(doc)
+					else:
+						ret.reset_and_update_cache(doc)
+					return ret
+
+				ret = map(doc_to_obj, ret)
 
 			multi_collection_query_result_iterator.add(
 				ret,

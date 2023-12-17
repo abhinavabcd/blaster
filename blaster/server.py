@@ -162,8 +162,6 @@ class Request:
 	_before_hooks = []
 	_after_hooks = []
 
-	after = []
-
 	# instance level
 	sock = None
 	_params = None
@@ -969,7 +967,7 @@ class App:
 				# we will send the status, either default
 				# or given from response
 				status = str(status) if status else '200 OK'
-				buffered_socket.send(b'HTTP/1.1 ', status, b'\r\n')
+				buffered_socket.sendb(b'HTTP/1.1 ', status, b'\r\n')
 
 			# resp.2 Send headers
 			if(response_headers or (body != I_AM_HANDLING_THE_SOCKET)):
@@ -978,7 +976,7 @@ class App:
 				if(isinstance(response_headers, list)):
 					# send only the specified headers
 					for header in response_headers:
-						buffered_socket.send(header, b'\r\n')
+						buffered_socket.sendb(header, b'\r\n')
 
 				else:
 					if(isinstance(response_headers, dict)):
@@ -986,14 +984,14 @@ class App:
 						# add default stream headers
 						for key, val in default_stream_headers.items():
 							if(key not in response_headers):
-								buffered_socket.send(key, b': ', val, b'\r\n')
+								buffered_socket.sendb(key, b': ', val, b'\r\n')
 
 					elif(response_headers is None):  # no headers => use default stream headers
 						response_headers = default_stream_headers
 
 					# send all basic headers
 					for key, val in response_headers.items():
-						buffered_socket.send(key, b': ', val, b'\r\n')
+						buffered_socket.sendb(key, b': ', val, b'\r\n')
 
 				# perform any dev specific things
 				if(IS_DEV):
@@ -1002,24 +1000,24 @@ class App:
 						if(isinstance(DEV_FORCE_ACCESS_CONTROL_ALLOW_ORIGIN, str)):
 							allowed_origins = DEV_FORCE_ACCESS_CONTROL_ALLOW_ORIGIN
 
-						buffered_socket.send(
+						buffered_socket.sendb(
 							b'Access-Control-Allow-Origin: ', allowed_origins, b'\r\n'
 						)
-						buffered_socket.send(b'Access-Control-Allow-Headers: *\r\n')
-						buffered_socket.send(b'Access-Control-Allow-Methods: *\r\n')
+						buffered_socket.sendb(b'Access-Control-Allow-Headers: *\r\n')
+						buffered_socket.sendb(b'Access-Control-Allow-Methods: *\r\n')
 
 				# send any new cookies set
 				if(req._cookies_to_set):
 					for cookie_name, cookie_val in req._cookies_to_set.items():
-						buffered_socket.send(b'Set-Cookie: ', cookie_name, b'=', cookie_val, b'\r\n')
+						buffered_socket.sendb(b'Set-Cookie: ', cookie_name, b'=', cookie_val, b'\r\n')
 
 				# send back keep alive
 				if(resuse_socket_for_next_http_request):
-					buffered_socket.send(b'Connection: keep-alive\r\n')
+					buffered_socket.sendb(b'Connection: keep-alive\r\n')
 
 				if(body == I_AM_HANDLING_THE_SOCKET):
 					# close the headers
-					buffered_socket.send(b'\r\n')
+					buffered_socket.sendb(b'\r\n')
 
 			# resp.3 Send body
 			# resp.3.1 If handler is handling socket
@@ -1028,14 +1026,14 @@ class App:
 					"http_socket", request_type=request_type,
 					path=request_path, wallclockms=int(1000 * time.time()) - cur_millis
 				)
-
+				buffered_socket.flush()  # flush the socket
 				return I_AM_HANDLING_THE_SOCKET
 
 			# resp.3.2 Send finalizing headers(content related only) and body
 			else:
 				if(isinstance(body, (dict, list))):
 					body = json.dumps(body)
-					buffered_socket.send(b'Content-Type: application/json\r\n')
+					buffered_socket.sendb(b'Content-Type: application/json\r\n')
 
 				# encode body
 				if(isinstance(body, str)):
@@ -1045,11 +1043,12 @@ class App:
 				content_length = 0
 				if(body):
 					# finalize all the headers
-					buffered_socket.send(b'Content-Length: ', str(content_length := len(body)), b'\r\n\r\n')
-					buffered_socket.send(body)
+					buffered_socket.sendb(b'Content-Length: ', str(content_length := len(body)), b'\r\n\r\n')
+					buffered_socket.sendb(body)
 				else:
-					buffered_socket.send(b'Content-Length: 0', b'\r\n\r\n')
+					buffered_socket.sendb(b'Content-Length: 0', b'\r\n\r\n')
 
+				buffered_socket.flush()  # flush the socket
 				_wallclock_ms = int(1000 * time.time()) - cur_millis
 				LOG_SERVER(
 					"http", response_status=status, request_type=request_type,
@@ -1089,18 +1088,19 @@ class App:
 			try:
 				# err.2 send the error response
 				# err.2.1 send status line
-				buffered_socket.send(b'HTTP/1.1 ', status, b'\r\n')
+				buffered_socket.sendb(b'HTTP/1.1 ', status, b'\r\n')
 
 				# err.2.2 send all headers
 				for resp_header in resp_headers:
-					buffered_socket.send(resp_header, b'\r\n')
+					buffered_socket.sendb(resp_header, b'\r\n')
 
 				# err.2.3 send final headers(content related only) and body
-				buffered_socket.send(
+				buffered_socket.sendb(  # final send
 					b'Connection: close', b'\r\n',
 					b'Content-Length: ', str(len(body)), b'\r\n\r\n',
 					body
 				)
+				buffered_socket.flush()  # flush the socket
 				log_handler(
 					"http",
 					exception_str=str(ex),

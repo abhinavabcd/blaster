@@ -73,6 +73,7 @@ EPOCH = datetime.utcfromtimestamp(0)
 _OBJ_END_ = object()
 _1KB_ = 1024
 _16KB_ = _1KB_ * 16
+_1MB_ = _1KB_ * _1KB_
 _joinables = []  # all threads that exit on exit5
 
 
@@ -1124,27 +1125,37 @@ class BufferedSocket():
 
 	def __init__(self, sock):
 		self.sock = sock
-		self.store = bytearray()
+		self.readbuf = bytearray()
+		self.sendbuf = bytearray()
 
 	def close(self):
 		self.sock.close()
 		self.is_eof = True
 
-	def send(self, *_data):
-		total_sent = 0
+	def sendb(self, *_data):  # send but buffered
+		n = 0
 		for data in _data:
 			if(isinstance(data, str)):
 				data = data.encode()
-			n = 0
-			data_len = len(data)
-			data_mview = memoryview(data)
-			while(n < data_len):
-				sent = self.sock.send(data_mview[n:])
-				if(sent < 0):
-					return sent  # return failed
-				n += sent
-			total_sent += n
-		return total_sent
+			n += len(data)
+			self.sendbuf.extend(data)
+		if(len(self.sendbuf) > _1MB_):
+			return self.flush()
+		return n
+
+	def send(self, *_data):
+		for data in _data:
+			if(isinstance(data, str)):
+				data = data.encode()
+			self.sendbuf.extend(data)
+		return self.flush()
+
+	def flush(self):
+		if(len(self.sendbuf) == 0):
+			return 0
+		send_buf = self.sendbuf
+		self.sendbuf = bytearray()  # reset
+		return self.sock.sendall(send_buf)
 
 	def sendl(self, *_data):
 		if(not self.lock):
@@ -1155,24 +1166,24 @@ class BufferedSocket():
 		return ret
 
 	def recv(self, n):
-		if(self.store):
-			ret = self.store
-			self.store = bytearray()
+		if(len(self.readbuf)):
+			ret = self.readbuf
+			self.readbuf = bytearray()
 			return ret
 		return self.sock.recv(n)
 
 	def recvn(self, n):
-		while(len(self.store) < n):
+		while(len(self.readbuf) < n):
 			data = self.sock.recv(4096)
 			if(not data):
 				self.is_eof = True
-				return self.store or None
-			self.store.extend(data)
+				return self.readbuf or None
+			self.readbuf.extend(data)
 
 		# return n bytes for now
-		ret = self.store[:n]
+		ret = self.readbuf[:n]
 		# set remaining to new store
-		self.store = self.store[n:]
+		self.readbuf = self.readbuf[n:]
 		return ret
 
 	# fails if it couldn't find the delimiter until max_size
@@ -1184,10 +1195,10 @@ class BufferedSocket():
 		delimiter_len = len(delimiter)
 		# scan the store until end, if not found extend
 		# and continue until store > max_size
-		to_scan_len = len(self.store)
+		to_scan_len = len(self.readbuf)
 		i = 0  # how much we scanned already
 
-		_store = self.store  # get a reference
+		_store = self.readbuf  # get a reference
 		while(True):
 			if(i > max_size):
 				self.is_eof = True
@@ -1205,7 +1216,7 @@ class BufferedSocket():
 						ret = _store[:i - delimiter_len]
 					else:
 						ret = _store[:i]
-					self.store = _store[i:]  # set store to unscanned/pending
+					self.readbuf = _store[i:]  # set store to unscanned/pending
 					return ret
 			if(i >= to_scan_len):
 				# scanned all buffer
