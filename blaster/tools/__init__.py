@@ -122,6 +122,9 @@ class LRUCache:
 	def __getitem__(self, key, default=None):
 		return self.get(key, default)
 
+	def __delitem__(self, key):
+		return self.cache.pop(key, None)
+
 	def delete(self, key):
 		return self.cache.pop(key, None)
 
@@ -181,6 +184,9 @@ class ExpiringCache:
 
 	def __getitem__(self, key, default=None):
 		return self.get(key, default)
+
+	def __delitem__(self, key):
+		return self.cache.pop(key, None)
 
 	def exists(self, key):
 		return key in self.cache

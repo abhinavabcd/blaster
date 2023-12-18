@@ -805,12 +805,13 @@ class App:
 		if(not request_line):
 			return
 		post_data = None
-		req = req_ctx.req = Request(buffered_socket, req_ctx)
+		req_ctx.req = req = Request(buffered_socket, req_ctx)
 		# set all usable timestamp variables at once
 		cur_millis \
 			= req_ctx.timestamp \
 			= req.timestamp \
 			= int(1000 * time.time())
+		req_ctx.cache = {}
 		request_type = None
 		request_path = None
 		headers = None
@@ -1209,7 +1210,7 @@ def static_file_handler(
 		if(mime_type):
 			resp_headers = {
 				'Content-Type': mime_type,
-				'Cache-Control': 'max-age=31536000'
+				'Cache-Control': 'max-age=86400'
 			}
 		return ("200 OK", resp_headers, data)
 
@@ -1218,7 +1219,7 @@ def static_file_handler(
 			path = default_file
 
 		file_resp = file_cache.get(url_path + path, None)
-		if((not file_resp and dynamic_files) or IS_DEV):  # always reload from filesystem in devmode
+		if(not file_resp and dynamic_files):  # always reload from filesystem in devmode
 			try:
 				file_resp = get_file_resp(path)
 				file_cache[path] = file_resp  # add to cache
@@ -1268,6 +1269,28 @@ Request.set_arg_type_hook(WebSocketServerHandler, _get_web_socket_handler)
 
 
 # Utils
+
+class RequestContextCache:
+	def get(self, key, default=None):
+		if(req_ctx.cache is None):
+			return default
+		return req_ctx.cache.get(key, default)
+
+	def __setitem__(self, key, value):
+		if(req_ctx.cache is None):
+			return
+		req_ctx.cache[key] = value
+
+	def __getitem__(self, key, default=None):
+		if(req_ctx.cache is None):
+			return default
+		return req_ctx.cache.get(key, default)
+
+	def __delitem__(self, key):
+		if(req_ctx.cache is None):
+			return
+		req_ctx.cache.pop(key, None)
+
 
 MOBILE_USER_AGENT_REGEX = re.compile(r"(android|bb\\d+|meego).+mobile|avantgo|bada\\/|blackberry|blazer|compal|elaine|fennec|hiptop|iemobile|ip(hone|od)|iris|kindle|lge |maemo|midp|mmp|mobile.+firefox|netfront|opera m(ob|in)i|palm( os)?|phone|p(ixi|re)\\/|plucker|pocket|psp|series(4|6)0|symbian|treo|up\\.(browser|link)|vodafone|wap|windows ce|xda|xiino", re.I | re.M)
 

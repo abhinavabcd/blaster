@@ -365,9 +365,11 @@ class Model(object):
 				# check already in cache
 				_doc_in_cache = None
 				if(use_cache is True):
-					if(cls._cache_):
-						_doc_in_cache = cls._cache_.get(_pk_tuple)
-				elif(use_cache):
+					use_cache = cls._cache_
+				elif(use_cache is False):
+					use_cache = None
+
+				if(use_cache is not None):
 					# user supplied cache
 					_doc_in_cache = use_cache.get(_pk_tuple)
 
@@ -392,9 +394,9 @@ class Model(object):
 			ret = list(chain(from_cache, cls.query(_query)))
 
 			# user supplied cache
-			if(use_cache and use_cache is not True):
+			if(use_cache is not None):
 				for _item in ret:
-					use_cache.set(_item.pk_tuple(), _item._original_doc)
+					use_cache[_item.pk_tuple()] = _item._original_doc
 
 			if(is_single_item):
 				if(ret):
@@ -562,13 +564,13 @@ class Model(object):
 		cls = self.__class__
 		# remove old pk_tuple in cache
 		if(cls._cache_):
-			cls._cache_.delete(self.pk_tuple())
+			del cls._cache_[self.pk_tuple()]
 
 		self._reset(doc)
 
 		# update in cache
 		if(cls._cache_):
-			cls._cache_.set(self.pk_tuple(), doc)
+			cls._cache_[self.pk_tuple()] = doc
 
 	'''given a shard key, says which database node it resides in'''
 	@classmethod
@@ -1369,7 +1371,7 @@ class Model(object):
 				delete_query=str(_delete_query)
 			)
 		if(_Model._cache_):
-			_Model._cache_.delete(self.pk_tuple())
+			del _Model._cache_[self.pk_tuple()]
 
 		_Model._trigger_event(EVENT_AFTER_DELETE, self)
 
