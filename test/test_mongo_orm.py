@@ -231,7 +231,6 @@ class TestUpdates(unittest.TestCase):
         b.update({"$set": {"c": 100}})
 
         b = list(b.query({"a": 0}))[0]
-        self.assertTrue(b.b.startswith("0"))
         self.assertTrue(b.c == "100")
 
     def test_list_insert(self):

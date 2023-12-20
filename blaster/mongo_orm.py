@@ -800,7 +800,7 @@ class Model(object):
 
 					# 2.1. If old shard exists, delete that secondary doc
 					if(
-						_old_secondary_collection
+						_old_secondary_collection is not None
 						and (
 							_old_secondary_collection != _new_secondary_collection
 						)
@@ -809,7 +809,7 @@ class Model(object):
 
 					# 2.2.  if new shard key exists insert into appropriate node
 					# insert only if non null
-					if(_new_secondary_collection):
+					if(_new_secondary_collection is not None):
 						_to_insert = {}
 						is_shard_data_changed = False
 						for _k in _shard.attrs:
@@ -1654,7 +1654,7 @@ def initialize_model(_Model):
 		_index_properties = {}
 		_index_keys = []
 		if(isinstance(_index, dict)):
-			_index_properties.update(_index.pop("properties") or {})
+			_index_properties.update(_index.pop("properties", None) or {})
 			_index = _index.get("keys")
 
 		if(not isinstance(_index, tuple)):
