@@ -13,7 +13,7 @@ APP_NAME = environ.get("APP_NAME")
 APP_VERSION = environ.get("APP_VERSION")
 # Logging
 
-LOG_LEVEL = logging.DEBUG if IS_DEV else (logging.INFO if IS_STAGING else logging.WARN)
+LOG_LEVEL = int(environ.get("LOG_LEVEL", 0)) or logging.DEBUG if IS_DEV else (logging.INFO if IS_STAGING else logging.WARN)
 DEBUG_PRINT_LEVEL = IS_DEV and int(environ.get("DEBUG_PRINT_LEVEL") or 0)
 
 LOG_APP_NAME = environ.get("LOG_APP_NAME") or APP_NAME or ""

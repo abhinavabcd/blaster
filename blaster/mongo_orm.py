@@ -755,18 +755,16 @@ class Model(object):
 					# 1. fetch from db again
 					_doc_in_db = primary_shard_collection.find_one({"_id": self._id})
 					if(not _doc_in_db):  # moved out of shard or pk changed
-						return False
+						raise Exception(f"Document {self._id} pk:{self.pk()} not found")
+
 					# 2. update our local copy
 					self.reset_and_update_cache(_doc_in_db)
-					can_retry = False
-					# 3. check if basic consistency between local and remote
-					# if it's consistent but failed, it means because of conditions given by user
-					if(_doc_in_db.get("_", _OBJ_END_) != original_doc.get("_", _OBJ_END_)):
-						can_retry = True
 
-					if(can_retry):
-						continue  # retry again
-					# cannot retry
+					# 3. check if basic consistency between local and remote
+					if(_doc_in_db.get("_", _OBJ_END_) != original_doc.get("_", _OBJ_END_)):
+						continue  # can retry
+
+					# cannot retry, may be the given conditions could have failed
 					return False
 
 				# doc successfully updated
@@ -878,6 +876,8 @@ class Model(object):
 				# triggered after update event
 				cls._trigger_event(EVENT_AFTER_UPDATE, self)
 				return True
+
+		raise Exception("Concurrent update may have caused this query to fail")
 
 	@classmethod
 	def query(
