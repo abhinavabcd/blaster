@@ -105,39 +105,63 @@ class HeadersDict(dict):
 		return header_value
 
 
+# argument types
+class _Param:
+	def __init__(self, name=None, _type=str):
+		self.name = name
+		self._type = _type
+
+	def __getitem__(self, key):
+		return _Param(key)
+
+
+class _BodyParam:
+	def __init__(self, name=None, _type=str):
+		self.name = name
+		self._type = _type
+
+	def __getitem__(self, key):
+		return _BodyParam(key)
+
+
+class _GetParam:
+	def __init__(self, name=None, _type=str):
+		self.name = name
+		self._type = _type
+
+	def __getitem__(self, key):
+		return _GetParam(key)
+
+
 class Query(Object):
-	def __init__(self, *key, **kwargs):
-		if(key):
-			kwargs[key] = Required[str]
+	def __init__(self, **kwargs):
 		super().__init__(**kwargs)
+
+	def __getitem__(self, key):
+		return _GetParam(key)
 
 
 class Headers(Object):
-	def __init__(self, *key, **kwargs):
-		if(key):
-			kwargs[key] = Required[str]
+	def __init__(self, **kwargs):
 		super().__init__(**kwargs)
 
 
 class Cookie(Object):
-	def __init__(self, *key, **kwargs):
-		if(key):
-			kwargs[key] = Required[str]
+	def __init__(self, **kwargs):
 		super().__init__(**kwargs)
 
 
 class Body(Object):
-	def __init__(self, *key, **kwargs):
-		if(key):
-			kwargs[key] = Required[str]
+	def __init__(self, **kwargs):
 		super().__init__(**kwargs)
 
-	@classmethod
-	def from_raw_dict(cls, _dict):
-		if(isinstance(_dict, HtmlSanitizedDict)):
-			return super().from_dict(dict(_dict))
-		return super().from_dict(_dict)
+	def __getitem__(self, key):
+		return _BodyParam(key)
 
+
+BodyParam = _BodyParam()
+GetParam = _GetParam()
+Param = _Param()
 
 # custom argument hooks
 _argument_creator_hooks = {}
@@ -377,6 +401,16 @@ class Request:
 			return lambda req: _type.from_dict(req._headers, default=default)
 		elif(isinstance(_type, Body)):
 			return lambda req: _type.from_dict(req._body, default=default)
+		# single params
+		elif(isinstance(_type, _BodyParam)):
+			_, validate = schema_func(_type._type, _default=default)
+			return lambda req: validate(req._body.get(_type.name))
+		elif(isinstance(_type, _GetParam)):
+			_, validate = schema_func(_type._type, _default=default)
+			return lambda req: validate(req._params.get(_type.name))
+		elif(isinstance(_type, _Param)):
+			_, validate = schema_func(_type._type, _default=default)
+			return lambda req: validate(req.get(_type.name))
 
 		# prefer arg injector first if available
 		has_arg_creator_hook = _argument_creator_hooks.get(_type)

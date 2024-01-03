@@ -305,6 +305,9 @@ class TestBackgroundTasks(unittest.TestCase):
 			self.assertEqual(j, [i for i in range(NUM_BG_TASKS_PER_BUCKET)])
 
 	def test_class_method_background_task(self):
+		from blaster.tools import partitioned_tasks_runner
+		partitioned_tasks_runner.is_processing = True  # fix for tests
+
 		class ABT:
 			def __init__(self):
 				self.a = 100

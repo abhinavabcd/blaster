@@ -26,37 +26,41 @@ _joinables = []  # all long running threads, that need to be stopped on exit
 partitioned_tasks_runner = PartitionedTasksRunner(max_parallel=100)
 
 
-@retry(2)
-def exec_push_task(raw_bytes_message: bytes, verify_secret=None, on_complete=None):
+# just submit to background wait a max of 10 seconds
+# careful: raises an exception if queue limits reaches, should try to reprocess in that case
+def exec_push_task(raw_bytes_message: bytes, verify_secret=None):
 	message_payload = pickle.loads(base64.a85decode(raw_bytes_message))
 	kwargs = message_payload.get("kwargs") or {}
 	args = message_payload.get("args") or []
 	func_name = message_payload.get("func", "")
 	parition_key = message_payload.get("partition")
+	max_backlog = message_payload.get("max_backlog", 50)
 	# check for authorization
 	if(
 		verify_secret
 		and hmac_hexdigest(verify_secret, func_name) != message_payload.get("signature")
 	):
 		LOG_ERROR("run_later", desc="authorization failed", func=func_name)
-		on_complete and on_complete()
 		return
 
 	# task_id = message_payload.get("task_id", "")
 	# TODO use task_id for logging
 	if(func := run_later_tasks.get(func_name, None)):
-		partitioned_tasks_runner.submit_task(parition_key, func, args, kwargs, on_complete=on_complete)
+		partitioned_tasks_runner.submit_task(
+			parition_key, func, args, kwargs,
+			max_backlog=max_backlog, timeout=10
+		)
 		return
 
-	LOG_WARN("server_exception", data="Not a push task", func=str(func))
-	on_complete and on_complete()
+	LOG_WARN("run_later_exception", data="Not a push task", func=str(func))
 
 
 def process_from_cloud_pubsub(subscription_path):
 	LOG_SERVER("run_later", desc="starting pubsub subscriber", subscription_path=subscription_path)
 
 	def callback(message):
-		exec_push_task(message.data, on_complete=message.ack)
+		exec_push_task(message.data)
+		message.ack()
 
 	pull_future = None
 
@@ -234,9 +238,6 @@ def run_later_partitioned(partition_key):
 def process_run_later_tasks():
 	global _is_processing
 	_is_processing = True
-
-	partitioned_tasks_runner.start()
-	_joinables.append(partitioned_tasks_runner)
 
 	if(RUN_LATER_TASKS_SQS_URL):
 		_joinables.append(gevent.spawn(process_from_sqs, RUN_LATER_TASKS_SQS_URL))
