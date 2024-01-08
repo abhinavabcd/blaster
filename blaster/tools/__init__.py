@@ -41,7 +41,7 @@ from ..websocket._core import WebSocket
 from ..env import DEBUG_PRINT_LEVEL
 from ..utils.xss_html import XssHtml
 from ..utils import events
-from ..logging import LOG_WARN, LOG_ERROR, LOG_DEBUG, LOG_APP_INFO
+from ..logging import LOG_WARN, LOG_ERROR, LOG_DEBUG
 
 # CUSTOM IMPORTS
 try:

@@ -1557,7 +1557,11 @@ class DatabaseNode:
 				= MongoClient(
 					host=hosts, replicaSet=replicaset,
 					username=username, password=password,
-					retryWrites=True
+					connectTimeoutMS=5000,
+					serverSelectionTimeoutMS=5000,
+					maxIdleTimeMS=120000,
+					waitQueueTimeoutMS=60000,
+					maxPoolSize=500
 				)
 
 		self._cached_pymongo_collections = {}

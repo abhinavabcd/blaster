@@ -46,6 +46,7 @@ def exec_push_task(raw_bytes_message: bytes, verify_secret=None):
 	# task_id = message_payload.get("task_id", "")
 	# TODO use task_id for logging
 	if(func := run_later_tasks.get(func_name, None)):
+		LOG_SERVER("run_later", desc="executing push task", func=func_name)
 		partitioned_tasks_runner.submit_task(
 			parition_key, func, args, kwargs,
 			max_backlog=max_backlog, timeout=10
@@ -64,16 +65,15 @@ def process_from_cloud_pubsub(subscription_path):
 
 	pull_future = None
 
-	@events.register_listener("blaster_exit0")
+	@events.register_listener("blaster_exit1")
 	def _stop():  # stop the pull_future on event
 		pull_future and pull_future.cancel()
-		events.remove_listener("blaster_exit0", _stop)  # remove the event reference
+		events.remove_listener("blaster_exit1", _stop)  # remove the event reference
 
 	while(_is_processing):
 		with get_gcloud_pubsub_subscriber() as subscriber:
 			pull_future = subscriber.subscribe(
-				subscription_path, callback=callback,
-				await_callbacks_on_shutdown=True
+				subscription_path, callback=callback
 			)
 			try:
 				pull_future.result()  # Block until the feature is completed.
@@ -82,6 +82,7 @@ def process_from_cloud_pubsub(subscription_path):
 				pull_future.cancel()
 
 	partitioned_tasks_runner.stop()
+	LOG_SERVER("run_later", data="stopping run later tasks")
 
 
 @use_connection_pool(gcloud_pubsub_publisher="gcloud_pubsub_publisher")
@@ -251,11 +252,14 @@ def process_run_later_tasks():
 
 
 # cleanup
-@events.register_listener("blaster_exit1")
-def wait_for_run_later_processing():
-	LOG_SERVER("server_info", data="stopping run later tasks")
+@events.register_listener("blaster_exit0")
+def _exit0():
 	global _is_processing
 	_is_processing = False
 	partitioned_tasks_runner.stop()
+
+
+@events.register_listener("blaster_exit2")
+def _exit2():
 	for _joinable in _joinables:
 		_joinable.join()
