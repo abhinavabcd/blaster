@@ -1,10 +1,9 @@
 from setuptools import setup, find_packages
-from blaster import __version__
 
 setup(
 	name='blaster-server',
 	packages=find_packages() + ["blaster/utils/data"],
-	version=__version__,
+	version="0.1.3",
 	license='MIT',
 	description='Gevent based python server built from scratch for maximum performance',
 	author='Abhinav Reddy',                   # Type in your name

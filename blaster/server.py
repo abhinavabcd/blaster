@@ -17,7 +17,7 @@ from gevent.socket import socket as GeventSocket
 from gevent.server import StreamServer
 from requests_toolbelt.multipart import decoder
 
-from . import req_ctx, __version__
+from . import req_ctx
 from .tools import set_socket_fast_close_options, \
 	BufferedSocket, ltrim, _OBJ_END_
 from .tools.sanitize_html import HtmlSanitizedDict
@@ -1183,7 +1183,6 @@ def stop_all_apps():
 # create a global app for generic single server use
 DefaultApp = App(
 	title="Blaster", description="Built for speed and rapid prototyping..",
-	version=__version__
 )
 
 # generic global route handler

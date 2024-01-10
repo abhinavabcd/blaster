@@ -1581,7 +1581,7 @@ def empty_func():
 	pass
 
 
-# Main thread that spins of more threads to process tasks
+# Spins of more threads to process tasks
 class PartitionedTasksRunner:
 	idle_pt_queues = None  # for reusing, push a task, and thread continues
 	partitioned_task_queues = None  # running queues
@@ -1825,3 +1825,20 @@ def NON_NULL(*args):
 		if a is not None:
 			return a
 	return None
+
+
+def set_requests_default_args(**_kwargs):
+	import requests
+	from requests.adapters import HTTPAdapter
+
+	class _HTTPAdapter(HTTPAdapter):
+		def send(self, request, **kwargs):
+			for key, default in _kwargs.items():
+				if(key not in kwargs):
+					kwargs[key] = default
+			return super().send(request, **kwargs)
+
+	session = requests.Session()
+	adapter = _HTTPAdapter()  # Set your default timeout in seconds
+	session.mount("http://", adapter)
+	session.mount("https://", adapter)

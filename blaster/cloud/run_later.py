@@ -71,18 +71,22 @@ def process_from_cloud_pubsub(subscription_path):
 		events.remove_listener("blaster_exit1", _stop)  # remove the event reference
 
 	while(_is_processing):
-		with get_gcloud_pubsub_subscriber() as subscriber:
-			pull_future = subscriber.subscribe(
-				subscription_path, callback=callback
-			)
-			try:
-				pull_future.result()  # Block until the feature is completed.
-			except Exception:
-				LOG_WARN("gcloud_pubsub_exception", stack_trace=traceback.format_exc())
-				pull_future.cancel()
+		try:
+			with get_gcloud_pubsub_subscriber() as subscriber:
+				pull_future = subscriber.subscribe(
+					subscription_path, callback=callback
+				)
+				try:
+					pull_future.result()  # Block until the feature is completed.
+				except Exception:
+					LOG_WARN("gcloud_pubsub_exception", stack_trace=traceback.format_exc())
+					pull_future.cancel()
+		except Exception as ex:
+			LOG_WARN("gcloud_pubsub_exception", stack_trace=traceback.format_exc())
+			gevent.sleep(10)
 
 	partitioned_tasks_runner.stop()
-	LOG_SERVER("run_later", data="stopping run later tasks")
+	LOG_SERVER("run_later", data="stopping run later tasks for gcloud pubsub")
 
 
 @use_connection_pool(gcloud_pubsub_publisher="gcloud_pubsub_publisher")

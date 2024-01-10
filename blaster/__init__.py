@@ -53,5 +53,3 @@ for i in range(1, len(stack)):
 		if(file.startswith("/")):
 			config.load(os.path.dirname(file))
 			break
-
-__version__ = "0.1.2"
