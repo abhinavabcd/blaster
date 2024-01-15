@@ -952,6 +952,18 @@ def list_diff2(first, second, key=None):
 		)
 
 
+def compress_lists(lists) -> dict:
+	'''returns a tree like structure from a list of lists'''
+	ret = {}
+	for lst in lists:
+		_next = ret
+		for i in lst:
+			if(i not in _next):
+				_next[i] = {}
+			_next = _next[i]
+	return ret
+
+
 # a dummy object with given keys,values
 class DummyObject:
 	entries = None
@@ -1373,10 +1385,7 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000, fail=True, sta
 
 	# keep parsing output
 	def process_output(proc_out, proc_in):
-		while(state.is_running):
-			_out = proc_out.read(1)
-			if(not _out):
-				break
+		while(_out := proc_out.read(1)):
 			_out = _out.decode('utf-8', 'replace')
 			# add to our input
 			state.total_output += _out
@@ -1393,10 +1402,7 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000, fail=True, sta
 				print(_out, end="", flush=True)
 
 	def process_error(proc_err, proc_in):
-		while(state.is_running):
-			_err = proc_err.read(1)
-			if(not _err):
-				break
+		while(_err := proc_err.read(1)):
 			_err = _err.decode('utf-8', 'replace')
 			# add to our input
 			state.total_err += _err
@@ -1428,7 +1434,6 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000, fail=True, sta
 		env=_env,
 		**kwargs
 	)
-	state.is_running = True
 
 	# process output reader
 	output_parser_thread = Thread(
@@ -1455,7 +1460,6 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000, fail=True, sta
 	# wait for process to terminate
 	ret_code = proc.wait()
 	state.return_code = ret_code
-	state.is_running = False
 	output_parser_thread.join()
 	err_parser_thread.join()
 	state.proc = None
@@ -1682,6 +1686,28 @@ def background_task(func):
 
 	wrapper._original = getattr(func, "_original", func)
 	return wrapper
+
+
+def background_task_partitioned(partition_key):
+	partition_key_func = partition_key
+
+	def _simple_partition_key_func(args, kwargs):
+		return str(partition_key)
+
+	if(not callable(partition_key)):
+		partition_key_func = _simple_partition_key_func
+
+	def _wrapper(func):
+		def wrapper(*args, **kwargs):
+			# spawn the thread
+			partitioned_tasks_runner.submit_task(
+				partition_key_func(args, kwargs) if partition_key_func else None,  # parition key
+				func, args, kwargs
+			)
+			return True
+		wrapper._original = getattr(func, "_original", func)
+		return wrapper
+	return _wrapper
 
 
 @events.register_listener(["blaster_exit5"])

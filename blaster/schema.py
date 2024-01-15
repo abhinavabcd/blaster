@@ -287,6 +287,9 @@ class Object:
 		# regular class instance
 		# validate __dict__ of the instance inplace
 
+		if(obj is None):
+			return None
+
 		ret = obj
 		if(isinstance(obj, dict)):
 			ret = cls()
@@ -336,7 +339,10 @@ class Object:
 	def to_dict(self):
 		ret = {}
 		for k, attr_validation in self.__class__._validations.items():
-			ret[k] = getattr(self, k, None)
+			val = getattr(self, k, None)
+			if(isinstance(val, Object)):
+				val = val.to_dict()
+			ret[k] = val
 		return ret
 
 

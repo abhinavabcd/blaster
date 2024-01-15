@@ -11,7 +11,7 @@ import traceback
 import ujson as json
 import gevent
 from ..server import route, Request
-from ..tools import background_task, hmac_hexdigest, get_random_id, retry, \
+from ..tools import background_task, hmac_hexdigest, get_random_id, \
 	PartitionedTasksRunner
 from ..connection_pool import use_connection_pool, get_gcloud_pubsub_subscriber
 from ..utils import events
