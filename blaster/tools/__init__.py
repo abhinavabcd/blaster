@@ -33,7 +33,7 @@ import six
 import json
 import traceback
 import contextlib
-from io import BytesIO, StringIO
+from io import BytesIO, StringIO, TextIOWrapper
 import requests
 from http.client import HTTPConnection  # py3
 
@@ -1376,21 +1376,30 @@ def parse_cmd_line_arguments():
 CommandLineArgs, CommandLineNamedArgs = parse_cmd_line_arguments()
 
 
-def run_shell(cmd, output_parser=None, shell=False, max_buf=5000, fail=True, state=None, env=None, **kwargs):
+def run_shell(
+	cmd, output_parser=None, shell=False, max_buf=5000, fail=True, state=None, env=None,
+	process_lines=None, **kwargs
+):
 
 	DEBUG_PRINT_LEVEL > 2 and print(f"#RUNNING: {cmd}")
 	state = state if state is not None else DummyObject()
 	state.total_output = ""
 	state.total_err = ""
+	last_new_line_indexes = [-1, -1]  # output, err
 
 	# keep parsing output
 	def process_output(proc_out, proc_in):
 		while(_out := proc_out.read(1)):
-			_out = _out.decode('utf-8', 'replace')
 			# add to our input
 			state.total_output += _out
-			if(len(state.total_output) > 2 * max_buf):
+
+			if(process_lines is not None and _out == "\n"):
+				process_lines(state.total_output[last_new_line_indexes[0] + 1:], None)
+				last_new_line_indexes[0] = len(state.total_output) - 1
+
+			if(len(state.total_output) > 2 * max_buf):  # clip output to max_buf
 				state.total_output = state.total_output[-max_buf:]
+				last_new_line_indexes[0] = max(-1, last_new_line_indexes[0] - max_buf)
 
 			if(output_parser):
 				# parse the output and if it returns something
@@ -1403,11 +1412,17 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000, fail=True, sta
 
 	def process_error(proc_err, proc_in):
 		while(_err := proc_err.read(1)):
-			_err = _err.decode('utf-8', 'replace')
 			# add to our input
 			state.total_err += _err
+
+			if(process_lines is not None and _err == "\n"):
+				process_lines(None, state.total_err[last_new_line_indexes[1] + 1:])
+				last_new_line_indexes[1] = len(state.total_err) - 1
+
 			if(len(state.total_err) > 2 * max_buf):
 				state.total_err = state.total_err[-max_buf:]
+				last_new_line_indexes[1] = max(-1, last_new_line_indexes[1] - max_buf)
+
 			if(output_parser):
 				# parse the output and if it returns something
 				# we write that to input file(generally stdin)
@@ -1439,7 +1454,7 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000, fail=True, sta
 	output_parser_thread = Thread(
 		target=process_output,
 		args=(
-			proc.stdout,
+			TextIOWrapper(proc.stdout, encoding="utf-8"),
 			proc.stdin
 		)
 	)
@@ -1447,7 +1462,7 @@ def run_shell(cmd, output_parser=None, shell=False, max_buf=5000, fail=True, sta
 	err_parser_thread = Thread(
 		target=process_error,
 		args=(
-			proc.stderr,
+			TextIOWrapper(proc.stderr, encoding="utf-8"),
 			proc.stdin
 		)
 	)
