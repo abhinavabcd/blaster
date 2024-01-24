@@ -835,9 +835,6 @@ class App:
 	def process_http_request(self, buffered_socket: BufferedSocket):
 		resuse_socket_for_next_http_request = True
 		# ignore request lines > 4096 bytes
-		request_line = buffered_socket.readuntil('\r\n', 4096, True)
-		if(not request_line):
-			return
 		post_data = None
 		req_ctx.req = req = Request(buffered_socket, req_ctx)
 		# set all usable timestamp variables at once
@@ -850,6 +847,9 @@ class App:
 		request_path = None
 		headers = None
 		try:
+			request_line = buffered_socket.readuntil('\r\n', 4096, True)
+			if(not request_line):
+				return  # no request send and timed out
 			request_line = request_line.decode("utf-8")
 			request_type, _request_line = request_line.split(" ", 1)
 			# set request type

@@ -1757,8 +1757,14 @@ def call_after_func(func):
 
 
 def all_subclasses(cls):
-	return set(cls.__subclasses__()).union(
-		[s for c in cls.__subclasses__() for s in all_subclasses(c)]
+	return remove_duplicates(
+		list(cls.__subclasses__()) + [s for c in cls.__subclasses__() for s in all_subclasses(c)]
+	)
+
+
+def all_bases(cls):
+	return remove_duplicates(
+		[s for c in cls.__bases__ for s in all_bases(c)] + list(cls.__bases__)
 	)
 
 

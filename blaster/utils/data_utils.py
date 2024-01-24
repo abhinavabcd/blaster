@@ -33,15 +33,15 @@ INR_EXCHANGE_RATE["ROUTE"] = 1  # legacy
 INR_EXCHANGE_RATE["POINTS"] = 1000  # legacy
 
 # update currency aliases
-for i,j in _currency_aliases.items():
+for i, j in _currency_aliases.items():
 	INR_EXCHANGE_RATE[i] = INR_EXCHANGE_RATE[j]
 
 def reload_exchange_rates():
-	# can use : 
+	# can use
 	for k, v in requests.get("http://www.floatrates.com/daily/inr.json").json().items():
 		INR_EXCHANGE_RATE[v["code"]] = v["rate"]
 	# update with aliases
-	for i,j in _currency_aliases.items():
+	for i, j in _currency_aliases.items():
 		INR_EXCHANGE_RATE[i] = INR_EXCHANGE_RATE[j]
 # currencies END
 

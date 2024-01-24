@@ -16,7 +16,7 @@ from collections import OrderedDict
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError, OperationFailure
 from pymongo import ReturnDocument, ReadPreference
-from .tools import ExpiringCache, all_subclasses, \
+from .tools import ExpiringCache, all_subclasses, all_bases, \
 	cur_ms, list_diff2, batched_iter, set_by_key_list, _OBJ_END_
 from .config import IS_DEV, MONGO_WARN_MAX_RESULTS_RATE, \
 	MONGO_MAX_RESULTS_AT_HIGH_SCAN_RATE, \
@@ -1596,7 +1596,7 @@ def initialize_model(_Model):
 	# defaults, do not change the code below
 	_Model._shard_key_ = getattr(_Model, "_shard_key_", "_id")
 	_Model._secondary_shards_ = {}
-	_Model._indexes_ = getattr(_Model, "_indexes_", [])
+	_Model._indexes_ = []
 
 	# temp usage _id_attr
 	_id_attr = Attribute(ObjectId)  # default is of type objectId
@@ -1606,38 +1606,42 @@ def initialize_model(_Model):
 	_Model._attrs_to_name = attrs_to_name = {_id_attr: '_id', '_id': '_id'}
 	is_primary_sharding_enabled = False
 	# parse all attributes
-	for k, v in _Model.__dict__.items():
-		if(isinstance(v, Attribute)):
-			# preprocess any attribute arguments
-			if(getattr(v, "r", None)):  # auth levels needed to read this attr
-				if(isinstance(v.r, str)):
-					v.r = [v.r]
-				v.r = set(v.r)
+	for _M in filter(  # models can extend models
+		lambda _M: issubclass(_M, Model) and (_M is not Model),
+		all_bases(_Model) + [_Model]
+	):
+		for k, v in _M.__dict__.items():
+			if(isinstance(v, Attribute)):
+				# preprocess any attribute arguments
+				if(getattr(v, "r", None)):  # auth levels needed to read this attr
+					if(isinstance(v.r, str)):
+						v.r = [v.r]
+					v.r = set(v.r)
 
-			_model_attrs[k] = v
-			# helps convert string/attr to string
-			attrs_to_name[v] = k
-			attrs_to_name[k] = k
-			# track models this attr belongs to
-			v._models.add(_Model)
+				_model_attrs[k] = v
+				# helps convert string/attr to string
+				attrs_to_name[v] = k
+				attrs_to_name[k] = k
+				# track models this attr belongs to
+				v._models.add(_Model)
 
-			# check if it has any shard, then extract indexes,
-			# shard key tagged to attributes
-			if(not _Model._is_secondary_shard):  # very important check
-				# check indexes_to_create
-				_Model._indexes_ = IndexesToCreate.get(_Model._collection_name_) or [("_id",)]
-				is_primary_shard_key = getattr(v, "is_primary_shard_key", False)
-				is_secondary_shard_key = getattr(v, "is_secondary_shard_key", False)
-				if(is_primary_shard_key is True):
-					_Model._shard_key_ = k
-					# because we don't need it again after first time
-					#  and won't rewrite secondary shard keys
-					delattr(v, "is_primary_shard_key")
-					is_primary_sharding_enabled = True
-				elif(is_secondary_shard_key is True):
-					_Model._secondary_shards_[k] = SecondaryShard()
-					# because we don't need it again after first time
-					delattr(v, "is_secondary_shard_key")
+				# check if it has any shard, then extract indexes,
+				# shard key tagged to attributes
+				if(not _Model._is_secondary_shard):  # very important check
+					# check indexes_to_create
+					_Model._indexes_ += (IndexesToCreate.get(_Model._collection_name_) or [("_id",)])
+					is_primary_shard_key = getattr(v, "is_primary_shard_key", False)
+					is_secondary_shard_key = getattr(v, "is_secondary_shard_key", False)
+					if(is_primary_shard_key is True):
+						_Model._shard_key_ = k
+						# because we don't need it again after first time
+						#  and won't rewrite secondary shard keys
+						delattr(v, "is_primary_shard_key")
+						is_primary_sharding_enabled = True
+					elif(is_secondary_shard_key is True):
+						_Model._secondary_shards_[k] = SecondaryShard()
+						# because we don't need it again after first time
+						delattr(v, "is_secondary_shard_key")
 
 	IS_DEV \
 		and DEBUG_PRINT_LEVEL > 8 \
