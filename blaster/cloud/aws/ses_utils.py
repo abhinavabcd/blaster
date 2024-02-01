@@ -4,18 +4,41 @@ Created on 05-Jun-2019
 @author: abhinav
 '''
 from ...connection_pool import use_connection_pool
-from ...logging import LOG_WARN
+from ...logging import LOG_APP_INFO
 from ...tools import retry, background_task
+from blaster.config import SENDGRID_API_KEY, PREFERED_EMAIL_SERVICE
 
 
-@background_task
-@retry(3)
-@use_connection_pool(ses_client="ses")
-def send_email(
-    sender, to_list, subject,
-    body_text=None, body_html=None, cc_list=None, bcc_list=None, ses_client=None
-):
-    try:
+if(SENDGRID_API_KEY and (not PREFERED_EMAIL_SERVICE or PREFERED_EMAIL_SERVICE == "sendgrid")):
+    from sendgrid import SendGridAPIClient
+    from sendgrid.helpers.mail import Mail
+
+    @background_task
+    @retry(2)   
+    def send_email(
+        sender, to_list, subject, 
+        body_text=None, body_html=None, cc_list=None, bcc_list=None,
+    ):
+        message = Mail(
+            from_email=sender,
+            to_emails=to_list,
+            subject=subject,
+            html_content=body_html
+        )
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        response = sg.send(message)    
+        LOG_APP_INFO("sendgrid_send_email", response=str(response))
+
+elif(not PREFERED_EMAIL_SERVICE or PREFERED_EMAIL_SERVICE == "ses"):
+    # DEFAULT SES
+    @background_task
+    @retry(2)
+    @use_connection_pool(ses_client="ses")
+    def send_email(
+        sender, to_list, subject,
+        body_text=None, body_html=None, cc_list=None, bcc_list=None,
+        ses_client=None
+    ):
         body_data = {}
         if(body_text):
             body_data['Text'] = {
@@ -42,10 +65,4 @@ def send_email(
                 'Body': body_data
             }
         )
-        if response['ResponseMetadata']['HTTPStatusCode'] == 200:
-            return response
-        else:
-            return None
-    except Exception as ex:
-        LOG_WARN('ses_error', data=str(ex))
-        return None
+        LOG_APP_INFO("ses_send_email", response=str(response))

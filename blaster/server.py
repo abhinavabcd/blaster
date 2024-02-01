@@ -846,10 +846,14 @@ class App:
 		request_type = None
 		request_path = None
 		headers = None
+		# READ FIRST REQUEST LINE
 		try:
-			request_line = buffered_socket.readuntil('\r\n', 4096, True)
-			if(not request_line):
-				return  # no request send and timed out
+			if(not (request_line := buffered_socket.readuntil('\r\n', 4096, True))):
+				return
+		except Exception:
+			return  # won't resuse socket, broken
+
+		try:
 			request_line = request_line.decode("utf-8")
 			request_type, _request_line = request_line.split(" ", 1)
 			# set request type
