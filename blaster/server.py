@@ -838,10 +838,6 @@ class App:
 		post_data = None
 		req_ctx.req = req = Request(buffered_socket, req_ctx)
 		# set all usable timestamp variables at once
-		cur_millis \
-			= req_ctx.timestamp \
-			= req.timestamp \
-			= int(1000 * time.time())
 		req_ctx.cache = {}
 		request_type = None
 		request_path = None
@@ -852,6 +848,11 @@ class App:
 				return
 		except Exception:
 			return  # won't resuse socket, broken
+
+		cur_millis \
+			= req_ctx.timestamp \
+			= req.timestamp \
+			= int(1000 * time.time())
 
 		try:
 			request_line = request_line.decode("utf-8")
