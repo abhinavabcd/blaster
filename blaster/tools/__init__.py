@@ -765,6 +765,13 @@ def utf8(value) -> bytes:
 	return value.encode("utf-8")
 
 
+def hmac_hexdigest(secret, *parts) -> bytes:
+	hash = hmac.new(utf8(secret), digestmod=hashlib.sha256)
+	for part in parts:
+		hash.update(utf8(part))
+	return utf8(hash.hexdigest())
+
+
 def create_signed_value(name, value, secret, expires_in=31 * SECONDS_IN_DAY) -> bytes:
 	expires_at = utf8(str(int(time.time() + expires_in)))
 	value = base64.b64encode(utf8(value))  # hide value
@@ -796,11 +803,15 @@ def decode_signed_value(name, value, secret, expiry_check=True) -> bytes:
 		return None
 
 
-def hmac_hexdigest(secret, *parts) -> bytes:
-	hash = hmac.new(utf8(secret), digestmod=hashlib.sha256)
-	for part in parts:
-		hash.update(utf8(part))
-	return utf8(hash.hexdigest())
+def dangerously_peek_signed_value(value) -> bytes:
+	_parts = utf8(value).split(b"|")
+	if len(_parts) < 3:
+		return None
+	_value, *parts, expires_at, _signature = _parts
+	try:
+		return base64.b64decode(_value)
+	except Exception:
+		return None
 
 
 """Dependencies are expressed as a dictionary whose keys are items
@@ -1768,20 +1779,24 @@ def all_bases(cls):
 	)
 
 
-def read_rows_from_url(url, csv_delimiter=",") -> iter:
+def read_rows_from_url(url, csv_delimiter=","):
 	with requests.get(url, stream=True) as resp:
+		rows_iter = None
 		if(url.endswith(".xlsx")):
 			xls_file = BytesIO()
-			for chunk in resp.iter_content(chunk_size=_16KB_):
+			for chunk in resp.iter_content(chunk_size=8192):
 				xls_file.write(chunk)  # unfortunately we read the whole file, may be we can cut off at 10MB or something
 			xls_file.seek(0)
 			excel_sheet = openpyxl.load_workbook(xls_file, read_only=True, data_only=True).active
-			return excel_sheet.iter_rows(values_only=True)
+			rows_iter = excel_sheet.iter_rows(values_only=True)
 		if(url.endswith(".xls")):
 			sheet = xlrd.open_workbook(file_contents=resp.content).sheet_by_index(0)
-			return map(lambda cells: [repr(c.value) for c in cells], sheet.get_rows())
+			rows_iter = map(lambda cells: [repr(c.value) for c in cells], sheet.get_rows())
 		else:
-			return csv.reader(resp.iter_lines(decode_unicode=True), delimiter=csv_delimiter)
+			rows_iter = csv.reader(resp.iter_lines(decode_unicode=True), delimiter=csv_delimiter)
+
+		for row in rows_iter:
+			yield row
 
 
 # print debugging info for networks request called with requests
