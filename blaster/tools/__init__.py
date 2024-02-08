@@ -1779,24 +1779,20 @@ def all_bases(cls):
 	)
 
 
-def read_rows_from_url(url, csv_delimiter=","):
+def read_rows_from_url(url, csv_delimiter=",") -> iter:
 	with requests.get(url, stream=True) as resp:
-		rows_iter = None
 		if(url.endswith(".xlsx")):
 			xls_file = BytesIO()
-			for chunk in resp.iter_content(chunk_size=8192):
+			for chunk in resp.iter_content(chunk_size=_16KB_):
 				xls_file.write(chunk)  # unfortunately we read the whole file, may be we can cut off at 10MB or something
 			xls_file.seek(0)
 			excel_sheet = openpyxl.load_workbook(xls_file, read_only=True, data_only=True).active
-			rows_iter = excel_sheet.iter_rows(values_only=True)
+			return excel_sheet.iter_rows(values_only=True)
 		if(url.endswith(".xls")):
 			sheet = xlrd.open_workbook(file_contents=resp.content).sheet_by_index(0)
-			rows_iter = map(lambda cells: [repr(c.value) for c in cells], sheet.get_rows())
+			return map(lambda cells: [repr(c.value) for c in cells], sheet.get_rows())
 		else:
-			rows_iter = csv.reader(resp.iter_lines(decode_unicode=True), delimiter=csv_delimiter)
-
-		for row in rows_iter:
-			yield row
+			return csv.reader(resp.iter_lines(decode_unicode=True), delimiter=csv_delimiter)
 
 
 # print debugging info for networks request called with requests
