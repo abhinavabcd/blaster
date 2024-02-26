@@ -6,7 +6,8 @@ import random
 import ujson as json
 from blaster.tools import get_time_overlaps, retry, \
 	ExpiringCache, create_signed_value, decode_signed_value, \
-	submit_background_task, background_task, ignore_exceptions
+	submit_background_task, background_task, ignore_exceptions, \
+	ASSERT_RATE_PER_MINUTE, RateLimitingException
 from blaster.tools.sanitize_html import HtmlSanitizedDict, HtmlSanitizedList
 from datetime import datetime, timedelta
 from blaster.utils.data_utils import parse_string_to_units, parse_string_to_int, \
@@ -194,6 +195,15 @@ class TestTools(unittest.TestCase):
 			tp.add_task(lambda i: runs.append(i), i)
 		tp.stop()
 		self.assertEqual(len(runs), 100)
+
+	def test_rate_limiting(self):
+		for i in range(60):
+			ASSERT_RATE_PER_MINUTE("test")
+		try:
+			ASSERT_RATE_PER_MINUTE("test")
+			self.assertTrue(False)  # should not happen
+		except Exception as ex:
+			self.assertTrue(isinstance(ex, RateLimitingException))
 
 	def test_find(self):
 		from blaster.tools import find_nth

@@ -884,7 +884,6 @@ class Model(object):
 		cls,
 		_query,
 		sort=None,
-		projection=None,
 		offset=None,
 		limit=None,
 		force_primary=False,
@@ -1077,6 +1076,7 @@ class Model(object):
 
 			_start_time = time.time()
 
+			projection = kwargs.get("projection")
 			ret = _collection.find(_query, **kwargs)
 			if(offset):  # from global arg
 				ret = ret.skip(offset)

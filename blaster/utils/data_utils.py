@@ -28,13 +28,11 @@ INR_EXCHANGE_RATE = {
 }
 
 INR_EXCHANGE_RATE["INR"] = 1  # this is the base
-INR_EXCHANGE_RATE["APP_CURRENCY"] = 1  # this is the base
-INR_EXCHANGE_RATE["ROUTE"] = 1  # legacy
-INR_EXCHANGE_RATE["POINTS"] = 1000  # legacy
 
 # update currency aliases
 for i, j in _currency_aliases.items():
 	INR_EXCHANGE_RATE[i] = INR_EXCHANGE_RATE[j]
+
 
 def reload_exchange_rates():
 	# can use

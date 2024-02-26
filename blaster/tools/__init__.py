@@ -1881,6 +1881,34 @@ def NON_NULL(*args):
 	return None
 
 
+# RATE LIMITING
+class RateLimitingException(Exception):
+	pass
+
+
+cache_by_rate_limiting_type = {}
+
+
+def ASSERT_RATE_PER_MINUTE(key, count=60, _type=""):
+	cache = cache_by_rate_limiting_type.get(_type)
+	if(not cache):
+		cache = cache_by_rate_limiting_type[_type] \
+			= ExpiringCache(1000000, ttl=10 * 60 * 1000)
+
+	# rate limit the key
+	now_millis = cur_ms()
+	if(
+		not (rpm := cache.get(key))
+		or rpm["last"] < now_millis - MILLIS_IN_MINUTE
+	):
+		rpm = {"c": 0, "last": now_millis}
+		cache[key] = rpm
+
+	rpm["c"] += 1
+	if(rpm["c"] > count):
+		raise RateLimitingException(f"Rate limit exceeded for {key}")
+
+
 def set_requests_default_args(**_kwargs):
 	import requests
 	from requests.adapters import HTTPAdapter

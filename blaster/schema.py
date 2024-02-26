@@ -16,11 +16,7 @@ class BlasterSchemaTypeError(TypeError):
 		super().__init__(data)
 
 
-def raise_exception(msg):
-	raise Exception(msg)
-
-
-def TYPE_ERR(msg):
+def RAISE_TYPE_ERROR(msg):
 	raise BlasterSchemaTypeError(msg)
 
 
@@ -430,7 +426,7 @@ def schema(x, _default=_OBJ_END_):
 		_schema, _validator = schema(x._types[0])
 		_schema["required"] = True
 		return _schema, (
-			lambda x: _validator(x) if x else TYPE_ERR("field is required")
+			lambda x: _validator(x) if x else RAISE_TYPE_ERROR("field is required")
 		)
 
 	elif(isinstance(x, type) and issubclass(x, Object) and x != Object):

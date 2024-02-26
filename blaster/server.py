@@ -863,15 +863,6 @@ class App:
 			request_path \
 				= req.path \
 				= _request_line[: _http_protocol_index]
-			# special issue, seeing request path will full domain name
-			if(request_path.startswith("http")):
-				if(
-					request_path.startswith("https://")
-					or request_path.startswith("http://")
-				):
-					_index = request_path.index("/", 8)
-					if(_index != -1):
-						request_path = request_path[_index:]
 
 			# http_version = _request_line[_http_protocol_index + 1:]
 			query_start_index = request_path.find("?")
