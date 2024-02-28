@@ -517,7 +517,8 @@ class App:
 				if(len(handler) < 2 or len(handler) > 3):
 					continue
 				handlers_with_methods.append({
-					"regex": handler[0], "func": handler[1], "methods": ("GET",)
+					"regex": handler[0], "func": handler[1],
+					"methods": ("GET", "HEAD") if len(handler) <= 2 else handler[2]
 				})
 			elif(isinstance(handler, dict)):
 				_handler = {"methods": ("GET", "POST")}  # defaults
@@ -1073,9 +1074,11 @@ class App:
 				# resp.3.3 send content length and body
 				content_length = 0
 				if(body):
+					content_length = len(body)
 					# finalize all the headers
-					buffered_socket.sendb(b'Content-Length: ', str(content_length := len(body)), b'\r\n\r\n')
-					buffered_socket.sendb(body)
+					buffered_socket.sendb(b'Content-Length: ', str(content_length), b'\r\n\r\n')
+					if(request_type != "HEAD"):
+						buffered_socket.sendb(body)
 				else:
 					buffered_socket.sendb(b'Content-Length: 0', b'\r\n\r\n')
 
