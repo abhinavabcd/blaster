@@ -199,6 +199,14 @@ class Array:
 		return Array(keys)
 
 
+class Set(Array):
+	def __init__(self, _types, default=_OBJ_END_, _name=None):
+		super(self).__init__(_types, default, _name)
+		self.validate = lambda e: set(y) if ((y := self.validate(e)) is not None) else None
+
+	def __getitem__(self, *keys):
+		return Set(keys)
+
 # Type definitions:
 # - Object
 #  {"a": b, 1: 2...}
@@ -547,6 +555,15 @@ def schema(x, _default=_OBJ_END_):
 			x._schema_["default"] = _default
 		return x._schema_, x.validate
 
+	elif(isinstance(x, Set)):  # Array(_types)
+		if(_default is not _OBJ_END_):
+			x._default = _default
+			x._schema_["default"] = _default
+		return (
+			x._schema_,
+			lambda s: set(y) if ((y := x.validate(s)) is not None) else None
+		)
+
 	elif(isinstance(x, Array)):  # Array(_types)
 		if(_default is not _OBJ_END_):
 			x._default = _default
@@ -580,6 +597,10 @@ def schema(x, _default=_OBJ_END_):
 		# make a copy if default exists
 		x = Array(None, default=_default)
 		return x._schema_, x.validate
+
+	elif(x == set):  # genric
+		x = Array(None, default=_default)
+		return x._schema_, lambda s: set(y) if ((y := x.validate(s)) is not None) else None
 
 	elif(x == dict or x == _Dict):  # generic without any attributes
 		x = _Dict(None, None, default=_default)
