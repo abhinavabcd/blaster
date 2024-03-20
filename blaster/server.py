@@ -507,7 +507,7 @@ class App:
 	def start(self, port=80, handlers=[], **ssl_args):
 		# sort descending order of the path lengths
 		self.route_handlers.sort(
-			key=functools.cmp_to_key(lambda x, y: len(y["regex"]) - len(x["regex"]))
+			key=lambda x: (-x["regex"].count("/"), x["regex"].split("/")),
 		)  # reverse sort by length
 
 		# all additional handlers go the bottom of the current list

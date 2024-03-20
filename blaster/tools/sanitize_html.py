@@ -1,4 +1,7 @@
-import html
+def html_escape(s):
+	s = s.replace("<", "&lt;")
+	s = s.replace(">", "&gt;")
+	return s
 
 
 # custom containers ##########
@@ -6,10 +9,10 @@ import html
 # the idea is to wrap them to sanitizeContainers, and escapt them while retrieving
 # rather than during inserting/parsing stage
 class HtmlSanitizedSetterGetter(object):
-	def __getitem__(self, k, escape_html=True, escape_quotes=False):
+	def __getitem__(self, k, escape_html=True):
 		val = super().__getitem__(k)
 		if(escape_html and isinstance(val, str)):
-			return html.escape(val, quote=escape_quotes)
+			return html_escape(val)
 		elif(isinstance(val, dict)):
 			if(isinstance(val, HtmlSanitizedDict)):
 				return val
@@ -23,7 +26,7 @@ class HtmlSanitizedSetterGetter(object):
 		return val
 
 	def __str__(self):
-		return f"sanitized_{html.escape(super().__str__(), quote=False)}"
+		return f"sanitized_{html_escape(super().__str__())}"
 
 
 class HtmlSanitizedList(HtmlSanitizedSetterGetter, list):
@@ -36,10 +39,9 @@ class HtmlSanitizedList(HtmlSanitizedSetterGetter, list):
 		# unoptimized but for this it's okay, always returns sanitized one
 		return map(self.__getitem__, range(len(self)))
 
-	def at(self, k, escape_html=True, escape_quotes=False):
+	def at(self, k, escape_html=True):
 		return self.__getitem__(
 			k,
-			escape_quotes=escape_quotes,
 			escape_html=escape_html
 		)
 
@@ -55,12 +57,11 @@ class HtmlSanitizedDict(HtmlSanitizedSetterGetter, dict):
 			self.update(kwargs)
 
 	# can pass escape_html=false if you want raw data
-	def get(self, key, default=None, escape_html=True, escape_quotes=False):
+	def get(self, key, default=None, escape_html=True):
 		try:
 			val = self.__getitem__(
 				key,
 				escape_html=escape_html,
-				escape_quotes=escape_quotes
 			)
 			return val
 		except KeyError:
