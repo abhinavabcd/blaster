@@ -217,6 +217,21 @@ class TestListAndDict(unittest.TestCase):
         a.commit()
         self.assertEqual(a._original_doc.get("h"), None)
 
+    def test_conflicting_path_updates(self):
+        a = AModel(a=14)
+        a.h = {"a": {"b": {"c": 1}}}
+        a.commit()
+
+        a.h["a"]["b"]["c"] = 2
+        a.h["a"]["b"] = {"d": 3}
+        print(a._set_query_updates)
+        a.commit()
+        self.assertDictEqual(a.h, {"a": {"b": {"d": 3}}})
+
+        p = a.h["a"].copy()
+        p["b"]["c"] = 1
+
+        self.assertDictEqual(a._set_query_updates, {})
 
 
 class TestSnippets(unittest.TestCase):

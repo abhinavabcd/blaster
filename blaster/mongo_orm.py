@@ -1,4 +1,3 @@
-from os import environ
 import inspect
 import json
 import heapq
@@ -15,16 +14,16 @@ from itertools import chain
 from collections import OrderedDict
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError, OperationFailure
-from pymongo import ReturnDocument, ReadPreference
-from .tools import ExpiringCache, all_subclasses, all_bases, \
-	cur_ms, list_diff2, batched_iter, set_by_key_list, _OBJ_END_
+from pymongo import ReturnDocument
+from .tools import all_subclasses, all_bases, \
+	cur_ms, list_diff2, batched_iter, _OBJ_END_
 from .config import IS_DEV, MONGO_WARN_MAX_RESULTS_RATE, \
 	MONGO_MAX_RESULTS_AT_HIGH_SCAN_RATE, \
 	MONGO_WARN_MAX_QUERY_RESPONSE_TIME_SECONDS, \
 	DEBUG_PRINT_LEVEL, IS_TEST
 from gevent.threading import Thread
 from gevent import time
-from .logging import LOG_WARN, LOG_SERVER, LOG_ERROR, LOG_DEBUG
+from .logging import LOG_WARN, LOG_ERROR, LOG_DEBUG
 
 _loading_errors = {}
 
@@ -59,8 +58,18 @@ def str_validator(_attr, val, obj):
 	return val
 
 
+def dict_validator(_attr, val, obj):
+	return val if val is not None else {}
+
+
+def list_validator(_attr, val, obj):
+	return val if val is not None else []
+
+
 DEFAULT_VALIDATORS = {
-	str: str_validator
+	str: str_validator,
+	dict: dict_validator,
+	list: list_validator
 }
 
 
@@ -81,25 +90,25 @@ __all_models__ = {}
 
 
 class MongoList(list):
-	_initializing = True
+	_is_local = True
 	_model_obj = None
 	path = ""  # empty string becuase it doesn't break pickling
 
 	def __init__(self, _model_obj, path, initial_value):
-		self._initializing = True
+		self._is_local = True  # initially true so __setitem__ doesn't update db query
 		self._model_obj = _model_obj
 		self.path = path
 		if(initial_value):
 			for item in initial_value:
 				self.append(item)
-		self._initializing = _model_obj._is_new_  # Hack for new object
+		self._is_local = _model_obj._is_new_  # Hack for new object
 		if(_model_obj._is_new_):
 			_model_obj._if_non_empty_set_query_update[path] = self
 
 	def __setitem__(self, k, v):
-		if(not self._initializing):
+		if(not self._is_local):
 			self._model_obj._set_query_updates[self.path + "." + str(k)] = v
-		if(self._initializing):
+		else:
 			# recursively create custom dicts/list when
 			# loading object from db
 			if(isinstance(v, dict)):
@@ -138,7 +147,7 @@ class MongoList(list):
 				"can only remove first or last elements, supported arg is 0 or None"
 			)
 
-		if(not self._initializing):
+		if(not self._is_local):
 			_pop = self._model_obj._other_query_updates.get("$pop")
 			if(_pop is None):
 				self._model_obj._other_query_updates["$pop"] = _pop = {}
@@ -151,7 +160,7 @@ class MongoList(list):
 		return ret
 
 	def insert(self, pos, item):
-		if(not self._initializing):
+		if(not self._is_local):
 			_push = self._model_obj._other_query_updates.get("$push")
 			if(_push is None):
 				self._model_obj._other_query_updates["$push"] = _push = {}
@@ -166,7 +175,7 @@ class MongoList(list):
 		super(MongoList, self).insert(pos, item)
 
 	def append(self, item):
-		if(self._initializing):
+		if(self._is_local):
 			if(isinstance(item, dict)):
 				item = MongoDict(self._model_obj, self.path + "." + str(len(self)), item)
 			elif(isinstance(item, list)):
@@ -174,7 +183,7 @@ class MongoList(list):
 
 		super(MongoList, self).append(item)
 
-		if(not self._initializing):
+		if(not self._is_local):
 			_push = self._model_obj._other_query_updates.get("$push")
 			if(_push is None):
 				_push = self._model_obj._other_query_updates["$push"] = {}
@@ -192,27 +201,36 @@ class MongoList(list):
 	def clear(self):
 		super().clear()
 		self._model_obj._set_query_updates[self.path] = self
-		self._initializing = True  # Hack for new object
+		self._is_local = True  # Hack for new object
+
+	def copy(self) -> list:
+		ret = []
+		for i in self:
+			if(isinstance(i, (MongoList, MongoDict))):
+				ret.append(i.copy())
+			else:
+				ret.append(i)
+		return ret
 
 
 class MongoDict(dict):
-	_initializing = True
+	_is_local = True
 	_model_obj = None
 	path = ""  # empty string becuase it doesn't break pickling
 
 	def __init__(self, _model_obj, path, initial_value):
-		self._initializing = True
+		self._is_local = True   # initialy starts as local object while initializing
 		self._model_obj = _model_obj
 		self.path = path
 		if(initial_value):
 			self.update(initial_value)
-		self._initializing = _model_obj._is_new_  # Hack for new object
+		self._is_local = _model_obj._is_new_  # Hack for new object
 		if(_model_obj._is_new_):
 			_model_obj._if_non_empty_set_query_update[path] = self
 
 	def __setitem__(self, k, v):
-		if(not self._initializing):
-			self._model_obj._set_query_updates[self.path + "." + str(k)] = v
+		if(not self._is_local):
+			self._model_obj._set_query_updates_with_no_conflicts(self.path + "." + str(k), v)
 		else:
 			# recursively create custom dicts/list when
 			# loading object from db
@@ -232,7 +250,7 @@ class MongoDict(dict):
 		if(popped_val is _OBJ_END_):
 			return default
 		# if not initializing and has value set remove it form mongo
-		elif(not self._initializing):
+		elif(not self._is_local):
 			new_path = self.path + "." + str(k)
 			_unset = self._model_obj._other_query_updates.get("$unset")
 			if(not _unset):
@@ -254,8 +272,17 @@ class MongoDict(dict):
 
 	def clear(self):
 		super().clear()
-		self._model_obj._set_query_updates[self.path] = self
-		self._initializing = True  # Hack for new object
+		self._model_obj._set_query_updates_with_no_conflicts(self.path, self)  # self as it's already a mongo dict
+		self._is_local = True  # Hack for new object
+
+	def copy(self) -> dict:
+		ret = {}
+		for k, v in self.items():
+			if(isinstance(v, (MongoList, MongoDict))):
+				ret[k] = v.copy()
+			else:
+				ret[k] = v
+		return ret
 
 
 # utility function to cache and return a session for transaction
@@ -476,7 +503,7 @@ class Model(object):
 			else:  # initialized object
 				# check with validator
 				_attr_validator = _attr_obj._validator
-				if(_attr_validator):
+				if(_attr_validator is not None):
 					v = _attr_validator(_attr_obj, v, self)
 				self._set_query_updates[k] = v
 
@@ -531,7 +558,7 @@ class Model(object):
 				# if there is a default value
 				if(_default is not _OBJ_END_):
 					if(isinstance(_default, types.FunctionType)):
-						_default = _default()
+						_default = _default()  # call the function
 					if(attr_obj._type == dict):
 						_default = dict(_default)  # copy
 					elif(attr_obj._type == list):
@@ -571,6 +598,23 @@ class Model(object):
 		# update in cache
 		if(cls._cache_):
 			cls._cache_[self.pk_tuple()] = doc
+
+	def _set_query_updates_with_no_conflicts(self, path, v):
+		# if there is a subpath of this path, remove it from updates
+		conflicting_keys_updates_to_remove = None
+		path_len = len(path)
+		for _path in self._set_query_updates.keys():
+			if(path_len < len(_path) and _path.startswith(path)):  # prefix
+				if(conflicting_keys_updates_to_remove is None):
+					conflicting_keys_updates_to_remove = []
+				conflicting_keys_updates_to_remove.append(_path)
+
+		# remove conflicting keys if found
+		if(conflicting_keys_updates_to_remove is not None):
+			for _path in conflicting_keys_updates_to_remove:
+				del self._set_query_updates[_path]
+
+		self._set_query_updates[path] = v
 
 	'''given a shard key, says which database node it resides in'''
 	@classmethod

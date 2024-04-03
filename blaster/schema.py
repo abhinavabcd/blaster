@@ -1,9 +1,8 @@
-import typing
 import re
 from base64 import b64decode
 from datetime import datetime
 import ujson as json
-from typing import get_type_hints
+from typing import get_type_hints, get_args
 from functools import partial
 
 from blaster.tools import _OBJ_END_, _16KB_
@@ -224,6 +223,7 @@ class Set(Array):
 
 # - Dict[Str, Optional[Str, Int]]
 
+
 class _Dict:
 	def __init__(self, k_type, val_type, default=_OBJ_END_, _name=None):
 		self.key_ype_validator = schema(k_type)[1]
@@ -248,7 +248,7 @@ class _Dict:
 			e[k] = self.val_type_validator(e[k])
 		return e
 
-	def __getitem__(self, *kv):
+	def __getitem__(self, kv):
 		return _Dict(
 			str if len(kv) < 2 else kv[-2],
 			str if len(kv) < 1 else kv[-1]
@@ -384,7 +384,7 @@ def item_validation(e, simple_types=(), complex_validations=(), nullable=True):
 	if(nullable):
 		return None
 
-	raise TypeError("Cannot be none")
+	raise TypeError("Invalid value")
 
 
 def array_validation(_type, arr, simple_types=None, complex_validations=None, mix=False, nullable=True):
@@ -418,26 +418,33 @@ def array_validation(_type, arr, simple_types=None, complex_validations=None, mi
 
 
 # Array(str), Array((int, str), default=None), Array(Object), Array(Pet)
-# List[str, int]-> anyOf int, str
-# List[[str, int]] -> oneOf int, str
+# List[str, int] -> anyOf int, str
+# List[(str, int)] -> oneOf int, str
 
 # Object(id=int, name=str)
-# Dict[str, int]
+# Dict[str, int | str]
+
+UNION_TYPE = type(int | str)
+
 
 # given any instance/class, returns schema, _validation function
 def schema(x, _default=_OBJ_END_):
 
+	if(type(x) is UNION_TYPE):
+		x = tuple(get_args(x))
+
 	if(isinstance(x, _Optional)):
-		_schema, _validator = schema(x._types[0])
+		_schema, _validator = schema(x._types)
 		return _schema, _validator
+
 	if(isinstance(x, _Required)):
-		_schema, _validator = schema(x._types[0])
+		_schema, _validator = schema(x._types)
 		_schema["required"] = True
 		return _schema, (
 			lambda x: _validator(x) if x else RAISE_TYPE_ERROR("field is required")
 		)
 
-	elif(isinstance(x, type) and issubclass(x, Object) and x != Object):
+	if(isinstance(x, type) and issubclass(x, Object) and x != Object):
 		# Object types
 		ret = schema.defs.get(x.__name__)
 		if(ret):
@@ -454,23 +461,15 @@ def schema(x, _default=_OBJ_END_):
 			# pure type to instance of schema types
 			_default_value = x.__dict__.get(k, _OBJ_END_)  # declaration default
 			is_required = _default_value is _OBJ_END_
-
-			if(
-				_type.__module__ == 'typing'
-				and getattr(_type, "__origin__", None) == typing.Union
-				and getattr(_type, "__args__", None)
-			):
-				# union
-				_type = _type.__args__[0]
-				is_required = False
+			# unwrap
 			if(isinstance(_type, _Optional)):
 				# optional
-				_type = _type._types[0]
+				_type = _type._types
 				is_required = False
 
 			elif(isinstance(_type, _Required)):
 				# required
-				_type = _type._types[0]
+				_type = _type._types
 
 			_schema_and_validation = schema(_type, _default=_default_value)
 			if(_schema_and_validation):
@@ -501,7 +500,7 @@ def schema(x, _default=_OBJ_END_):
 		return x._schema_, x.validate
 
 	# special for tuples and list
-	elif(isinstance(x, (list, tuple))):  # x = [int, str]->oneof, (int, str)->anyof/mixed
+	elif(isinstance(x, (list, tuple))):  # x = [int, str]->oneof, (int, str) or int|str ->anyof/mixed
 		is_nullable = False
 		if(None in x):
 			x.pop(x.index(None))
