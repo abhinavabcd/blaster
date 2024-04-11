@@ -35,6 +35,9 @@ class HtmlSanitizedList(HtmlSanitizedSetterGetter, list):
 		super().__init__()
 		entries and self.extend(entries)
 
+	def raw(self):
+		return list(super().__iter__())
+
 	def __iter__(self):
 		# unoptimized but for this it's okay, always returns sanitized one
 		return map(self.__getitem__, range(len(self)))
@@ -55,6 +58,9 @@ class HtmlSanitizedDict(HtmlSanitizedSetterGetter, dict):
 			self.update(entries)
 		if(kwargs):
 			self.update(kwargs)
+
+	def raw(self):
+		return dict(super().__iter__())
 
 	# can pass escape_html=false if you want raw data
 	def get(self, key, default=None, escape_html=True):
