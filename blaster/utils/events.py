@@ -56,7 +56,7 @@ def broadcast_event(_id, *args, _n=-1, **kwargs):
 		if(set_arg_handled_count):
 			kwargs["handled_count"] = count
 		ret = listener(*args, **kwargs)
-		if(ret != NOT_HANDLING):
+		if(ret is not NOT_HANDLING):
 			count += 1
 
 		listeners_ret_values.append(ret)
