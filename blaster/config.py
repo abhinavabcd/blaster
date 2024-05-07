@@ -17,7 +17,7 @@ class Config:
 
     def __init__(self):
         self.frozen_keys = {k: v for k, v in vars(env).items() if not k.startswith("_")}
-        self._config = dict(self.frozen_keys)
+        self._config = {**os.environ, **self.frozen_keys}
 
     def load(self, *paths):
         import yaml
@@ -65,8 +65,8 @@ class Config:
     def __getattr__(self, key):
         if(key not in self._config):
             if(key.startswith("__")):
-                return getattr(_this_, key, None)
-            elif(not self._config.get("BLASTER_FORK_ID")):  # None or 0
+                return getattr(_this_, key, None)  # for internal attributes
+            elif(not self._config.get("BLASTER_FORK_ID")):  # PRINT THESE ONLY ONCE
                 caller_frame = inspect.stack()[1]
                 if(not caller_frame[1].startswith("<frozen")):  # <frozen importlib._bootstrap>
                     print("MISSING CONFIG Key#: {} {}:{}".format(key, caller_frame[1], caller_frame[2]))
