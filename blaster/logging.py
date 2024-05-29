@@ -1,9 +1,9 @@
-import os
-# import socket
 import sys
 import time
 from datetime import datetime
 import ujson as json
+from time import time_ns
+from gevent import local
 from gevent.queue import Queue
 from gevent.threading import Thread
 from logging import DEBUG, INFO, WARN, ERROR
@@ -11,6 +11,21 @@ from .utils import events
 from .env import LOG_LEVEL, LOG_APP_NAME, LOG_APP_VERSION, \
 	CONSOLE_LOG_RAW_JSON
 from . import req_ctx
+
+
+class __LogCtx(local.local):
+	def __init__(self, **kwargs):
+		self.__dict__.update({"_trace_id": None})
+
+	@property
+	def trace_id(self):  # generate a trace id when not present
+		if((_trace_id := self._trace_id) is None):
+			_trace_id = self._trace_id = str(time_ns())
+		return _trace_id
+
+
+log_ctx = __LogCtx()
+
 
 # CRITICAL-50 ERROR-40  WARNING-30  INFO-20  DEBUG-10  NOTSET-0
 
@@ -174,7 +189,8 @@ def LOG(level, log_type, **kwargs):
 		"app": LOG_APP_NAME,
 		"version": LOG_APP_VERSION,
 		"timestamp": req_ctx.timestamp or int(1000 * time.time()),
-		"payload": kwargs
+		"payload": kwargs,
+		"trace_id": log_ctx.trace_id
 	}
 	# blaster request
 	if(req := req_ctx.req):

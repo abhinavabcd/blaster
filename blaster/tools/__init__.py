@@ -41,8 +41,7 @@ from ..websocket._core import WebSocket
 from ..env import DEBUG_PRINT_LEVEL
 from ..utils.xss_html import XssHtml
 from ..utils import events
-from ..logging import LOG_WARN, LOG_ERROR, LOG_DEBUG
-
+from ..logging import LOG_WARN, LOG_ERROR, LOG_DEBUG, log_ctx
 # CUSTOM IMPORTS
 try:
 	import openpyxl
@@ -1628,7 +1627,8 @@ class PartitionedTasksRunner:
 	def worker(self, _queue):
 		LOG_DEBUG("partitioned_tasks_runner", msg="tasks runner worker started")
 		while(_task := _queue.get()):  # idenfinitely waits for task until None (flushed)
-			partition_key, queued_at, func, args, kwargs = _task
+			partition_key, queued_at, log_trace_id, func, args, kwargs = _task
+			log_ctx._trace_id = log_trace_id  # set the trace id
 			# call the function
 			now_millis = cur_ms()
 			if((delay := now_millis - queued_at) > 4000):
@@ -1689,7 +1689,7 @@ class PartitionedTasksRunner:
 			raise Exception("maximum backlog in patition reached")
 
 		# submit task to the partitioned queue
-		pt_queue.put((partition_key, now_millis, func, args, kwargs))
+		pt_queue.put((partition_key, now_millis, log_ctx.trace_id, func, args, kwargs))
 
 
 partitioned_tasks_runner = PartitionedTasksRunner()
