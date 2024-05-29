@@ -1090,14 +1090,17 @@ class ThreadPool:
 			except Exception as ex:
 				# An exception happened in this thread
 				LOG_ERROR(
-					"blaster_worker_thread",
+					f"threadpool:{self.name}",
 					exception_str=str(ex),
-					stacktrace_string=traceback.format_exc()
+					stacktrace_string=traceback.format_exc(),
+					args=str(args),
+					kwargs=str(kargs)
 				)
 
-	def __init__(self, num_threads):
+	def __init__(self, num_threads, name="default"):
 		self.tasks = Queue(num_threads)
 		self.worker_threads = []
+		self.name = name
 		for _ in range(num_threads):
 			thread = Thread(target=self.worker)
 			self.worker_threads.append(thread)
