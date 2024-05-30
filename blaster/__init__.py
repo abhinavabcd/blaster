@@ -45,6 +45,7 @@ def blaster_exit():
 
 # sigint event broadcast
 signal_handler(signal.SIGINT, blaster_exit)
+signal_handler(signal.SIGTERM, blaster_exit)
 
 # load default config, scan the stack and load
 stack = inspect.stack()
