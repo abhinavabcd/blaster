@@ -84,10 +84,10 @@ class TestSanitization(unittest.TestCase):
 class TestAuth(unittest.TestCase):
 	def test(self):
 		secret = "ijkl"
-		val = create_signed_value("abcd", "efgh", secret).decode('utf-8')
-		self.assertEqual(decode_signed_value("abcd", val, secret), b"efgh")
+		val = create_signed_value("abcd", "efgh", secret)
+		self.assertEqual(decode_signed_value("abcd", val, secret), "efgh")
 
-		val = create_signed_value("abcd", "efgh2", secret, -1).decode('utf-8')
+		val = create_signed_value("abcd", "efgh2", secret, -1)
 		self.assertEqual(decode_signed_value("abcd", val, secret), None)
 
 		self.assertEqual(decode_signed_value("abcd", "asdasda", secret), None)

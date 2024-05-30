@@ -771,16 +771,16 @@ def hmac_hexdigest(secret, *parts) -> bytes:
 	return utf8(hash.hexdigest())
 
 
-def create_signed_value(name, value, secret, expires_in=31 * SECONDS_IN_DAY) -> bytes:
+def create_signed_value(name, value, secret, expires_in=31 * SECONDS_IN_DAY) -> str:
 	expires_at = utf8(str(int(time.time() + expires_in)))
 	value = base64.b64encode(utf8(value))  # hide value
 	# ~ to prevent changing value, timestamp but value + timestamp being same
 	signature = hmac_hexdigest(secret, name, value, b"~", expires_at)
 	signed_value = b"|".join([value, b"~", expires_at, signature])
-	return signed_value
+	return signed_value.decode("utf-8")
 
 
-def decode_signed_value(name, value, secret, expiry_check=True) -> bytes:
+def decode_signed_value(name, value, secret, expiry_check=True) -> str:
 	if not value:
 		return None
 	_parts = utf8(value).split(b"|")
@@ -797,7 +797,7 @@ def decode_signed_value(name, value, secret, expiry_check=True) -> bytes:
 		if(time.time() > expires_at):
 			return None
 	try:
-		return base64.b64decode(_value)
+		return base64.b64decode(_value).decode("utf-8")
 	except Exception:
 		return None
 
