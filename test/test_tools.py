@@ -85,7 +85,10 @@ class TestAuth(unittest.TestCase):
 	def test(self):
 		secret = "ijkl"
 		val = create_signed_value("abcd", "efgh", secret)
-		self.assertEqual(decode_signed_value("abcd", val, secret), "efgh")
+		self.assertEqual(decode_signed_value("abcd", val, secret).decode(), "efgh")
+
+		val = create_signed_value("abcd", b"efgh2", secret)
+		self.assertEqual(decode_signed_value("abcd", val, secret), b"efgh2")
 
 		val = create_signed_value("abcd", "efgh2", secret, -1)
 		self.assertEqual(decode_signed_value("abcd", val, secret), None)

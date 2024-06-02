@@ -740,56 +740,38 @@ def nsplit(_str, delimiter, n):
 	return parts
 
 
-# move it to seperate module ?
-# copied from internet sha1 token encode - decode module
-if hasattr(hmac, 'compare_digest'):  # python 3.3
-	hmac_compare_digest = hmac.compare_digest
-else:
-	def hmac_compare_digest(a, b):
-		if len(a) != len(b):
-			return False
-		result = 0
-		if isinstance(a[0], int):  # python3 byte strings
-			for x, y in zip(a, b):
-				result |= x ^ y
-		else:  # python2
-			for x, y in zip(a, b):
-				result |= ord(x) ^ ord(y)
-		return result == 0
-
-
 def utf8(value) -> bytes:
 	if(isinstance(value, bytes)):
 		return value
 	return value.encode("utf-8")
 
 
-def hmac_hexdigest(secret, *parts) -> bytes:
+def hmac_hexdigest(secret, *parts) -> str:
 	hash = hmac.new(utf8(secret), digestmod=hashlib.sha256)
 	for part in parts:
 		hash.update(utf8(part))
-	return utf8(hash.hexdigest())
+	return hash.hexdigest()
 
 
-def create_signed_value(name, value, secret, expires_in=31 * SECONDS_IN_DAY) -> str:
-	expires_at = utf8(str(int(time.time() + expires_in)))
-	value = base64.b64encode(utf8(value))  # hide value
+def create_signed_value(name, value: bytes | str, secret, expires_in=31 * SECONDS_IN_DAY) -> str:
+	expires_at = str(int(time.time() + expires_in))
+	value = base64.b64encode(utf8(value)).decode()  # hide value
 	# ~ to prevent changing value, timestamp but value + timestamp being same
-	signature = hmac_hexdigest(secret, name, value, b"~", expires_at)
-	signed_value = b"|".join([value, b"~", expires_at, signature])
-	return signed_value.decode("utf-8")
+	signature = hmac_hexdigest(secret, name, value, "~", expires_at)
+	signed_value = "|".join([value, "~", expires_at, signature])
+	return signed_value
 
 
-def decode_signed_value(name, value, secret, expiry_check=True) -> str:
-	if not value:
+def decode_signed_value(name, signed_value, secret, expiry_check=True) -> bytes:
+	if not signed_value:
 		return None
-	_parts = utf8(value).split(b"|")
+	_parts = signed_value.split("|")
 	if len(_parts) < 3:
 		return None
 	_value, *parts, expires_at, _signature = _parts
 	# check signature matches or not
 	signature = hmac_hexdigest(secret, name, _value, *parts, expires_at)
-	if not hmac_compare_digest(_signature, signature):
+	if _signature != signature:
 		return None
 
 	if(expiry_check):
@@ -797,7 +779,7 @@ def decode_signed_value(name, value, secret, expiry_check=True) -> str:
 		if(time.time() > expires_at):
 			return None
 	try:
-		return base64.b64decode(_value).decode("utf-8")
+		return base64.b64decode(_value)
 	except Exception:
 		return None
 
