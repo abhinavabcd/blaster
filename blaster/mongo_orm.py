@@ -1353,7 +1353,7 @@ class Model(object):
 					raise(ex)  # re reaise
 
 				# get original doc from mongo shard
-				doc_in_db = primary_shard_collection.find_one(self.pk())
+				doc_in_db = primary_shard_collection.find_one(ex.details["keyValue"])
 				self.reset_and_update_cache(doc_in_db)
 				IS_DEV \
 					and DEBUG_PRINT_LEVEL > 8 \
