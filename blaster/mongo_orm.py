@@ -6,7 +6,7 @@ import pymongo
 from functools import cmp_to_key
 from contextlib import ExitStack
 import metrohash
-from typing import TypeVar, Iterator
+from typing import TypeVar, Iterator, Type
 # from pymongo.read_concern import ReadConcern
 # from pymongo.write_concern import WriteConcern
 from bson.objectid import ObjectId
@@ -355,7 +355,7 @@ class Model(object):
 	# YourTable.get({"p": "q", "r": "s"}) # this will kick in cache use
 	# YourTable.get(SOMEID) # this will kick in cache use
 	@classmethod
-	def get(cls: ModelType, _pk=None, use_cache=True, **kwargs) -> ModelType:
+	def get(cls: Type[ModelType], _pk=None, use_cache=True, **kwargs) -> ModelType:
 		if(_pk is not None):
 			is_single_item = False
 			_pks = None
