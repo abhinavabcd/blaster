@@ -242,6 +242,26 @@ def set_by_key_list(d, key_list, value):
 	d[key_list[-1]] = value
 
 
+def get_by_key_path(d, key_path):
+	if(isinstance(key_path, str)):
+		key_path = key_path.split(".")
+	if(not key_path):
+		return d
+	key = key_path[0]
+	if(key == "[]"):
+		if(isinstance(d, list)):
+			ret = []
+			for val in d:
+				ret.append(get_by_key_path(val, key_path[1:]))
+			return ret
+		return None
+	elif(isinstance(d, dict)):
+		return get_by_key_path(d.get(key), key_path[1:])
+	elif(isinstance(d, list)):
+		return get_by_key_path(d[int(key)], key_path[1:])
+	return None
+
+
 def date2string(date):
 	return date.isoformat()
 
