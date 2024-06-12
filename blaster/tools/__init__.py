@@ -242,24 +242,32 @@ def set_by_key_list(d, key_list, value):
 	d[key_list[-1]] = value
 
 
-def get_by_key_path(d, key_path):
+def get_by_key_path(d, key_path, i=0, default=None):
 	if(isinstance(key_path, str)):
-		key_path = key_path.split(".")
-	if(not key_path):
+		key_path = key_path.replace("[", ".[").replace("..", ".").split(".")
+	if(i >= len(key_path)):
 		return d
-	key = key_path[0]
-	if(key == "[]"):
+	key = key_path[i]
+	if(key[0] == "["):
 		if(isinstance(d, list)):
+			specific_indexes = [int(x) for x in key[1:-1].split(",") if x]
 			ret = []
-			for val in d:
-				ret.append(get_by_key_path(val, key_path[1:]))
+			if(not specific_indexes):
+				for val in d:
+					ret.append(get_by_key_path(val, key_path, i + 1))
+			else:
+				for specific_index in specific_indexes:
+					if(specific_index < len(d)):
+						ret.append(get_by_key_path(d[specific_index], key_path, i + 1))
 			return ret
-		return None
+		return default
 	elif(isinstance(d, dict)):
-		return get_by_key_path(d.get(key), key_path[1:])
+		return get_by_key_path(d.get(key), key_path, i + 1)
 	elif(isinstance(d, list)):
-		return get_by_key_path(d[int(key)], key_path[1:])
-	return None
+		key = int(key)
+		if(key < len(d)):
+			return get_by_key_path(d[int(key)], key_path, i + 1)
+	return default
 
 
 def date2string(date):
