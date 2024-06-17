@@ -539,12 +539,19 @@ def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False):
 
 def iter_time_overlaps(
 	a, b, include: list, exclude=None,
-	partial=False, tz_delta=timedelta(), milliseconds=False
+	partial=False, tz_delta=timedelta(),
+	milliseconds=False, interval=None
 ):
 	if(isinstance(include, str)):
 		include = include.split(",")
 	if(isinstance(exclude, str)):
 		exclude = exclude.split(",")
+
+	if(
+		interval is not None
+		and isinstance(interval, str)
+	):
+		interval = string2duration(interval)
 
 	buffer = []
 	heapq.heapify(buffer)
@@ -569,25 +576,39 @@ def iter_time_overlaps(
 				limit=1, partial=True, tz_delta=tz_delta
 			)
 		):
-			if(milliseconds):
-				yield (
-					int(date2timestamp(time_range[0]) * 1000),
-					int(date2timestamp(time_range[1]) * 1000),
-					*time_range[2:]
-				)
+			if(interval is not None):
+				start, end, params = time_range
+				while((_end := start + timedelta(seconds=interval)) <= end):
+					if(milliseconds):
+						yield (
+							int(date2timestamp(start) * 1000),
+							int(date2timestamp(_end) * 1000),
+							params
+						)
+					else:
+						yield (start, _end, params)
+					start = _end
 			else:
-				yield time_range
+				if(milliseconds):
+					yield (
+						int(date2timestamp(time_range[0]) * 1000),
+						int(date2timestamp(time_range[1]) * 1000),
+						*time_range[2:]
+					)
+				else:
+					yield time_range
 	return
 
 
 def get_time_overlaps(
 	a, b, include: list, exclude=None,
 	partial=False, tz_delta=timedelta(), milliseconds=False,
-	limit=10
+	limit=10, interval=None
 ):
 	iter = iter_time_overlaps(
 		a, b, include, exclude=exclude, partial=partial,
-		tz_delta=tz_delta, milliseconds=milliseconds
+		tz_delta=tz_delta, milliseconds=milliseconds,
+		interval=interval
 	)
 	ret = []
 	for i in range(limit):

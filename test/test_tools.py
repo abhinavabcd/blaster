@@ -207,6 +207,29 @@ class TestTools(unittest.TestCase):
 			]
 		)
 
+		self.assertEqual(
+			get_time_overlaps(
+				datetime(year=2022, month=6, day=19),
+				datetime(year=2022, month=6, day=25),
+				"Monday - wednesday 2:30 p.m - 6:30 p.m , 21/06/2022 - 24/06/2022 9:30 a.m to 12:30 p.m",
+				exclude=["22/06/2022 9:30 a.m"],
+				interval="2h"
+			),
+			[
+				(datetime(2022, 6, 20, 14, 30), datetime(2022, 6, 20, 16, 30), []),
+				(datetime(2022, 6, 20, 16, 30), datetime(2022, 6, 20, 18, 30), []),
+				(datetime(2022, 6, 21, 9, 30), datetime(2022, 6, 21, 11, 30), []),
+				(datetime(2022, 6, 21, 14, 30), datetime(2022, 6, 21, 16, 30), []),
+				(datetime(2022, 6, 21, 16, 30), datetime(2022, 6, 21, 18, 30), []),
+				# (datetime(2022, 6, 22, 9, 30), datetime(2022, 6, 22, 12, 30), []),
+				(datetime(2022, 6, 22, 14, 30), datetime(2022, 6, 22, 16, 30), []),
+				(datetime(2022, 6, 22, 16, 30), datetime(2022, 6, 22, 18, 30), []),
+				(datetime(2022, 6, 23, 9, 30), datetime(2022, 6, 23, 11, 30), []),
+				(datetime(2022, 6, 24, 9, 30), datetime(2022, 6, 24, 11, 30), []),
+			]
+		)
+
+
 	def test_thread_pool(self):
 		from blaster.tools import ThreadPool
 		tp = ThreadPool(5)
