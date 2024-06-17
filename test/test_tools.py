@@ -187,7 +187,24 @@ class TestTools(unittest.TestCase):
 				(datetime(2022, 6, 24, 14, 30), datetime(2022, 6, 24, 18, 30), []),
 				(datetime(2022, 6, 25, 9, 30), datetime(2022, 6, 25, 12, 30), [])
 			]
+		)
 
+		self.assertEqual(
+			get_time_overlaps(
+				datetime(year=2022, month=6, day=19),
+				datetime(year=2022, month=6, day=25),
+				"Monday - wednesday 2:30 p.m - 6:30 p.m , 21/06/2022 - 24/06/2022 9:30 a.m to 12:30 p.m",
+				exclude=["22/06/2022 9:30 a.m"]
+			),
+			[
+				(datetime(2022, 6, 20, 14, 30), datetime(2022, 6, 20, 18, 30), []),
+				(datetime(2022, 6, 21, 9, 30), datetime(2022, 6, 21, 12, 30), []),
+				(datetime(2022, 6, 21, 14, 30), datetime(2022, 6, 21, 18, 30), []),
+				# (datetime(2022, 6, 22, 9, 30), datetime(2022, 6, 22, 12, 30), []),
+				(datetime(2022, 6, 22, 14, 30), datetime(2022, 6, 22, 18, 30), []),
+				(datetime(2022, 6, 23, 9, 30), datetime(2022, 6, 23, 12, 30), []),
+				(datetime(2022, 6, 24, 9, 30), datetime(2022, 6, 24, 12, 30), []),
+			]
 		)
 
 	def test_thread_pool(self):

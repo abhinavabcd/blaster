@@ -358,15 +358,15 @@ DAYS_OF_WEEK = [
 ]
 
 
-def _bound_time(start, end, a, b, partial, params):
+def get_overlap(start, end, a, b, partial):
 	if(partial):
 		if(start >= a and start <= b):
-			return (start, (end if end < b else b), params)
+			return (start, (end if end < b else b))
 		elif(start <= a and a <= end):
-			return (a, (end if end < b else b), params)
+			return (a, (end if end < b else b))
 	else:
 		if(start >= a and end <= b):
-			return (start, end, params)
+			return (start, end)
 
 
 # tz_delta = local - UTC ( to dereive UTC times in current timezone)
@@ -379,17 +379,53 @@ def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False):
 	if(isinstance(b, int)):
 		b = timestamp2date(b)
 	x = x.strip()
-	date_matches = DATE_DD_MM_YYYY_REGEX.findall(x)
-	time_matches = [
-		[int(h or 0), int(m or 0), int(s or 0), am_pm.lower()]
-		for h, m, s, am_pm in TIME_REGEX.findall(x)
-	]
-	day_matches = list(
-		filter(
-			lambda x: DAYS_OF_WEEK.index(x) >= 0,
-			[x[m.start():m.end()].lower() for m in DAY_REGEX.finditer(x) or []]
+
+	time_matches = []
+	date_matches = []
+	day_matches = []
+
+	time_match_pos_list = []
+	date_match_pos_list = []
+	day_match_pos_list = []
+
+	# find all time matches
+	for match in TIME_REGEX.finditer(x):
+		h, m, s, am_pm = match.groups()
+		time_matches.append([int(h or 0), int(m or 0), int(s or 0), (am_pm or "").lower()])
+		time_match_pos_list.append(match.span())
+
+	# date matches
+	for match in DATE_DD_MM_YYYY_REGEX.finditer(x):
+		date_matches.append([int(x) for x in match.groups()])
+		date_match_pos_list.append(match.span())
+
+	# day matches
+	for match in DAY_REGEX.finditer(x):
+		day_str = x[match.start():match.end()].lower()
+		day_index = next((i for i, day in enumerate(DAYS_OF_WEEK) if day.startswith(day_str)), None)
+		if(day_index is not None):
+			day_matches.append(day_index)
+			day_match_pos_list.append(match.span())
+
+	# is it date-date | time-time or date time - date time
+	is_time_per_day = bool(time_match_pos_list and (
+		(
+			date_match_pos_list
+			and not get_overlap(
+				date_match_pos_list[0][0], date_match_pos_list[-1][0],
+				time_match_pos_list[0][0], time_match_pos_list[-1][0],
+				True
+			)
+		) or (
+			day_match_pos_list
+			and not get_overlap(
+				day_match_pos_list[0][0], day_match_pos_list[-1][0],
+				time_match_pos_list[0][0], time_match_pos_list[-1][0],
+				True
+			)
 		)
-	)
+	))
+
 	for time_match in time_matches:
 		if(time_match[-1] and time_match[-1][0] in ("a", "p")):
 			while(len(time_match) < 4):
@@ -434,63 +470,68 @@ def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False):
 		day, month, year, *_ = map(lambda x: int(x) if x else 0, date_matches[0])
 		if(year < 100):
 			year = 2000 + year
-		time_range_start = datetime(year=year, month=month, day=day) + offset_check_x
-		time_range_end = datetime(year=year, month=month, day=day) + offset_check_y
+		date_range_start = datetime(year=year, month=month, day=day)
 		if(len(date_matches) > 1):
 			day, month, year, *_ = map(lambda x: int(x) if x else 0, date_matches[1])
 			if(year < 100):
 				year = 2000 + year
-			time_range_end = datetime(year=year, month=month, day=day) + offset_check_y
+		date_range_end = datetime(year=year, month=month, day=day)
 
-		_ret = _bound_time(time_range_start - tz_delta, time_range_end - tz_delta, a, b, partial, params)
-		if(_ret):
-			yield _ret
+		if(is_time_per_day):  # date-date time-time
+			while(date_range_start <= date_range_end):
+				if(_ret := get_overlap(
+					date_range_start + offset_check_x - tz_delta, date_range_start + offset_check_y - tz_delta,
+					a, b, partial
+				)):
+					yield *_ret, params
+				date_range_start += timedelta(days=1)
+		else:  # date time - date time
+			_ret = get_overlap(
+				date_range_start + offset_check_x - tz_delta, date_range_end + offset_check_y - tz_delta,
+				a, b, partial
+			)
+			if(_ret):
+				yield *_ret, params
 
 	elif(day_matches):
-		start_day = DAYS_OF_WEEK.index(day_matches[0].lower())
-		if(start_day == -1):
-			return []
-		extra_offset_y = timedelta()
+		start_day = end_day = day_matches[0]
 		if(len(day_matches) > 1):
-			end_day = DAYS_OF_WEEK.index(day_matches[1].lower())
-			if(end_day == -1):
-				return []
-			if(end_day != start_day):
-				extra_offset_y = (
-					timedelta(hours=24) - offset_check_x  # next day
-					+ timedelta(
-						days=(
-							end_day - start_day
-							+ (7 if start_day > end_day else 0)
-							- (1 if offset_check_y != timedelta(0) else 0)
-						)
-					)
-				)
+			end_day = day_matches[1]
 
 		t = a
 		while(t <= b):
 			if(t.weekday() == start_day):
 				t_start_of_day = datetime(year=t.year, month=t.month, day=t.day)
-				_ret = _bound_time(
-					t_start_of_day + offset_check_x - tz_delta,
-					t_start_of_day + extra_offset_y + offset_check_y - tz_delta,
-					a, b, partial, params
-				)
-				if(_ret):
-					yield _ret
+				if(is_time_per_day):
+					for i in range(abs(end_day - start_day) + 1):
+						t2_start_of_day = t_start_of_day + timedelta(days=i)
+						if(_ret := get_overlap(
+							t2_start_of_day + offset_check_x - tz_delta,
+							t2_start_of_day + offset_check_y - tz_delta,
+							a, b, partial
+						)):
+							yield *_ret, params
+				else:
+					if(_ret := get_overlap(
+						t_start_of_day + offset_check_x - tz_delta,
+						t_start_of_day + timedelta(days=abs(end_day - start_day))
+							+ offset_check_y - tz_delta,
+						a, b, partial
+					)):
+						yield *_ret, params
 			t += timedelta(days=1)  # increment by 1 day and keep on checking
-	elif(time_matches):  # just times were given
+
+	elif(time_matches):  # ONLY TIMES
 		if(offset_check_y < offset_check_x):
 			offset_check_y += timedelta(days=1)
 		t_start_of_day = datetime(a.year, a.month, a.day)
 		while(t_start_of_day < b):
-			_ret = _bound_time(
+			if(_ret := get_overlap(
 				t_start_of_day + offset_check_x - tz_delta,
 				t_start_of_day + offset_check_y - tz_delta,
-				a, b, partial, params
-			)
-			if(_ret):
-				yield _ret
+				a, b, partial
+			)):
+				yield *_ret, params
 			t_start_of_day += timedelta(days=1)
 
 	return []
