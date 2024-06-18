@@ -549,9 +549,9 @@ class App:
 
 		regexes_map = {}  # cache/update/overwrite
 
-		# iterate smaller path to larger to fill the request_handlers map
+		# iterate larger to smaller path and fill the request_handlers map
 		# build request_handlers map => {regex: {GET: handler,...}...}
-		for handler in reversed(self.route_handlers):
+		for handler in self.route_handlers:
 			regex = handler["regex"]
 
 			# check and identify path params if any from regex
@@ -586,7 +586,6 @@ class App:
 
 			for method in handler["methods"]:
 				existing_regex_method_handlers[method.upper()] = handler
-
 			# infer arguments from the typing
 			func = handler["func"]
 			original_func = getattr(func, "_original", func)
@@ -636,9 +635,6 @@ class App:
 
 			# openapi docs
 			self.generate_openapi_doc(handler)
-
-		# longer paths match first, hence reversed
-		self.request_handlers.reverse()
 
 		class CustomStreamServer(StreamServer):
 			def do_close(self, *args):
