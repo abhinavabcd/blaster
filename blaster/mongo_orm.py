@@ -5,7 +5,6 @@ import types
 import pymongo
 from functools import cmp_to_key
 from contextlib import ExitStack
-import metrohash
 from typing import TypeVar, Iterator, Type
 # from pymongo.read_concern import ReadConcern
 # from pymongo.write_concern import WriteConcern
@@ -15,11 +14,10 @@ from collections import OrderedDict
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError, OperationFailure
 from pymongo import ReturnDocument
-from .tools import all_subclasses, all_bases, \
+from .tools import all_subclasses, \
 	cur_ms, list_diff2, batched_iter, _OBJ_END_
 from .config import IS_DEV, MONGO_WARN_MAX_RESULTS_RATE, \
 	MONGO_MAX_RESULTS_AT_HIGH_SCAN_RATE, \
-	MONGO_WARN_MAX_QUERY_RESPONSE_TIME_SECONDS, \
 	DEBUG_PRINT_LEVEL, IS_TEST
 from gevent.threading import Thread
 from gevent import time
@@ -82,7 +80,6 @@ class Attribute(object):
 		self._type = _type
 		self._validator = DEFAULT_VALIDATORS.get(_type)\
 			if validator is _OBJ_END_ else validator
-		self._models = set()
 		self.__dict__.update(kwargs)
 
 
@@ -620,8 +617,6 @@ class Model(object):
 	@classmethod
 	def get_db_node(_Model, shard_key):
 		shard_key = str(shard_key) if shard_key is not None else ""
-		# get 16 bit int
-		shard_key = metrohash.hash64_int(shard_key.encode())
 		# do a bin search to find (i, j] segment
 		# unfortunately if j == len(nodes) shouldn't happen, because the ring
 		# should cover full region
@@ -630,7 +625,7 @@ class Model(object):
 		j = n = len(_db_nodes)
 		while(j - i > 1):
 			mid = i + (j - i) // 2
-			if(shard_key > _db_nodes[mid].at):
+			if(shard_key > _db_nodes[mid].pos):
 				i = mid
 			else:
 				j = mid
@@ -1118,8 +1113,6 @@ class Model(object):
 					query=str(_query), sort=str(sort), offset=str(offset), limit=str(limit)
 				)
 
-			_start_time = time.time()
-
 			projection = kwargs.get("projection")
 			ret = _collection.find(_query, **kwargs)
 			if(offset):  # from global arg
@@ -1130,16 +1123,6 @@ class Model(object):
 				ret = ret.sort(sort)
 
 			_cursor = ret  # keep track of this for distinct
-
-			if((_elapsed_time := (time.time() - _start_time)) > MONGO_WARN_MAX_QUERY_RESPONSE_TIME_SECONDS):
-				query_plan = ret.explain()["queryPlanner"]
-				LOG_WARN(
-					"mongo_perf",
-					desc=f"query took longer than {MONGO_WARN_MAX_QUERY_RESPONSE_TIME_SECONDS} seconds",
-					elapsed_millis=int(_elapsed_time * 1000),
-					plan_type=query_plan["winningPlan"]["stage"],
-					query=query_plan["parsedQuery"]
-				)
 
 			# we queried from the secondary shard, will not have all fields
 			# requery again
@@ -1285,7 +1268,7 @@ class Model(object):
 			if(
 				self._id is None
 				and (
-					(cls._is_sharding_enabled_ and shard_key_name == "_id")
+					cls._primary_shard_key_ == "_id"  # need to explicitly set _id
 					or cls._attrs_["_id"]._type != ObjectId
 				)
 			):
@@ -1575,13 +1558,13 @@ class DatabaseNode:
 	password = None
 	# default db name
 	db_name = None
-	at = None
+	pos = None
 
 	# this initializes the tables in all nodes
 	def __init__(
 		self, host=None, replicaset=None,
 		username=None, password=None, db_name=None,
-		hosts=None, at=0, **_
+		hosts=None, pos="", **_
 	):
 		if(isinstance(host, str)):
 			hosts = [host]
@@ -1590,7 +1573,7 @@ class DatabaseNode:
 		self.username = username
 		self.db_name = db_name
 		self.replicaset = replicaset
-		self.at = at
+		self.pos = pos
 		# use list of hosts, replicaset and username as cache key
 		# so as not to create multiple clients
 		_mongo_clients_cache_key = (",".join(sorted(hosts)), username or "")
@@ -1640,7 +1623,8 @@ def initialize_model(_Model):
 	# defaults, do not change the code below
 	_Model._shard_key_ = getattr(_Model, "_shard_key_", "_id")
 	_Model._secondary_shards_ = {}
-	_Model._indexes_ = []
+	_Model._indexes_ = getattr(_Model, "_indexes_", None)\
+		or IndexesToCreate.get(_Model._collection_name_) or []
 
 	# temp usage _id_attr
 	_id_attr = Attribute(ObjectId)  # default is of type objectId
@@ -1648,44 +1632,40 @@ def initialize_model(_Model):
 	_Model._pk_attrs = None
 	'''it's used for translating attr objects/name to string names'''
 	_Model._attrs_to_name = attrs_to_name = {_id_attr: '_id', '_id': '_id'}
-	is_primary_sharding_enabled = False
+	_Model._primary_shard_key_ = None
+
 	# parse all attributes
-	for _M in filter(  # models can extend models
-		lambda _M: issubclass(_M, Model) and (_M is not Model),
-		all_bases(_Model) + [_Model]
-	):
-		for k, v in _M.__dict__.items():
-			if(isinstance(v, Attribute)):
-				# preprocess any attribute arguments
-				if(getattr(v, "r", None)):  # auth levels needed to read this attr
-					if(isinstance(v.r, str)):
-						v.r = [v.r]
-					v.r = set(v.r)
+	_mro = _Model.__mro__
+	for _M in reversed(_mro[1:_mro.index(Model)]):  # parent classes until Model class reversed
+		_Model._attrs_.update(_M._attrs_)
+		_Model._attrs_to_name_.update(_M._attrs_to_name_)
+		_Model._indexes_ += _M._indexes_
+		_Model._shard_key_ = _M._shard_key_
+		_Model._secondary_shards_ = {k: SecondaryShard() for k in _M._secondary_shards_}
+		_Model._primary_shard_key_ = _M._primary_shard_key_
 
-				_model_attrs[k] = v
-				# helps convert string/attr to string
-				attrs_to_name[v] = k
-				attrs_to_name[k] = k
-				# track models this attr belongs to
-				v._models.add(_Model)
+	for k, v in filter(
+		lambda kv: isinstance(kv[1], Attribute),
+		_Model.__dict__.items()
+	):  # scan attributes
+		_model_attrs[k] = v
+		# helps convert string/attr to string
+		attrs_to_name[v] = k
+		attrs_to_name[k] = k
+		# track models this attr belongs to
 
-				# check if it has any shard, then extract indexes,
-				# shard key tagged to attributes
-				if(not _Model._is_secondary_shard):  # very important check
-					# check indexes_to_create
-					_Model._indexes_ += (IndexesToCreate.get(_Model._collection_name_) or [("_id",)])
-					is_primary_shard_key = getattr(v, "is_primary_shard_key", False)
-					is_secondary_shard_key = getattr(v, "is_secondary_shard_key", False)
-					if(is_primary_shard_key is True):
-						_Model._shard_key_ = k
-						# because we don't need it again after first time
-						#  and won't rewrite secondary shard keys
-						delattr(v, "is_primary_shard_key")
-						is_primary_sharding_enabled = True
-					elif(is_secondary_shard_key is True):
-						_Model._secondary_shards_[k] = SecondaryShard()
-						# because we don't need it again after first time
-						delattr(v, "is_secondary_shard_key")
+		# check if it has any shard, then extract indexes,
+		# shard key tagged to attributes
+		if(not _Model._is_secondary_shard):  # very important check
+			# check indexes_to_create
+			if(getattr(v, "is_primary_shard_key", False) is True):
+				delattr(v, "is_primary_shard_key")  # delete so that it's not used again after first time
+				_Model._shard_key_ = k
+				_Model._primary_shard_key_ = k
+			elif(getattr(v, "is_secondary_shard_key", False) is True):
+				delattr(v, "is_secondary_shard_key")
+				_Model._secondary_shards_[k] = SecondaryShard()
+				# because we don't need it again after first time
 
 	IS_DEV \
 		and DEBUG_PRINT_LEVEL > 8 \
@@ -1711,6 +1691,7 @@ def initialize_model(_Model):
 
 		if(not isinstance(_index, tuple)):
 			_index = (_index,)
+
 		for _a in _index:
 			_attr_name = _a
 			_ordering = pymongo.ASCENDING
@@ -1739,7 +1720,7 @@ def initialize_model(_Model):
 			return -1 if index_a[0] < index_b[0] else 1
 		return 0
 
-	_indexes_list.sort(key=cmp_to_key(index_cmp))
+	_indexes_list.sort(key=cmp_to_key(index_cmp))   # sort and group by indexes first key
 
 	for _index_keys, _index_properties in _indexes_list:
 		# mix with defaults
@@ -1757,33 +1738,22 @@ def initialize_model(_Model):
 			):
 				_Model._pk_is_unique_index = is_unique_index
 				_Model._pk_attrs = _pk_attrs = OrderedDict()
-				for i in _index_keys:  # first unique index
+				for i in _index_keys:  # first unique index as pk
 					_pk_attrs[i[0]] = 1
-
-		if(_Model._shard_key_ != _index_shard_key):
-			# secondary shard tables
-			_secondary_shard = _Model._secondary_shards_.get(_index_shard_key)
-
-			if(_secondary_shard):
-				for _attr_name, _ordering in _index_keys:
-					_secondary_shard.attrs[_attr_name] = getattr(
-						_Model,
-						_attr_name
-					)
-				# create _index_ for secondary shards
-				_secondary_shard.indexes.append({
-					"keys": _index_keys,
-					"properties": _index_properties
-				})
-		# if this index doesn't belong to secondary shards
-		# create it on this index
-		if(
-			_index_shard_key not in _Model._secondary_shards_
-			and _index_shard_key != "_id"
-		):
-			# this indes should go to to the primary index
 			_pymongo_indexes_to_create[_index_keys] = _index_properties
 
+		elif(_secondary_shard := _Model._secondary_shards_.get(_index_shard_key)):  # belongs to seconday index
+			for _attr_name, _ordering in _index_keys:
+				_secondary_shard.attrs[_attr_name] = getattr(_Model, _attr_name)
+			# create _index_ for secondary shards
+			_secondary_shard.indexes.append({
+				"keys": _index_keys,
+				"properties": _index_properties
+			})
+		else:  # create it on main table
+			_pymongo_indexes_to_create[_index_keys] = _index_properties
+
+	_pymongo_indexes_to_create.pop((('_id', 1),), None)	 # remove default index
 	if(not _Model._pk_attrs):  # create default _pk_attrs
 		_Model._pk_attrs = OrderedDict(_id=True)
 
@@ -1791,11 +1761,9 @@ def initialize_model(_Model):
 
 	_Model._collection_name_with_shard_ = _Model._collection_name_
 
-	_Model._is_sharding_enabled_ = False  # default
 	# append shard id to table name as an indicator that table is sharded
-	if(_Model._is_secondary_shard or is_primary_sharding_enabled):
+	if(_Model._is_secondary_shard or (_Model._primary_shard_key_ is not None)):
 		_Model._collection_name_with_shard_ += "_shard_" + _Model._shard_key_
-		_Model._is_sharding_enabled_ = True
 
 	# find tracking nodes
 	_Model._collection_tracker_key_ = "{:s}__{:s}".format(
@@ -1840,7 +1808,7 @@ def initialize_model(_Model):
 					**{
 						"hosts": init_db_node.hosts,
 						"replicaset": init_db_node.replicaset,
-						"at": 0,
+						"pos": "",
 						"username": init_db_node.username,
 						"password": init_db_node.password,
 						"db_name": _Model._db_name_
@@ -1920,8 +1888,7 @@ def initialize_model(_Model):
 
 	# check if our options are different from remote options
 	for _index, _options in _pymongo_indexes_to_create.items():
-		existing_index = existing_indexes.get(_index)
-		if(existing_index):
+		if(existing_index := existing_indexes.get(_index)):
 			# _options = dict(_options)  # copy
 			existing_options = dict(existing_index[1])  # copy
 			# existing_options.pop("v")
