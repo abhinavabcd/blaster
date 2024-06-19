@@ -347,11 +347,8 @@ def zlfill(tup, n):
 
 DATE_DD_MM_YYYY_REGEX = re.compile(r"(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})")
 DATE_YYYY_MM_DD_REGEX = re.compile(r"(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})")
-TIME_REGEX = re.compile(r"(\d{1,2}):(\d{0,2})?[:]*(\d{0,2})?(?:\s?((?:A|P).?M))?", re.IGNORECASE)
-DAY_REGEX = re.compile(
-	r"(mon|tues|wed(nes)?|thur(s)?|fri|sat(ur)?|sun)(day)?",
-	re.IGNORECASE
-)
+TIME_REGEX = re.compile(r"(\d{1,2})(?:\s*:+(\d{1,2}))?(?:\s*:+(\d{1,2}))?(?::+(\d{1,2})|(\s*(?:a|p).?m))", re.IGNORECASE)
+DAY_REGEX = re.compile(r"(mon|tues|wed(nes)?|thur(s)?|fri|sat(ur)?|sun)(day)?", re.IGNORECASE)
 DAYS_OF_WEEK = [
 	'monday', 'tuesday', 'wednesday',
 	'thursday', 'friday', 'saturday', 'sunday'
@@ -390,8 +387,10 @@ def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False):
 
 	# find all time matches
 	for match in TIME_REGEX.finditer(x):
-		h, m, s, am_pm = match.groups()
-		time_matches.append([int(h or 0), int(m or 0), int(s or 0), (am_pm or "").lower()])
+		h, *ms, am_pm = match.groups()
+		ms = [x for x in ms if x is not None] + [None, None]
+		m, s = ms[:2]
+		time_matches.append([int(h or 0), int(m or 0), int(s or 0), (am_pm or "").strip().lower()])
 		time_match_pos_list.append(match.span())
 
 	# date matches
@@ -449,7 +448,6 @@ def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False):
 			if(am_pm.lower()[0] == "a"):
 				if(hours == 12):
 					hours = 0
-
 		offset_check_x = timedelta(hours=hours, minutes=mins, seconds=secs)
 
 		if(len(time_matches) > 1):
@@ -480,14 +478,16 @@ def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False):
 		if(is_time_per_day):  # date-date time-time
 			while(date_range_start <= date_range_end):
 				if(_ret := get_overlap(
-					date_range_start + offset_check_x - tz_delta, date_range_start + offset_check_y - tz_delta,
+					date_range_start + offset_check_x - tz_delta,
+					date_range_start + offset_check_y - tz_delta,
 					a, b, partial
 				)):
 					yield *_ret, params
 				date_range_start += timedelta(days=1)
 		else:  # date time - date time
 			_ret = get_overlap(
-				date_range_start + offset_check_x - tz_delta, date_range_end + offset_check_y - tz_delta,
+				date_range_start + offset_check_x - tz_delta,
+				date_range_end + offset_check_y - tz_delta,
 				a, b, partial
 			)
 			if(_ret):
@@ -498,28 +498,28 @@ def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False):
 		if(len(day_matches) > 1):
 			end_day = day_matches[1]
 
-		t = a
-		while(t <= b):
-			if(t.weekday() == start_day):
-				t_start_of_day = datetime(year=t.year, month=t.month, day=t.day)
-				if(is_time_per_day):
-					for i in range(abs(end_day - start_day) + 1):
-						t2_start_of_day = t_start_of_day + timedelta(days=i)
+		t = next(x for i in range(7) if start_day <= (x := a + timedelta(days=i)).weekday() <= end_day)
+		t_start_of_day = datetime(year=t.year, month=t.month, day=t.day)
+		if(not is_time_per_day):
+			# find the day from now that matches start_day
+			if(_ret := get_overlap(
+				t_start_of_day + offset_check_x - tz_delta,
+				t_start_of_day + timedelta(days=abs(end_day - start_day))
+					+ offset_check_y - tz_delta,
+				a, b, partial
+			)):
+				yield *_ret, params
+		else:
+			while(t_start_of_day <= b):
+				for i in range(abs(end_day - start_day) + 1):
+					if((t2_start_of_day := t_start_of_day + timedelta(days=i)) <= b):
 						if(_ret := get_overlap(
 							t2_start_of_day + offset_check_x - tz_delta,
 							t2_start_of_day + offset_check_y - tz_delta,
 							a, b, partial
 						)):
 							yield *_ret, params
-				else:
-					if(_ret := get_overlap(
-						t_start_of_day + offset_check_x - tz_delta,
-						t_start_of_day + timedelta(days=abs(end_day - start_day))
-							+ offset_check_y - tz_delta,
-						a, b, partial
-					)):
-						yield *_ret, params
-			t += timedelta(days=1)  # increment by 1 day and keep on checking
+				t_start_of_day += timedelta(days=7)
 
 	elif(time_matches):  # ONLY TIMES
 		if(offset_check_y < offset_check_x):
