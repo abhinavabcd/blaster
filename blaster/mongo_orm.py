@@ -311,7 +311,7 @@ class Model(object):
 	_is_new_ = True
 	# this means the object is being initialized by this orm,
 	# and not available to user yet
-	_initializing = False
+	_initializing_ = False
 	# pending query updates are stored in this
 	_set_query_updates = None
 	_if_non_empty_set_query_update = None
@@ -320,15 +320,13 @@ class Model(object):
 	# we execute all functions inside this list,
 	# and use the return value to update
 	_insert_result = None
-	_pk = None
-	_json = None
 
 	# initialize a new object
 	def __init__(self, _is_new_=True, **values):
 
 		# defaults
 		self._is_new_ = _is_new_
-		self._initializing = not _is_new_
+		self._initializing_ = not _is_new_
 		self._set_query_updates = {}
 		self._if_non_empty_set_query_update = {}
 		self._other_query_updates = {}
@@ -478,7 +476,7 @@ class Model(object):
 				elif(_attr_obj_type == ObjectId and k == "_id"):
 					pass  # could be anything don't try to cast
 				else:
-					if(not self._initializing):
+					if(not self._initializing_):
 						# we are setting it wrong on a new object
 						# raise
 						raise TypeError(
@@ -488,7 +486,7 @@ class Model(object):
 						)
 					# else:
 						# already in db, so let's wait for application to crash
-			if(self._initializing):
+			if(self._initializing_):
 				# while initializing it, we tranform db data to objects fields
 				if(_attr_obj_type == dict):
 					if(isinstance(v, dict)):
@@ -528,23 +526,14 @@ class Model(object):
 			_json['_id'] = str(_id)
 		return _json
 
-	@classmethod
-	def pk_from_doc(cls, doc):
-		ret = OrderedDict()
-		for attr in cls._pk_attrs:
-			ret[attr] = doc.get(attr)
-		return ret
-
 	def pk_tuple(self):
-		return tuple(self.pk().values())
+		return tuple(getattr(self, k) for k in self.__class__._pk_attrs.keys())
 
-	def pk(self, renew=False):
-		if(not self._pk or renew or self._is_new_):
-			ret = OrderedDict()
-			for k in self.__class__._pk_attrs.keys():
-				ret[k] = getattr(self, k)
-			self._pk = ret
-		return self._pk
+	def pk(self):
+		ret = OrderedDict()
+		for k in self.__class__._pk_attrs.keys():
+			ret[k] = getattr(self, k)
+		return ret
 
 	# check all defaults and see if not present in doc, set them on the object
 	def __check_and_set_initial_defaults(self, doc):
@@ -572,16 +561,14 @@ class Model(object):
 
 	def _reset(self, doc):
 		self._is_new_ = False  # this is not a new object
-		self._initializing = True
+		self._initializing_ = True
 
 		self.__check_and_set_initial_defaults(doc)
 		for k, v in doc.items():
 			setattr(self, k, v)
 
-		self._initializing = False
+		self._initializing_ = False
 		self._original_doc = doc
-		# renew the pk!
-		self.pk(True)
 		return self
 
 	def reset_and_update_cache(self, doc):
@@ -647,10 +634,8 @@ class Model(object):
 	@classmethod
 	def get_collections_to_query(cls, _query, sort):
 		shard_key = _query.get(cls._shard_key_, _OBJ_END_)
-		if(
-			shard_key is None
-			or shard_key is _OBJ_END_
-		):
+
+		if(shard_key is _OBJ_END_):
 			return None
 
 		# if it's a secondary shard check if we can perform the query on this Model
@@ -731,7 +716,7 @@ class Model(object):
 					_query.update(conditions)
 
 				# get the shard where current object is
-				primary_shard_key = original_doc[cls._shard_key_]
+				primary_shard_key = original_doc[cls._shard_key_ or "_id"]
 				primary_shard_collection = cls.get_collection(primary_shard_key)
 
 				if(
@@ -807,16 +792,16 @@ class Model(object):
 					return False
 
 				# doc successfully updated
-				# check if need to migrate to another shard
-				_new_primary_shard_key = updated_doc.get(cls._shard_key_)
-				if(_new_primary_shard_key != primary_shard_key):
-					# primary shard key has changed
-					new_primary_shard_collection = cls.get_collection(_new_primary_shard_key)
-					if(new_primary_shard_collection != primary_shard_collection):
-						# migrate to new shard
-						# will crash if duplicate _id key
-						new_primary_shard_collection.insert_one(updated_doc)
-						primary_shard_collection.delete_one({"_id": self._id})
+				# check if need to migrate to another shard if sharding is enabled
+				if(cls._shard_key_ is not None):
+					_new_primary_shard_key = updated_doc[cls._shard_key_]
+					if(_new_primary_shard_key != primary_shard_key):
+						new_primary_shard_collection = cls.get_collection(_new_primary_shard_key)
+						if(new_primary_shard_collection != primary_shard_collection):
+							# migrate to new shard
+							# will crash if duplicate _id key
+							new_primary_shard_collection.insert_one(updated_doc)
+							primary_shard_collection.delete_one({"_id": self._id})
 
 				# 1. propagate the updates to secondary shards
 				for _secondary_shard_key, _shard in cls._secondary_shards_.items():
@@ -1264,11 +1249,10 @@ class Model(object):
 			if(not self._set_query_updates):
 				return self  # nothing to update
 
-			shard_key_name = cls._shard_key_
 			if(
 				self._id is None
 				and (
-					cls._primary_shard_key_ == "_id"  # need to explicitly set _id
+					cls._shard_key_ == "_id"  # need to explicitly set _id
 					or cls._attrs_["_id"]._type != ObjectId
 				)
 			):
@@ -1276,9 +1260,7 @@ class Model(object):
 
 			self._set_query_updates["_"] = int(time.time() * 1000)
 
-			primary_shard_collection = cls.get_collection(
-				getattr(self, shard_key_name)
-			)
+			primary_shard_collection = cls.get_collection(getattr(self, cls._shard_key_ or "_id"))
 			IS_DEV \
 				and DEBUG_PRINT_LEVEL > 8 \
 				and LOG_DEBUG(
@@ -1360,9 +1342,6 @@ class Model(object):
 					"MONGO: Couldn't commit, either a concurrent update modified this or query has issues",
 					self.pk(), self._set_query_updates, self._other_query_updates
 				)
-
-		# clear and reset pk to new
-		self.pk(renew=True)
 		# clear
 		self._set_query_updates.clear()
 		self._other_query_updates.clear()
@@ -1388,7 +1367,7 @@ class Model(object):
 					.delete_one(_delete_query)
 
 		# find which pimary shard it belongs to and delete it there
-		collection_shard = _Model.get_collection(self._original_doc[_Model._shard_key_])
+		collection_shard = _Model.get_collection(self._original_doc[_Model._shard_key_ or "_id"])
 		collection_shard.delete_one(_delete_query)
 		IS_DEV \
 			and DEBUG_PRINT_LEVEL > 8 \
@@ -1621,8 +1600,9 @@ def initialize_model(_Model):
 		return
 
 	# defaults, do not change the code below
-	_Model._shard_key_ = getattr(_Model, "_shard_key_", "_id")
+	_Model._shard_key_ = getattr(_Model, "_shard_key_", None)
 	_Model._secondary_shards_ = {}
+
 	_Model._indexes_ = getattr(_Model, "_indexes_", None)\
 		or IndexesToCreate.get(_Model._collection_name_) or []
 
@@ -1632,7 +1612,6 @@ def initialize_model(_Model):
 	_Model._pk_attrs = None
 	'''it's used for translating attr objects/name to string names'''
 	_Model._attrs_to_name = attrs_to_name = {_id_attr: '_id', '_id': '_id'}
-	_Model._primary_shard_key_ = None
 
 	# parse all attributes
 	_mro = _Model.__mro__
@@ -1642,7 +1621,6 @@ def initialize_model(_Model):
 		_Model._indexes_ += _M._indexes_
 		_Model._shard_key_ = _M._shard_key_
 		_Model._secondary_shards_ = {k: SecondaryShard() for k in _M._secondary_shards_}
-		_Model._primary_shard_key_ = _M._primary_shard_key_
 
 	for k, v in filter(
 		lambda kv: isinstance(kv[1], Attribute),
@@ -1661,7 +1639,6 @@ def initialize_model(_Model):
 			if(getattr(v, "is_primary_shard_key", False) is True):
 				delattr(v, "is_primary_shard_key")  # delete so that it's not used again after first time
 				_Model._shard_key_ = k
-				_Model._primary_shard_key_ = k
 			elif(getattr(v, "is_secondary_shard_key", False) is True):
 				delattr(v, "is_secondary_shard_key")
 				_Model._secondary_shards_[k] = SecondaryShard()
@@ -1679,7 +1656,6 @@ def initialize_model(_Model):
 	_Model.on(EVENT_BEFORE_UPDATE, lambda obj: obj.before_update())
 
 	_pymongo_indexes_to_create = {}
-	_Model._pk_is_unique_index = False
 
 	_indexes_list = []
 	for _index in _Model._indexes_:
@@ -1730,19 +1706,7 @@ def initialize_model(_Model):
 		_index_shard_key = _index_keys[0][0]  # shard key is the first mentioned in index
 
 		# adjust the pk of the table accordingly, mostly useful for primary shard
-		if(_Model._shard_key_ == _index_shard_key):
-			# index belong to primary shard
-			if(
-				not _Model._pk_attrs
-				or (is_unique_index and not _Model._pk_is_unique_index)
-			):
-				_Model._pk_is_unique_index = is_unique_index
-				_Model._pk_attrs = _pk_attrs = OrderedDict()
-				for i in _index_keys:  # first unique index as pk
-					_pk_attrs[i[0]] = 1
-			_pymongo_indexes_to_create[_index_keys] = _index_properties
-
-		elif(_secondary_shard := _Model._secondary_shards_.get(_index_shard_key)):  # belongs to seconday index
+		if(_secondary_shard := _Model._secondary_shards_.get(_index_shard_key)):  # belongs to seconday index
 			for _attr_name, _ordering in _index_keys:
 				_secondary_shard.attrs[_attr_name] = getattr(_Model, _attr_name)
 			# create _index_ for secondary shards
@@ -1753,6 +1717,12 @@ def initialize_model(_Model):
 		else:  # create it on main table
 			_pymongo_indexes_to_create[_index_keys] = _index_properties
 
+		if(_Model._shard_key_ == _index_shard_key):   # set pk_attrs for caching
+			if(_Model._pk_attrs is None and is_unique_index):
+				_Model._pk_attrs = _pk_attrs = OrderedDict()
+				for i in _index_keys:  # first unique index as pk
+					_pk_attrs[i[0]] = 1
+
 	_pymongo_indexes_to_create.pop((('_id', 1),), None)	 # remove default index
 	if(not _Model._pk_attrs):  # create default _pk_attrs
 		_Model._pk_attrs = OrderedDict(_id=True)
@@ -1762,7 +1732,7 @@ def initialize_model(_Model):
 	_Model._collection_name_with_shard_ = _Model._collection_name_
 
 	# append shard id to table name as an indicator that table is sharded
-	if(_Model._is_secondary_shard or (_Model._primary_shard_key_ is not None)):
+	if(_Model._shard_key_ is not None):
 		_Model._collection_name_with_shard_ += "_shard_" + _Model._shard_key_
 
 	# find tracking nodes
