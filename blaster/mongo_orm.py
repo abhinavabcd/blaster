@@ -905,7 +905,7 @@ class Model(object):
 
 	@classmethod
 	def query(
-		cls,
+		cls: Type[ModelType],
 		_query,
 		sort=None,
 		offset=None,
@@ -1232,9 +1232,9 @@ class Model(object):
 		return self._original_doc.get("_", 0)
 
 	def commit(
-		self, force=False, ignore_exceptions=None,
+		self: ModelType, force=False, ignore_exceptions=None,
 		conditions=None, _transaction=None
-	):
+	) -> ModelType:
 		cls = self.__class__
 		committed = False
 

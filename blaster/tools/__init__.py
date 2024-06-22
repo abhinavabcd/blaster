@@ -349,6 +349,8 @@ DATE_DD_MM_YYYY_REGEX = re.compile(r"(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})")
 DATE_YYYY_MM_DD_REGEX = re.compile(r"(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})")
 TIME_REGEX = re.compile(r"(\d{1,2})(?:\s*:+(\d{1,2}))?(?:\s*:+(\d{1,2}))?(?::+(\d{1,2})|(\s*(?:a|p).?m))", re.IGNORECASE)
 DAY_REGEX = re.compile(r"(mon|tues|wed(nes)?|thur(s)?|fri|sat(ur)?|sun)(day)?", re.IGNORECASE)
+RELATIVE_DAY_REGEX = re.compile(r"(after\s+to|tod|tom)[^\s]*", re.IGNORECASE)
+
 DAYS_OF_WEEK = [
 	'monday', 'tuesday', 'wednesday',
 	'thursday', 'friday', 'saturday', 'sunday'
@@ -392,6 +394,23 @@ def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False):
 		m, s = ms[:2]
 		time_matches.append([int(h or 0), int(m or 0), int(s or 0), (am_pm or "").strip().lower()])
 		time_match_pos_list.append(match.span())
+
+	# RELATIVE DAY MATCHES
+	dt_now = datetime.now()
+	for match in RELATIVE_DAY_REGEX.finditer(x):
+		day_str = match.group().lower()
+		if(day_str.startswith("tod")):
+			date_matches.append([dt_now.day, dt_now.month, dt_now.year])
+			date_match_pos_list.append(match.span())
+		elif(day_str.startswith("tom")):
+			dt_tommorow = dt_now + timedelta(days=1)
+			date_matches.append([dt_tommorow.day, dt_tommorow.month, dt_tommorow.year])
+			date_match_pos_list.append(match.span())
+		elif(day_str.startswith("after")):
+			# day fter tomorrow
+			dt_day_after_tom = dt_now + timedelta(days=2)
+			date_matches.append([dt_day_after_tom.day, dt_day_after_tom.month, dt_day_after_tom.year])
+			date_match_pos_list.append(match.span())
 
 	# date matches
 	for match in DATE_DD_MM_YYYY_REGEX.finditer(x):
@@ -843,12 +862,12 @@ def hmac_hexdigest(secret, *parts) -> str:
 	return hash.hexdigest()
 
 
-def create_signed_value(name, value: bytes | str, secret, expires_in=31 * SECONDS_IN_DAY) -> str:
+def create_signed_value(name, value: bytes | str, secret, expires_in=31 * SECONDS_IN_DAY, values=()) -> str:
 	expires_at = str(int(time.time() + expires_in))
 	value = base64.b64encode(utf8(value)).decode()  # hide value
 	# ~ to prevent changing value, timestamp but value + timestamp being same
-	signature = hmac_hexdigest(secret, name, value, "~", expires_at)
-	signed_value = "|".join([value, "~", expires_at, signature])
+	signature = hmac_hexdigest(secret, name, value, *values, expires_at)
+	signed_value = "|".join([value, *values, expires_at, signature])
 	return signed_value
 
 
@@ -858,9 +877,10 @@ def decode_signed_value(name, signed_value, secret, expiry_check=True) -> bytes:
 	_parts = signed_value.split("|")
 	if len(_parts) < 3:
 		return None
-	_value, *parts, expires_at, _signature = _parts
+
+	_value, *_values, expires_at, _signature = _parts
 	# check signature matches or not
-	signature = hmac_hexdigest(secret, name, _value, *parts, expires_at)
+	signature = hmac_hexdigest(secret, name, _value, *_values, expires_at)
 	if _signature != signature:
 		return None
 

@@ -66,23 +66,21 @@ def make_nearrest_currency(val, f):
 FLOAT_REGEX = re.compile(r'[+-.]?[0-9][0-9,]*(?:\.[0-9]+)?')
 FLOAT_REGEX_FULL = re.compile(r'^[+-.]?[0-9][0-9,]*(?:\.[0-9]+)?$')
 
-def parse_currency_string(currency_str, default_currency_code=DEFAULT_CURRENCY_CODE, country_code=None):
-	val = FLOAT_REGEX.findall(currency_str)
-	if(not val):
-		return 0, default_currency_code, 0
 
-	val_str = val[0]
-	currency_code = None
-	if(_curreny_code := currency_str.replace(val_str, " ").split()):
-		currency_code = _curreny_code[0].upper()
+def parse_currency_string(currency_str, default_currency_code=None, country_code=None):
+	val_str = (FLOAT_REGEX.findall(currency_str) or ("0",))[0]
+	currency_code = next(
+		(
+			y for x in reversed(currency_str.replace(val_str, " ").split())
+				if len(x) > 0 and (y := x.upper()) in INR_EXCHANGE_RATE
+		),
+		default_currency_code
+	)
+	# try from country code
+	if(country_code and not currency_code):
+		currency_code = COUNTRY_DATA[country_code]["currency_code"]
+
 	val = val_str.replace(",", "")  # remove commas
-	if(not currency_code):
-		if(country_code):
-			currency_code = COUNTRY_DATA[country_code]["currency_code"]
-
-	if(not currency_code or currency_code not in INR_EXCHANGE_RATE): # if invalid currency set to default
-		currency_code = default_currency_code
-
 	if(val[0] == "."):
 		val = "0." + val[1:].replace(".", "", 1)
 
