@@ -256,6 +256,8 @@ class _Dict:
 
 
 class Object:
+	_schema_def_name_ = None
+
 	def __init__(self, default=_OBJ_END_, _required_=None, _name=None, **keys):
 		self._default = default
 		self._required = set(_required_) if _required_ else set()
@@ -330,7 +332,6 @@ class Object:
 	@classmethod
 	def from_dict(cls, _dict: dict, default=_OBJ_END_):
 		try:
-			ret = cls()
 			for _k, k in cls._dict_key_to_object_key.items():
 				if(_k in _dict):
 					_dict[k] = _dict.pop(_k)
@@ -445,10 +446,10 @@ def schema(x, _default=_OBJ_END_):
 		)
 
 	if(isinstance(x, type) and issubclass(x, Object) and x != Object):
-		# Object types
-		ret = schema.defs.get(x.__name__)
+		_schema_def_name_ = x.__module__ + "." + x.__name__
+		ret = schema.defs.get(_schema_def_name_)
 		if(ret):
-			return {"schema": {"$ref": "#/definitions/" + x.__name__}}, x.validate
+			return {"schema": {"$ref": "#/definitions/" + _schema_def_name_}}, x.validate
 
 		x._validations = _validations = {}
 		x._properties = _properties = {}
@@ -481,7 +482,7 @@ def schema(x, _default=_OBJ_END_):
 				if(dict_key := getattr(_type, "_name", None)):
 					x._dict_key_to_object_key[dict_key] = k
 		# create schema
-		x._schema_ = ret = schema.defs[x.__name__] = {
+		x._schema_ = ret = schema.defs[_schema_def_name_] = {
 			"type": "object",
 		}
 		_title = getattr(x, "_title_", None)
