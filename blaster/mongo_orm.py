@@ -467,25 +467,23 @@ class Model(object):
 			# change type of objects when setting them
 			_attr_obj_type = _attr_obj._type
 			# impllicit type corrections for v
-			if(v is not None and not isinstance(v, _attr_obj_type)):
-				if(_attr_obj_type == int or _attr_obj_type == float):
-					# force cast between int/float
-					v = _attr_obj_type(v or 0)
-				elif(_attr_obj_type == str):  # force cast to string
-					v = str(v)
-				elif(_attr_obj_type == ObjectId and k == "_id"):
-					pass  # could be anything don't try to cast
-				else:
-					if(not self._initializing_):
-						# we are setting it wrong on a new object
-						# raise
+			if((v is not None) and not isinstance(v, _attr_obj_type)):
+				if(not self._initializing_):  # setting manually (not loading from db) -> try implicit conversions
+					if(_attr_obj_type == int or _attr_obj_type == float):
+						# force cast between int/float
+						v = _attr_obj_type(v or 0)
+					elif(_attr_obj_type == str):  # force cast to string
+						v = str(v)
+					elif(_attr_obj_type == ObjectId and k == "_id"):
+						pass  # could be anything don't try to cast
+					else:
 						raise TypeError(
 							"Type mismatch in {}, {}: should be {} but got {}".format(
 								type(self), k, _attr_obj_type, str(type(v))
 							)
 						)
-					# else:
-						# already in db, so let's wait for application to crash
+						# else:
+						# 	already in db, so let's wait for application to crash
 			if(self._initializing_):
 				# while initializing it, we tranform db data to objects fields
 				if(_attr_obj_type == dict):

@@ -1,5 +1,6 @@
 import sys
 import time
+import traceback
 from datetime import datetime
 import ujson as json
 from time import time_ns
@@ -63,7 +64,9 @@ def stream_logs_loop():
 			try:
 				_handler(log_item)
 			except Exception as ex:
-				print("Exception in log handler: {ex}")
+				print(f"Exception in log handler: {ex}")
+				if(LOG_LEVEL <= DEBUG):
+					traceback.print_exc()
 
 
 def create_es_log_handler(es_config):
