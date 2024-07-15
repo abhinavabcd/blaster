@@ -7,7 +7,7 @@ import ujson as json
 from blaster.tools import get_time_overlaps, retry, \
 	ExpiringCache, create_signed_value, decode_signed_value, \
 	submit_background_task, background_task, ignore_exceptions, \
-	ASSERT_RATE_PER_MINUTE, RateLimitingException
+	ASSERT_RATE_PER_MINUTE, RateLimitingException, get_by_key_path
 from blaster.tools.sanitize_html import HtmlSanitizedDict, HtmlSanitizedList
 from datetime import datetime, timedelta
 from blaster.utils.data_utils import parse_string_to_units, parse_string_to_int, \
@@ -331,6 +331,19 @@ class TestTools(unittest.TestCase):
 			c.set(i, i)
 		# when last item is added, it expired first 4 items
 		self.assertEqual(len(c.to_son()), 5)
+
+	def test_get_by_key_path(self):
+		self.assertEqual(
+			get_by_key_path({"a": {"b": 1}}, "a.b"), 1
+		)
+		self.assertEqual(
+			get_by_key_path({"a": [{"b": 1}, {"b": 2}]}, "a[].b"), [1, 2]
+		)
+
+		self.assertEqual(
+			get_by_key_path({"a": [{"b": {"d": "d1", "c": "c1", "e": "e1"}}, {"b": {"d": "d2", "c": "c2", "e": "e2"}}]}, "a[].b.c,e"),
+			[{"c": "c1", "e": "e1"}, {"c": "c2", "e": "e2"}]
+		)
 
 
 class TestBackgroundTasks(unittest.TestCase):

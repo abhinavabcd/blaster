@@ -262,7 +262,13 @@ def get_by_key_path(d, key_path, i=0, default=None):
 			return ret
 		return default
 	elif(isinstance(d, dict)):
-		return get_by_key_path(d.get(key), key_path, i + 1)
+		if("," in key):
+			return {
+				_key: get_by_key_path(d.get(_key), key_path, i + 1)
+				for _key in key.split(",")
+			}
+		else:
+			return get_by_key_path(d.get(key), key_path, i + 1)
 	elif(isinstance(d, list)):
 		key = int(key)
 		if(key < len(d)):
