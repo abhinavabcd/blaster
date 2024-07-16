@@ -7,7 +7,8 @@ import ujson as json
 from blaster.tools import get_time_overlaps, retry, \
 	ExpiringCache, create_signed_value, decode_signed_value, \
 	submit_background_task, background_task, ignore_exceptions, \
-	ASSERT_RATE_PER_MINUTE, RateLimitingException, get_by_key_path
+	ASSERT_RATE_PER_MINUTE, RateLimitingException, get_by_key_path, \
+	xmltodict
 from blaster.tools.sanitize_html import HtmlSanitizedDict, HtmlSanitizedList
 from datetime import datetime, timedelta
 from blaster.utils.data_utils import parse_string_to_units, parse_string_to_int, \
@@ -344,6 +345,12 @@ class TestTools(unittest.TestCase):
 			get_by_key_path({"a": [{"b": {"d": "d1", "c": "c1", "e": "e1"}}, {"b": {"d": "d2", "c": "c2", "e": "e2"}}]}, "a[].b.c,e"),
 			[{"c": "c1", "e": "e1"}, {"c": "c2", "e": "e2"}]
 		)
+
+	def test_xml_to_dict(self):
+		xml_string = "\n<note>\n  <to>Tove</to>\n  <from>Jani</from>\n  <heading>Reminder & Reminder</heading>\n  <body>Don't forget me this weekend!</body>\n</note>\n"
+		xmltodict(xml_string)
+		xml_string = "<note><to>Tove</to><from>Jani</from><heading>Reminder &amp; Reminder</heading><body>Don't forget me this weekend!</body></note>"
+		print(xmltodict(xml_string))
 
 
 class TestBackgroundTasks(unittest.TestCase):

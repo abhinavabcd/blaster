@@ -43,9 +43,16 @@ def blaster_exit():
 		events.broadcast_event("blaster_exit" + str(i))
 
 
+def handle_signal(signum):
+	# remove this signal handler and reraise
+	blaster_exit()
+	signal.signal(signum, signal.SIG_DFL)
+	signal.raise_signal(signum)
+
+
 # sigint event broadcast
-signal_handler(signal.SIGINT, blaster_exit)
-signal_handler(signal.SIGTERM, blaster_exit)
+signal_handler(signal.SIGINT, handle_signal, signal.SIGINT)
+signal_handler(signal.SIGTERM, handle_signal, signal.SIGTERM)
 
 # load default config, scan the stack and load
 stack = inspect.stack()

@@ -36,6 +36,11 @@ import contextlib
 from io import BytesIO, StringIO, TextIOWrapper
 import requests
 from http.client import HTTPConnection  # py3
+try:
+	from lxml import etree
+except Exception:
+	pass
+
 
 from ..websocket._core import WebSocket
 from ..env import DEBUG_PRINT_LEVEL
@@ -376,7 +381,7 @@ def get_overlap(start, end, a, b, partial):
 
 # tz_delta = local - UTC ( to dereive UTC times in current timezone)
 
-def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False):
+def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False, interval=None):
 	x, *params = x.split("|")
 	if(isinstance(a, int)):
 		a = timestamp2date(a)
@@ -487,7 +492,10 @@ def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False):
 						hours = 0
 			offset_check_y = timedelta(hours=hours, minutes=mins, seconds=secs)
 		else:
-			offset_check_y = offset_check_x + timedelta(hours=1)  # default 1 hour
+			offset_check_y = offset_check_x + timedelta(seconds=interval or SECONDS_IN_HOUR)  # default 1 hour
+
+		if(offset_check_y <= offset_check_x):
+			offset_check_y += timedelta(days=1)
 
 	if(date_matches):
 		day, month, year, *_ = map(lambda x: int(x) if x else 0, date_matches[0])
@@ -523,7 +531,10 @@ def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False):
 		if(len(day_matches) > 1):
 			end_day = day_matches[1]
 
-		t = next(x for i in range(7) if start_day <= (x := a + timedelta(days=i)).weekday() <= end_day)
+		t = next(
+			x for i in range(7)
+				if start_day <= (x := a + timedelta(days=i)).weekday() <= end_day
+		)
 		t_start_of_day = datetime(year=t.year, month=t.month, day=t.day)
 		if(not is_time_per_day):
 			# find the day from now that matches start_day
@@ -547,8 +558,6 @@ def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False):
 				t_start_of_day += timedelta(days=7)
 
 	elif(time_matches):  # ONLY TIMES
-		if(offset_check_y < offset_check_x):
-			offset_check_y += timedelta(days=1)
 		t_start_of_day = datetime(a.year, a.month, a.day)
 		while(t_start_of_day < b):
 			if(_ret := get_overlap(
@@ -582,7 +591,10 @@ def iter_time_overlaps(
 	heapq.heapify(buffer)
 	for x in include:
 		try:
-			it = _iter_time_overlaps(a, b, x, tz_delta, partial=partial)
+			it = _iter_time_overlaps(
+				a, b, x, tz_delta, partial=partial,
+				interval=interval
+			)
 			heapq.heappush(buffer, (next(it), x, it))
 		except StopIteration:
 			pass
@@ -1070,6 +1082,14 @@ def compress_lists(lists) -> dict:
 				_next[i] = {}
 			_next = _next[i]
 	return ret
+
+
+def last(arr, default=None):
+	return arr[-1] if len(arr) > 0 else default
+
+
+def first(arr, default=None):
+	return arr[0] if len(arr) > 0 else default
 
 
 # a dummy object with given keys,values
@@ -2025,3 +2045,32 @@ def set_requests_default_args(**_kwargs):
 	adapter = _HTTPAdapter()  # Set your default timeout in seconds
 	session.mount("http://", adapter)
 	session.mount("https://", adapter)
+
+
+def xmltodict(xml_node):
+	t = etree.fromstring(xml_node, parser=etree.XMLParser(recover=True)) \
+		if isinstance(xml_node, str) else xml_node
+	d = {t.tag: {} if t.attrib else None}
+	children = list(t)
+	if children:
+		dd = {}
+		for dc in map(xmltodict, children):
+			for k, v in dc.items():
+				if k in dd:
+					if isinstance(dd[k], list):
+						dd[k].append(v)
+					else:
+						dd[k] = [dd[k], v]
+				else:
+					dd[k] = v
+		d = {t.tag: dd}
+	if t.attrib:
+		d[t.tag].update(('@' + k, v) for k, v in t.attrib.items())
+	if t.text:
+		text = t.text.strip()
+		if children or t.attrib:
+			if text:
+				d[t.tag]['#text'] = text
+		else:
+			d[t.tag] = text
+	return d
