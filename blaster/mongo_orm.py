@@ -455,8 +455,16 @@ class Model(object):
 
 		elif(kwargs):
 			# assuming we want a single item
+			cache_key = None
+			if(use_cache and use_cache not in (True, False)):
+				cache_key = tuple((k, str(v)) for k, v in sorted(kwargs.items()))
+			if(cache_key is not None and (ret := use_cache.get(cache_key))):
+				return ret
+
 			ret = list(cls.query(kwargs))
 			if(ret):
+				if(cache_key is not None):
+					use_cache[cache_key] = ret[0]
 				return ret[0]
 
 		return None
