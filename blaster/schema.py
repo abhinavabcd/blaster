@@ -1,5 +1,6 @@
 import re
 from base64 import b64decode
+from itertools import chain
 from datetime import datetime
 import ujson as json
 from typing import get_type_hints, get_args, get_origin, types as Types, Optional
@@ -17,14 +18,6 @@ class BlasterSchemaTypeError(TypeError):
 
 def RAISE_TYPE_ERROR(msg):
 	raise BlasterSchemaTypeError(msg)
-
-
-class Field:
-	def __init__(self, title, description, default=_OBJ_END_, json_name=None):
-		self.title = title
-		self.description = description
-		self.default = default
-		self.json_name = json_name
 
 
 class Number:
@@ -98,7 +91,7 @@ class Str:
 	def __init__(
 		self, one_of=None, minlen=1, maxlen=_16KB_,
 		regex=None, default=_OBJ_END_,
-		before=None, **kwargs
+		before=None, format=None
 	):
 		self.minlen = minlen
 		self.maxlen = maxlen
@@ -106,8 +99,7 @@ class Str:
 		self._default = default
 		self.regex = regex and re.compile(regex)
 		self.before = before
-		_fmt = kwargs.pop("format", None)
-		self.fmt = _fmt and Str.format_validators[_fmt]
+		self.fmt = format and Str.format_validators[format]
 
 		# make schema
 		self._schema_ = _schema = {"type": "string"}
@@ -122,8 +114,8 @@ class Str:
 			_schema["enum"] = list(self.one_of)
 		if(regex):
 			_schema["pattern"] = regex
-		if(_fmt):
-			_schema["format"] = _fmt
+		if(format):
+			_schema["format"] = format
 
 	def validate(self, e):
 		if(self.before):
@@ -152,6 +144,22 @@ class Str:
 		return e
 
 
+class Field:
+	def __init__(self, _type, title=None, description=None, default=_OBJ_END_, json_name=None, **kwargs):
+		self.title = title
+		self.description = description
+		self.default = default
+		self.json_name = json_name
+		# special type params for basics
+		if(_type == str or _type == Str):
+			_type = Str(**kwargs)
+		elif(_type == int or _type == Int):
+			_type = Int(**kwargs)
+		elif(_type == float or _type == Float):
+			_type = Float(**kwargs)
+		self._type = _type
+
+
 # _List([str, int]) -> oneOf str, int   -> list[str, int] -> list[str] | list[int] -> cannot mix object types
 # _List((str, int)) -> anyOf str, int   -> list[str | int] -> can mix object types
 class _List:
@@ -173,18 +181,22 @@ class _List:
 		self._complex_validations = _item_validation.keywords.get("complex_validations") or ()
 		self._simple_types = _item_validation.keywords.get("simple_types") or ()
 		self.validate = partial(
-			list_validation, self,  # arg here
+			list_validation,  # arg here
 			simple_types=self._simple_types,
 			complex_validations=self._complex_validations,
 			mix=self._mix,
-			nullable=self._nullable
+			nullable=self._nullable,
+			default=default
 		)
 
 
-class Set(_List):
+class _Set(_List):
 	def __init__(self, _types, default=_OBJ_END_):
-		super(self).__init__(_types, default)
-		self.validate = lambda e: set(y) if ((y := self.validate(e)) is not None) else None
+		super().__init__(_types, default)
+
+	def validate(self, e):
+		if((e := super().validate(e)) is not None):
+			return set(e)
 
 # Type definitions:
 # - Object
@@ -248,11 +260,6 @@ class Object:
 		if(default is not _OBJ_END_):
 			_schema["default"] = default
 
-	# validates Object(a=str, b=int, h=Test).validate({} or obj or string)
-	# validates ObjectClass.validate({} or )
-	def validate(self):
-		return self.__class__.validate(self)  # resets internal dict
-
 	@classmethod
 	def validate(cls, obj):  # obj -> instance of dict, cls, str
 		# regular class instance
@@ -261,12 +268,13 @@ class Object:
 		if(obj is None):
 			return None
 
-		ret = obj
 		if(isinstance(obj, dict)):
-			ret = cls()
-			e = obj
-		else:
-			e = obj.__dict__
+			_obj = cls()
+			_obj.__dict__ = obj
+			obj = _obj
+
+		e = obj.__dict__
+
 		k = None
 		attr_value = None
 		try:
@@ -284,8 +292,7 @@ class Object:
 				if(_validated_attr != attr_value):
 					e[k] = _validated_attr
 
-				setattr(ret, k, _validated_attr)
-			return ret
+			return obj
 		except Exception as ex:
 			raise BlasterSchemaTypeError({
 				"exception": (ex.args and ex.args[0]) or "Validation failed",
@@ -297,10 +304,11 @@ class Object:
 	@classmethod
 	def from_dict(cls, _dict: dict, default=_OBJ_END_):
 		try:
-			for _k, k in cls._dict_key_to_object_key.items():
+			for _k, k in cls._remap_dict_key_to_object_key.items():
 				if(_k in _dict):
 					_dict[k] = _dict.pop(_k)
 			return cls.validate(_dict)
+
 		except Exception as ex:
 			if(default is not _OBJ_END_):
 				return default
@@ -312,6 +320,8 @@ class Object:
 			val = getattr(self, k, None)
 			if(isinstance(val, Object)):
 				val = val.to_dict()
+			elif(isinstance(val, list)):
+				val = [v.to_dict() if isinstance(v, Object) else v for v in val]
 			ret[k] = val
 		return ret
 
@@ -328,20 +338,27 @@ def to_float(e):
 	return e and float(e)
 
 
-def item_validation(e, simple_types=(), complex_validations=(), nullable=True):
+# returns validated value or None, and what validators matched
+def _validate(e, simple_types=(), complex_validations=(), nullable=True, matched_validators=None):
 	if(e is None and not nullable):
 		raise TypeError("Cannot be none")
 
 	valid = False
-	if(simple_types and isinstance(e, simple_types)):
-		valid = True
-	if(complex_validations):
+	for _simple_type in simple_types:
+		if(isinstance(e, _simple_type)):
+			valid = True
+			if(matched_validators is not None):
+				matched_validators.append(_simple_type)
+			break
+	if(not valid):
 		for _complex_validation in complex_validations:
 			try:
-				if(_complex_validation(e)):
-					valid = True
-					break
-			except Exception as ex:
+				e = _complex_validation(e)
+				valid = True
+				if(matched_validators is not None):
+					matched_validators.append(_complex_validation)
+				break
+			except Exception:
 				pass
 	# if no validations are given are we good
 	if(not simple_types and not complex_validations):
@@ -356,12 +373,12 @@ def item_validation(e, simple_types=(), complex_validations=(), nullable=True):
 	raise TypeError("Invalid value")
 
 
-def list_validation(_type, arr, simple_types=None, complex_validations=None, mix=False, nullable=True):
+def list_validation(arr, simple_types=None, complex_validations=None, mix=False, nullable=True, default=_OBJ_END_):
 	# sequece
 	if(arr is None):
-		if(_type._default is not _OBJ_END_):
+		if(default is not _OBJ_END_):
 			# None or copy of default
-			return list(_type._default) if _type._default is not None else None
+			return list(default) if default is not None else None
 		if(nullable):
 			return None
 		raise TypeError("Cannot be none")
@@ -372,21 +389,22 @@ def list_validation(_type, arr, simple_types=None, complex_validations=None, mix
 		else:
 			raise TypeError("Not an array type")
 
-	_prev_type = _OBJ_END_
-
+	_prev_mix_check = _OBJ_END_
 	for i in range(len(arr)):
 		val = arr[i]
-		e = item_validation(val, simple_types, complex_validations, nullable)
+		e = _validate(
+			val, simple_types, complex_validations, nullable,
+			matched_validators=(_mix_check := []) if not mix else None
+		)
 		if(e is not val):
 			arr[i] = e
 		# check types should not mixed
 		if(not mix):  # single type, so check type matches with previous
-			_cur_type = type(e)
-			if(_prev_type is _OBJ_END_):
-				_prev_type = _cur_type
-			elif(_prev_type != _cur_type):
-				raise TypeError(f"Array values should not be mixed types: {_prev_type} != {_cur_type}")
-
+			if(_prev_mix_check is _OBJ_END_):
+				_prev_mix_check = _mix_check
+			elif(_prev_mix_check != _mix_check):
+				raise TypeError("Array values should not be mixed types")
+			_prev_mix_check = _mix_check
 	return arr
 
 
@@ -402,7 +420,7 @@ OptionalType = type(Optional[str])
 
 # given any instance/class, returns (schema, _validation) function
 # validation is inplace, if you want to validate to new, pass a copy
-def schema(x, _default=_OBJ_END_):
+def schema(x, default=_OBJ_END_):
 
 	if(type(x) is Types.UnionType):
 		x = get_args(x)
@@ -413,14 +431,14 @@ def schema(x, _default=_OBJ_END_):
 
 	if(type(x) is Types.GenericAlias):
 		_origin = get_origin(x)
-		_args = list(get_args(x)) or None
+		_args = list(get_args(x))
 		if(_origin == list):
-			return schema(_List(_args), _default=_default)
+			return schema(_List(_args, default=default))
 		elif(_origin == dict):
 			_args = [str] * max(0, (2 - len(_args))) + _args
-			return schema(_Dict(*_args), _default=_default)
+			return schema(_Dict(*_args, default=default))
 		elif(_origin == set):
-			return schema(Set(_args), _default=_default)
+			return schema(_Set(_args, default=default))
 
 	if(isinstance(x, type) and issubclass(x, Object) and x != Object):
 		_schema_def_name_ = x.__module__ + "." + x.__name__
@@ -432,17 +450,22 @@ def schema(x, _default=_OBJ_END_):
 		x._properties = _properties = {}
 		x._property_types = {}
 		x._required = _required = set()
-		x._dict_key_to_object_key = {}  # used when converting json/dict to object
+		x._remap_dict_key_to_object_key = {}  # used when converting json/dict to object
 
-		for k, _type in get_type_hints(x).items():
+		additional_type_hints = []
+		for k, val in x.__dict__.items():
+			if(isinstance(val, Field)):
+				additional_type_hints.append((k, None))
 
+		for k, _type in chain(get_type_hints(x).items(), additional_type_hints):
 			# pure type to instance of schema types
 			_value = _default_value = x.__dict__.get(k, _OBJ_END_)  # declaration default
 			if(isinstance(_value, Field)):
 				_default_value = _value.default
+				_type = _value._type or _type
 				setattr(x, k, _default_value)
 
-			_schema_and_validation = schema(_type, _default=_default_value)
+			_schema_and_validation = schema(_type, default=_default_value)
 			if(_schema_and_validation):
 				_properties[k], _validations[k] = _schema_and_validation
 				if(
@@ -456,7 +479,7 @@ def schema(x, _default=_OBJ_END_):
 					_properties[k]["title"] = _value.title
 					_properties[k]["description"] = _value.description
 					if(dict_key := _value.json_name):
-						x._dict_key_to_object_key[dict_key] = k
+						x._remap_dict_key_to_object_key[dict_key] = k
 
 				# keep track of propeties
 				x._property_types[k] = _type
@@ -509,83 +532,83 @@ def schema(x, _default=_OBJ_END_):
 			ret["nullable"] = True
 
 		return ret, partial(
-			item_validation,
+			_validate,
 			simple_types=tuple(simple_types),
 			complex_validations=complex_validations,
 			nullable=is_nullable
 		)
 
 	elif(isinstance(x, Str)):
-		if(_default is not _OBJ_END_):
-			x._default = _default
-			x._schema_["default"] = _default
+		if(default is not _OBJ_END_):
+			x._default = default
+			x._schema_["default"] = default
 		return x._schema_, x.validate
 
 	elif(isinstance(x, Int)):
-		if(_default is not _OBJ_END_):
-			x._default = _default
-			x._schema_["default"] = _default
+		if(default is not _OBJ_END_):
+			x._default = default
+			x._schema_["default"] = default
 		return x._schema_, x.validate
 
 	elif(isinstance(x, _Dict)):
-		if(_default is not _OBJ_END_):
-			x._default = _default
-			x._schema_["default"] = _default
+		if(default is not _OBJ_END_):
+			x._default = default
+			x._schema_["default"] = default
 		return x._schema_, x.validate
 
-	elif(isinstance(x, Set)):  # Array(_types)
-		if(_default is not _OBJ_END_):
-			x._default = _default
-			x._schema_["default"] = _default
+	elif(isinstance(x, _Set)):  # Array(_types)
+		if(default is not _OBJ_END_):
+			x._default = default
+			x._schema_["default"] = default
 		return (
 			x._schema_,
 			lambda s: set(y) if ((y := x.validate(s)) is not None) else None
 		)
 
 	elif(isinstance(x, _List)):  # Array(_types)
-		if(_default is not _OBJ_END_):
-			x._default = _default
-			x._schema_["default"] = _default
+		if(default is not _OBJ_END_):
+			x._default = default
+			x._schema_["default"] = default
 		return x._schema_, x.validate
 
 	elif(isinstance(x, Bool)):
-		if(_default is not _OBJ_END_):
-			x._default = _default
-			x._schema_["default"] = _default
+		if(default is not _OBJ_END_):
+			x._default = default
+			x._schema_["default"] = default
 		return x._schema_, x.validate
 
 	elif(isinstance(x, Object)):  # Object(id=Array)
-		if(_default is not _OBJ_END_):
-			x._default = _default
+		if(default is not _OBJ_END_):
+			x._default = default
 		return x._schema_, x.validate
 
 	elif(x == int or x == Int):
-		x = Int(default=_default)
+		x = Int(default=default)
 		return x._schema_, x.validate
 
 	elif(x == float):
-		x = Float(default=_default)
+		x = Float(default=default)
 		return x._schema_, x.validate
 
 	elif(x == str or x == Str):
-		x = Str(default=_default)
+		x = Str(default=default)
 		return x._schema_, x.validate
 
 	elif(x == list):  # genric
 		# make a copy if default exists
-		x = _List(None, default=_default)
+		x = _List(None, default=default)
 		return x._schema_, x.validate
 
 	elif(x == set):  # genric
-		x = _List(None, default=_default)
+		x = _List(None, default=default)
 		return x._schema_, lambda s: set(y) if ((y := x.validate(s)) is not None) else None
 
 	elif(x == dict):  # generic without any attributes
-		x = _Dict(None, None, default=_default)
+		x = _Dict(None, None, default=default)
 		return x._schema_, x.validate
 
 	elif(x == bool or x == Bool):  # generic without any attributes
-		x = Bool(default=_default)
+		x = Bool(default=default)
 		return x._schema_, x.validate
 
 	else:

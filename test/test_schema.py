@@ -43,8 +43,7 @@ class Test5(Object):
 class Test6(Object):
 	_title_ = "test6"
 	_description_ = "test6 description"
-
-	a: List[int] | List[str] = Field("hello", "a description")
+	a = Field(List[int] | List[str], "hello", "a description")
 
 
 schema.init()
@@ -106,5 +105,7 @@ class TestTools(unittest.TestCase):
 
 		self.assertDictEqual(
 			schema.defs["test.test_schema.Test6"],
-			{'type': 'object', 'title': 'test6', 'description': 'test6 description', 'properties': {'a': {'anyOf': [{'type': 'array', 'items': {'type': 'integer'}}, {'type': 'array', 'items': {'type': 'string'}}], 'title': 'hello', 'description': 'a description'}}, 'required': ['a']}
+			{
+				'type': 'object', 'title': 'test6', 'description': 'test6 description', 'properties': {'a': {'anyOf': [{'type': 'array', 'items': {'type': 'integer'}}, {'type': 'array', 'items': {'type': 'string'}}], 'title': 'hello', 'description': 'a description'}}, 'required': ['a']
+			}
 		)

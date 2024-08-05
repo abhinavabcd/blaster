@@ -116,21 +116,30 @@ class _Param:
 
 
 class _BodyParam:
-	def __init__(self, name=None, _type=str):
+	def __init__(self, name=None, _type=str, title=None, description=None):
 		self.name = name
 		self._type = _type
+		self.title = title
+		self.description = description
 
 	def __getitem__(self, key):
 		return _BodyParam(key)
 
 
 class _GetParam:
-	def __init__(self, name=None, _type=str):
+	def __init__(self, name=None, _type=str, title=None, description=None):
 		self.name = name
 		self._type = _type
+		self.title = title
+		self.description = description
 
 	def __getitem__(self, key):
 		return _GetParam(key)
+
+
+BodyParam = _BodyParam()
+GetParam = _GetParam()
+Param = _Param()
 
 
 class Query(Object):
@@ -158,10 +167,6 @@ class Body(Object):
 	def __getitem__(self, key):
 		return _BodyParam(key)
 
-
-BodyParam = _BodyParam()
-GetParam = _GetParam()
-Param = _Param()
 
 # custom argument hooks
 _argument_creator_hooks = {}
@@ -403,13 +408,13 @@ class Request:
 			return lambda req: _type.from_dict(req._body, default=default)
 		# single params
 		elif(isinstance(_type, _BodyParam)):
-			_, validate = schema_func(_type._type, _default=default)
+			_, validate = schema_func(_type._type, default=default)
 			return lambda req: validate(req._body.get(_type.name))
 		elif(isinstance(_type, _GetParam)):
-			_, validate = schema_func(_type._type, _default=default)
+			_, validate = schema_func(_type._type, default=default)
 			return lambda req: validate(req._params.get(_type.name))
 		elif(isinstance(_type, _Param)):
-			_, validate = schema_func(_type._type, _default=default)
+			_, validate = schema_func(_type._type, default=default)
 			return lambda req: validate(req.get(_type.name))
 
 		# prefer arg injector first if available
@@ -430,7 +435,7 @@ class Request:
 			return lambda req: _type.from_dict(req, default=default)
 
 		else:
-			_, validate = schema_func(_type, _default=default)
+			_, validate = schema_func(_type, default=default)
 
 			def _no_type_arg(req):
 				ret = req.get(name, default=_OBJ_END_)
