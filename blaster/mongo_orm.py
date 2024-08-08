@@ -469,30 +469,46 @@ class Model(object):
 
 		return None
 
+	def __validate_setattr(self, _attr_obj, k, v):
+		# setting manually (not loading from db) -> try implicit conversions
+		# check with validator if it exists
+		if((_attr_validator := _attr_obj._validator) is not None):
+			v = _attr_validator(_attr_obj, v, self)
+
+		_attr_obj_type = _attr_obj._type
+		_v_type = type(v)
+		if((v is not None) and _v_type is not _attr_obj_type):
+			if(_attr_obj_type in (int, float)):  # force cast between int/float
+				# force cast between int/float
+				v = _attr_obj_type(v or 0)
+			elif(_attr_obj_type == str):  # force cast to string
+				v = str(v)
+			elif(_attr_obj_type is ObjectId and k == "_id"):
+				pass  # could be anything don't try to cast
+			elif(_attr_obj_type in (dict, list)):
+				if(
+					not (
+						_v_type in (MongoList, MongoDict)
+						and (v._model_obj is self)  # setting from same object, all is good
+					)
+				):
+					v = _attr_obj_type(v)
+			else:
+				raise TypeError(
+					"Type mismatch in {}, {}: should be {} but got {}".format(
+						type(self), k, _attr_obj_type, str(type(v))
+					)
+				)
+		return v
+
 	def __setattr__(self, k, v):
 		_attr_obj = self.__class__._attrs_.get(k)
 		if(_attr_obj):
 			# change type of objects when setting them
 			_attr_obj_type = _attr_obj._type
-			# impllicit type corrections for v
-			if((v is not None) and not isinstance(v, _attr_obj_type)):
-				if(not self._initializing_):  # setting manually (not loading from db) -> try implicit conversions
-					if(_attr_obj_type == int or _attr_obj_type == float):
-						# force cast between int/float
-						v = _attr_obj_type(v or 0)
-					elif(_attr_obj_type == str):  # force cast to string
-						v = str(v)
-					elif(_attr_obj_type == ObjectId and k == "_id"):
-						pass  # could be anything don't try to cast
-					else:
-						raise TypeError(
-							"Type mismatch in {}, {}: should be {} but got {}".format(
-								type(self), k, _attr_obj_type, str(type(v))
-							)
-						)
-						# else:
-						# 	already in db, so let's wait for application to crash
-			if(self._initializing_):
+			if(not self._initializing_):
+				self._set_query_updates[k] = self.__validate_setattr(_attr_obj, k, v)
+			else:  # LOADING DATA FROM DB
 				# while initializing it, we tranform db data to objects fields
 				if(_attr_obj_type == dict):
 					if(isinstance(v, dict)):
@@ -500,13 +516,6 @@ class Model(object):
 				elif(_attr_obj_type == list):
 					if(isinstance(v, list)):
 						v = MongoList(self, k, v)
-
-			else:  # initialized object
-				# check with validator
-				_attr_validator = _attr_obj._validator
-				if(_attr_validator is not None):
-					v = _attr_validator(_attr_obj, v, self)
-				self._set_query_updates[k] = v
 
 		self.__dict__[k] = v
 
@@ -688,17 +697,24 @@ class Model(object):
 
 		cls._trigger_event(EVENT_BEFORE_UPDATE, self)
 
+		if((_set_query := _update_query.get("$set")) is not None):
+			# validate
+			for _path, _val in _set_query.items():
+				if("." not in _path):
+					if(_attr_obj := cls._attrs_.get(_path)):
+						_set_query[_path] = self.__validate_setattr(_attr_obj, _path, _val)
+
 		if(include_pending_updates):
 			if(self._if_non_empty_set_query_update):
 				# check an update them on $set query
 				for _path in list(self._if_non_empty_set_query_update.keys()):
 					if(_val := self._if_non_empty_set_query_update.pop(_path)):
 						self._set_query_updates[_path] = _val
-			if(self._set_query_updates):
-				_set_query = _update_query.get("$set") or {}
-				_update_query["$set"] = {
-					**self._set_query_updates, **_set_query
-				}
+			if(_set_query_updates := self._set_query_updates):
+				if(_set_query is not None):
+					_set_query_updates.update(_set_query)
+				_update_query["$set"] = _set_query_updates
+
 			if(self._other_query_updates):
 				for _ukey, _uval in self._other_query_updates.items():
 					_u_query = _update_query.get(_ukey) or {}  # from update query
