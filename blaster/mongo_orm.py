@@ -712,8 +712,11 @@ class Model(object):
 						self._set_query_updates[_path] = _val
 			if(_set_query_updates := self._set_query_updates):
 				if(_set_query is not None):
-					_set_query_updates.update(_set_query)
-				_update_query["$set"] = _set_query_updates
+					# IMP: Copy and update, because if the update fails,
+					# _set_query_updates is not carried on
+					_update_query["$set"] = {**_set_query_updates, **_set_query}
+				else:
+					_update_query["$set"] = _set_query_updates
 
 			if(self._other_query_updates):
 				for _ukey, _uval in self._other_query_updates.items():

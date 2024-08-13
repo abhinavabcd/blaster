@@ -43,6 +43,10 @@ else:
 
 @background_task
 def TRACK_EVENT(table_id, rows, ns=None):
+	'''
+		Parameters:
+		rows:  are a dict or list of dicts containing column_name: value
+	'''
 	if(ns):
 		table_id += f"_{ns}"
 	# collect all rows to push into a bucket to batch
