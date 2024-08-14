@@ -1013,7 +1013,7 @@ def sanitize_to_id_allow_case(text):
 
 
 def sanitize_to_underscore_id(text):
-	return NON_ALPHA_GROUPS_REGEX.sub("_", text.strip().lower())
+	return NON_ALPHA_GROUPS_REGEX.sub("_", text.strip().lower()).rstrip("_")
 
 
 EMAIL_REGEX = re.compile(r'^[_a-z0-9-]+(\.[_a-z0-9-]+)*(\+[_a-z0-9-]+)?\@[a-z0-9-]+(\.[a-z0-9-]+)*(\.[a-z]{2,6})$')

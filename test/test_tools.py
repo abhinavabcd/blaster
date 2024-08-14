@@ -8,7 +8,7 @@ from blaster.tools import get_time_overlaps, retry, \
 	ExpiringCache, create_signed_value, decode_signed_value, \
 	submit_background_task, background_task, ignore_exceptions, \
 	ASSERT_RATE_PER_MINUTE, RateLimitingException, get_by_key_path, \
-	xmltodict
+	xmltodict, sanitize_to_underscore_id
 from blaster.tools.sanitize_html import HtmlSanitizedDict, HtmlSanitizedList
 from datetime import datetime, timedelta
 from blaster.utils.data_utils import parse_string_to_units, parse_string_to_int, \
@@ -78,8 +78,6 @@ class TestSanitization(unittest.TestCase):
 
 		# test serialization deserialization
 		self.assertTrue(isinstance(sl, list))
-
-		print(json.dumps(sl))
 
 
 class TestAuth(unittest.TestCase):
@@ -345,6 +343,12 @@ class TestTools(unittest.TestCase):
 			get_by_key_path({"a": [{"b": {"d": "d1", "c": "c1", "e": "e1"}}, {"b": {"d": "d2", "c": "c2", "e": "e2"}}]}, "a[].b.c,e"),
 			[{"c": "c1", "e": "e1"}, {"c": "c2", "e": "e2"}]
 		)
+
+	def test_sanitize_to_underscore_id(self):
+		self.assertEqual(sanitize_to_underscore_id("a b c"), "a_b_c")
+		self.assertEqual(sanitize_to_underscore_id("a b    __ c"), "a_b_c")
+		self.assertEqual(sanitize_to_underscore_id("a b    __ c_ ?"), "a_b_c")
+		self.assertEqual(sanitize_to_underscore_id("___a b    __ c_ ?"), "a_b_c")
 
 	def test_xml_to_dict(self):
 		xml_string = "\n<note>\n  <to>Tove</to>\n  <from>Jani</from>\n  <heading>Reminder & Reminder</heading>\n  <body>Don't forget me this weekend!</body>\n</note>\n"
