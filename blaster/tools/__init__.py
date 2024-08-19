@@ -2002,6 +2002,17 @@ def NON_NULL(*args):
 	return None
 
 
+def NON_NULL_DICT(kv):
+	has_null_values = False
+	for k, v in kv.items():
+		if v is None:
+			has_null_values = True
+			break
+	if has_null_values:
+		return {k: v for k, v in kv.items() if v is not None}
+	return kv
+
+
 # RATE LIMITING
 class RateLimitingException(Exception):
 	pass
