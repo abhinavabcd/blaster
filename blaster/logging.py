@@ -118,7 +118,7 @@ def create_es_log_handler(es_config):
 				ignore=400
 			)
 
-		es_conn.index(es_index_name, log_item)
+		es_conn.index(index=es_index_name, document=log_item)
 
 	return log_handler
 

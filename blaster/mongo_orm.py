@@ -1732,8 +1732,10 @@ def initialize_model(_Model):
 
 		# adjust the pk of the table accordingly, mostly useful for primary shard
 		if(_secondary_shard := _Model._secondary_shards_.get(_index_shard_key)):  # belongs to seconday index
-			for _attr_name, _ordering in _index_keys:
-				_secondary_shard.attrs[_attr_name] = getattr(_Model, _attr_name)
+			for _attr_key, _ordering in _index_keys:
+				if("." in _attr_key):
+					_attr_key = _attr_key.split(".")[0]
+				_secondary_shard.attrs[_attr_key] = getattr(_Model, _attr_key)
 			# create _index_ for secondary shards
 			_secondary_shard.indexes.append({
 				"keys": _index_keys,
@@ -1873,7 +1875,7 @@ def initialize_model(_Model):
 		for _index in _new_indexes:
 			missing_index_creation_string = (
 				f"db.{_Model._collection_name_with_shard_}"
-				f".createIndex({json.dumps({x:y for x,y in _index})}, "
+				f".createIndex({json.dumps({x: y for x, y in _index})}, "
 				f"{json.dumps(_pymongo_indexes_to_create[_index])})"
 			)
 			LOG_ERROR("missing_mongo_indexes", desc=missing_index_creation_string)
@@ -1897,7 +1899,7 @@ def initialize_model(_Model):
 						f"{existing_options} -> {_options} : you can delete and recreate "
 						f'Delete: db.{_Model._collection_name_with_shard_}.dropIndex("{existing_index[0]}") '
 						f"Create: db.{_Model._collection_name_with_shard_}"
-						f".createIndex({json.dumps({x:y for x,y in _index})}, "
+						f".createIndex({json.dumps({x: y for x, y in _index})}, "
 						f"{json.dumps(_options)})"  # options
 					)
 					LOG_ERROR("index_options_changed", desc=index_options_changed)
