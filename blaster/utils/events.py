@@ -1,6 +1,6 @@
 _event_listeners = {}  # {int : [listeners]}
 
-PASS = NOT_HANDLING = object()
+NOT_HANDLING_EVENT = object()
 
 
 def add_listener(_id, listener):
@@ -10,7 +10,9 @@ def add_listener(_id, listener):
 	if(not listeners):
 		_event_listeners[_id] = listeners = []
 
-	listeners.insert(0, listener)  # at the beginning
+	# last added first to be called
+	# we do this because first level listeners are last to listen
+	listeners.insert(0, listener)
 
 
 def remove_listener(_id, listener):
@@ -40,37 +42,22 @@ def register_listener(_id, name=None):
 
 
 # _n => max number of broadcasts, -1 => to all possible
-def broadcast_event(_id, *args, _n=-1, **kwargs):
+def broadcast_event_iter(_id, *args, **kwargs):
 	listeners = _event_listeners.get(_id)
 	if(not listeners):
 		return
-	listeners_ret_values = []
-	# pass handled_count argument to receive
-	# previous number of handlers before it receives
-	set_arg_handled_count = "handled_count" in kwargs
 
 	# number of handlers handled this event,
 	# use case: not handling more than once
-	count = 0
 	for listener in listeners:
-		if(set_arg_handled_count):
-			kwargs["handled_count"] = count
 		ret = listener(*args, **kwargs)
-		if(ret is not NOT_HANDLING):
-			count += 1
+		if(ret is not NOT_HANDLING_EVENT):  # special object
+			yield ret
 
-		listeners_ret_values.append(ret)
-		if(_n > 0 and _n <= count):
-			break
 
-	if(_n == 1):  # special handling when you want just one response, don't return a tuple but just that value
-		return listeners_ret_values and listeners_ret_values[0]
-
-	# just fill upto _n values to return
-	while(len(listeners_ret_values) < _n):
-		listeners_ret_values.append(NOT_HANDLING)
-
-	return tuple(listeners_ret_values)
+# _n => max number of broadcasts, -1 => to all possible
+def broadcast_event(_id, *args, **kwargs):
+	return tuple(broadcast_event_iter(_id, *args, **kwargs))
 
 
 broadcast_event_multiproc = None

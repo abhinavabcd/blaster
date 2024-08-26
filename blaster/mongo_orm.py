@@ -1236,18 +1236,15 @@ class Model(object):
 			if(event_listeners is _OBJ_END_):
 				event_listeners = {}
 				setattr(cls, "_event_listeners_", event_listeners)
-			handlers = event_listeners.get(event)
-			if(handlers is None):
+			if((handlers := event_listeners.get(event)) is None):
 				event_listeners[event] = handlers = []
 			handlers.append(func)
 
 	@classmethod
 	def _trigger_event(cls, event, *obj):
-		handlers = cls._event_listeners_.get(event)
-		if(not handlers):
-			return
-		for handler in handlers:
-			handler(*obj)
+		if(handlers := cls._event_listeners_.get(event)):
+			for handler in handlers:
+				handler(*obj)
 
 	def before_update(self):
 		pass

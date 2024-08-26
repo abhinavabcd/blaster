@@ -1758,7 +1758,10 @@ class PartitionedTasksRunner:
 			try:
 				func(*args, **kwargs)
 			except Exception as ex:
-				LOG_ERROR("background_task", desc=str(ex), stracktrace_string=traceback.format_exc())
+				LOG_ERROR(
+					"background_task", partition_key=partition_key,
+					desc=str(ex), stracktrace_string=traceback.format_exc()
+				)
 
 			# signal the main thread to ask for more tasks
 			if(_queue.empty()):
