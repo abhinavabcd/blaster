@@ -1200,7 +1200,7 @@ def set_non_blocking(fd):
 
 class ThreadPool:
 	def worker(self):
-		while(val := self.tasks.get()):
+		while((val := self.tasks.get()) is not None):
 			# get a task from queue
 			func, args, kargs = val
 			try:
@@ -1731,7 +1731,9 @@ def empty_func():
 	pass
 
 
-# Spins of more threads to process tasks
+# 1. Find appropriate partitioned task queue
+# 2. If not found, create a new one, and start a worker thread for this queue
+# 3. The worker thread waits for tasks to be added to the queue and wakes up
 class PartitionedTasksRunner:
 	idle_pt_queues = None  # for reusing, push a task, and thread continues
 	partitioned_task_queues = None  # running queues
@@ -1904,19 +1906,36 @@ def all_bases(cls):
 
 
 def read_rows_from_url(url, csv_delimiter=",") -> iter:
-	with requests.get(url, stream=True) as resp:
-		if(url.endswith(".xlsx")):
-			xls_file = BytesIO()
-			for chunk in resp.iter_content(chunk_size=_16KB_):
-				xls_file.write(chunk)  # unfortunately we read the whole file, may be we can cut off at 10MB or something
-			xls_file.seek(0)
-			excel_sheet = openpyxl.load_workbook(xls_file, read_only=True, data_only=True).active
-			return excel_sheet.iter_rows(values_only=True)
-		if(url.endswith(".xls")):
-			sheet = xlrd.open_workbook(file_contents=resp.content).sheet_by_index(0)
-			return map(lambda cells: [repr(c.value) for c in cells], sheet.get_rows())
-		else:
-			return csv.reader(resp.iter_lines(decode_unicode=True), delimiter=csv_delimiter)
+	if(url.startswith("http")):
+		with requests.get(url, stream=True) as resp:
+			if(url.endswith(".xlsx")):
+				xls_file = BytesIO()
+				for chunk in resp.iter_content(chunk_size=_16KB_):
+					xls_file.write(chunk)  # unfortunately we read the whole file, may be we can cut off at 10MB or something
+				xls_file.seek(0)
+				excel_sheet = openpyxl.load_workbook(xls_file, read_only=True, data_only=True).active
+				for row in excel_sheet.iter_rows(values_only=True):
+					yield row
+			if(url.endswith(".xls")):
+				sheet = xlrd.open_workbook(file_contents=resp.content).sheet_by_index(0)
+				for cells in sheet.get_rows():
+					yield [repr(c.value) for c in cells]
+			else:
+				for row in csv.reader(resp.iter_lines(decode_unicode=True), delimiter=csv_delimiter):
+					yield row
+	else:
+		with open(url, "r") as file:
+			if(url.endswith(".xlsx")):
+				excel_sheet = openpyxl.load_workbook(file, read_only=True, data_only=True).active
+				for row in excel_sheet.iter_rows(values_only=True):
+					yield row
+			if(url.endswith(".xls")):
+				sheet = xlrd.open_workbook(file_contents=resp.content).sheet_by_index(0)
+				for cells in sheet.get_rows():
+					yield [repr(c.value) for c in cells]
+			else:
+				for row in csv.reader(file, delimiter=csv_delimiter):
+					yield row
 
 
 # print debugging info for networks request called with requests

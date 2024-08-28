@@ -247,16 +247,16 @@ class Object:
 		self._default = default
 
 		# instance specific: Ex: Object(a=Int, b=Str)
-		self._properties = {}
+		self._schema_properties = {}
 		self._validations = {}
 		self._property_types = {}
 		for k, _type in keys.items():
 			_s, _v = schema(_type)
-			self._properties[k] = _s
+			self._schema_properties[k] = _s
 			self._validations[k] = _v
 			self._property_types[k] = _type
 
-		self._schema_ = _schema = {"type": "object", "properties": self._properties}
+		self._schema_ = _schema = {"type": "object", "properties": self._schema_properties}
 		if(default is not _OBJ_END_):
 			_schema["default"] = default
 
@@ -298,7 +298,7 @@ class Object:
 				"exception": (ex.args and ex.args[0]) or "Validation failed",
 				"key": k,
 				"value": attr_value if attr_value is not _OBJ_END_ else None,
-				"schema": cls._properties[k]
+				"schema": cls._schema_properties[k]
 			})
 
 	@classmethod
@@ -447,39 +447,51 @@ def schema(x, default=_OBJ_END_):
 			return {"schema": {"$ref": "#/definitions/" + _schema_def_name_}}, x.validate
 
 		x._validations = _validations = {}
-		x._properties = _properties = {}
+		x._schema_properties = _schema_properties = {}
+		x._fields_ = _fields_ = {}  # key: [type, default, {title, description, json_name}]
 		x._property_types = {}
 		x._required = _required = set()
 		x._remap_dict_key_to_object_key = {}  # used when converting json/dict to object
 
-		additional_type_hints = []
+		__x_mro = x.__mro__
+		for cls_x in reversed(__x_mro[1:__x_mro.index(Object)]):
+			_fields_.update(cls_x._fields_)
+		for k, _type in x.__annotations__.items():
+			_fields_[k] = {"type": _type, "default": x.__dict__.get(k, _OBJ_END_)}
+
+		# capture the fields
+		# val = Field(_type, title, description, default, json_name)
 		for k, val in x.__dict__.items():
 			if(isinstance(val, Field)):
-				additional_type_hints.append((k, None))
+				_default_value = val.default
+				_fields_[k] = {
+					"type": val._type,
+					"default": _default_value,
+					"json_name": val.json_name,
+					"title": val.title,
+					"description": val.description
+				}
+				setattr(x, k, _default_value)  # so when instance is created, it has default value copied
 
-		for k, _type in chain(get_type_hints(x).items(), additional_type_hints):
+		for k, _field_data in _fields_.items():
 			# pure type to instance of schema types
-			_value = _default_value = x.__dict__.get(k, _OBJ_END_)  # declaration default
-			if(isinstance(_value, Field)):
-				_default_value = _value.default
-				_type = _value._type or _type
-				setattr(x, k, _default_value)
+			_default_value = _field_data["default"]
+			_type = _field_data["type"]
 
 			_schema_and_validation = schema(_type, default=_default_value)
 			if(_schema_and_validation):
-				_properties[k], _validations[k] = _schema_and_validation
+				_schema_properties[k], _validations[k] = _schema_and_validation
 				if(
 					(_default_value is _OBJ_END_)
-					and _properties[k]
-					and not _properties[k].get("nullable")
+					and _schema_properties[k]
+					and not _schema_properties[k].get("nullable")
 				):
 					_required.add(k)  # required if no default value
 
-				if(isinstance(_value, Field)):  # v: int = Field("title", "description", None, "json_name")
-					_properties[k]["title"] = _value.title
-					_properties[k]["description"] = _value.description
-					if(dict_key := _value.json_name):
-						x._remap_dict_key_to_object_key[dict_key] = k
+				_schema_properties[k]["title"] = _field_data.get("title")
+				_schema_properties[k]["description"] = _field_data.get("description")
+				if(dict_key := _field_data.get("json_name")):
+					x._remap_dict_key_to_object_key[dict_key] = k
 
 				# keep track of propeties
 				x._property_types[k] = _type
@@ -494,8 +506,8 @@ def schema(x, default=_OBJ_END_):
 		if(_description):
 			ret["description"] = getattr(x, "_description_", None)
 
-		if(_properties):
-			ret["properties"] = _properties
+		if(_schema_properties):
+			ret["properties"] = _schema_properties
 
 		if(_required):
 			ret["required"] = list(_required)
@@ -622,10 +634,14 @@ Dict = dict
 schema.defs = {}
 
 
-def all_subclasses(cls):
-	return set(cls.__subclasses__()).union(
-		[s for c in cls.__subclasses__() for s in all_subclasses(c)]
-	)
+def init(x, seen):
+	if(x in seen):
+		return
+	seen.add(x)
+	sub_classes = x.__subclasses__()
+	schema(x)
+	for cls in sub_classes:
+		init(cls, seen)
 
 
-schema.init = lambda: [schema(x) for x in all_subclasses(Object)]
+schema.init = lambda: init(Object, seen=set())

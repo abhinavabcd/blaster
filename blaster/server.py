@@ -723,7 +723,7 @@ class App:
 						if isinstance(_type, Headers)\
 						else ("query" if isinstance(_type, Query) else "cookie")
 
-					for _k, _s in _type._properties.items():
+					for _k, _s in _type._schema_properties.items():
 						_param = {
 							"in": _in,
 							"name": _k,
@@ -775,14 +775,14 @@ class App:
 							[getattr(func, "_original", func).__name__ for x in _body_classes]
 						)
 					)
-					_properties = {}
+					_schema_properties = {}
 					for _type in _body_classes:
 						for _key, _schema in _type._schema_["properties"].items():
-							_properties[_key] = _schema
+							_schema_properties[_key] = _schema
 
 					# add schemas
 					self.openapi["components"]["schemas"][_schema_name] = {
-						"type": "object", "properties": _properties
+						"type": "object", "properties": _schema_properties
 					}
 
 				_method_def["requestBody"] = {
