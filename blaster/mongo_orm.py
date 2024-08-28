@@ -550,6 +550,16 @@ class Model(object):
 			ret[k] = getattr(self, k)
 		return ret
 
+	def reload_from_db(self):
+		cls = self.__class__
+		primary_shard_collection = cls.get_collection(getattr(self, cls._shard_key_ or "_id"))
+		_doc_in_db = primary_shard_collection.find_one({"_id": self._id})
+		if(not _doc_in_db):  # moved out of shard or pk changed
+			raise Exception(f"Document {self._id} pk:{self.pk()} not found")
+		# 2. update our local copy
+		self.reset_and_update_cache(_doc_in_db)
+		return self
+
 	# check all defaults and see if not present in doc, set them on the object
 	def __check_and_set_initial_defaults(self, doc):
 		for attr_name, attr_obj in self.__class__._attrs_.items():
@@ -927,6 +937,7 @@ class Model(object):
 				return True
 
 		raise Exception("Concurrent update may have caused this query to fail")
+	
 
 	@classmethod
 	def query(
