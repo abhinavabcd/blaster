@@ -1916,7 +1916,7 @@ def read_rows_from_url(url, csv_delimiter=",") -> iter:
 				excel_sheet = openpyxl.load_workbook(xls_file, read_only=True, data_only=True).active
 				for row in excel_sheet.iter_rows(values_only=True):
 					yield row
-			if(url.endswith(".xls")):
+			elif(url.endswith(".xls")):
 				sheet = xlrd.open_workbook(file_contents=resp.content).sheet_by_index(0)
 				for cells in sheet.get_rows():
 					yield [repr(c.value) for c in cells]
@@ -1929,7 +1929,7 @@ def read_rows_from_url(url, csv_delimiter=",") -> iter:
 				excel_sheet = openpyxl.load_workbook(file, read_only=True, data_only=True).active
 				for row in excel_sheet.iter_rows(values_only=True):
 					yield row
-			if(url.endswith(".xls")):
+			elif(url.endswith(".xls")):
 				sheet = xlrd.open_workbook(file_contents=resp.content).sheet_by_index(0)
 				for cells in sheet.get_rows():
 					yield [repr(c.value) for c in cells]

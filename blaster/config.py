@@ -17,7 +17,13 @@ class Config:
 
     def __init__(self):
         self.frozen_keys = {k: v for k, v in vars(env).items() if not k.startswith("_")}
-        self._config = {**os.environ, **self.frozen_keys}
+        _config = {}
+        for k, v in os.environ.items():
+            if(v.startswith("{") or v.startswith("[")):
+                v = json.loads(v)
+            _config[k] = v
+        _config.update(self.frozen_keys)  # these cannot be overridden
+        self._config = _config
 
     def load(self, *paths):
         import yaml

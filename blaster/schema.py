@@ -243,7 +243,7 @@ class _Dict:
 class Object:
 	_schema_def_name_ = None
 
-	def __init__(self, default=_OBJ_END_, _required_=None, **keys):
+	def __init__(self, default=_OBJ_END_, **keys):
 		self._default = default
 
 		# instance specific: Ex: Object(a=Int, b=Str)
@@ -340,9 +340,6 @@ def to_float(e):
 
 # returns validated value or None, and what validators matched
 def _validate(e, simple_types=(), complex_validations=(), nullable=True, matched_validators=None):
-	if(e is None and not nullable):
-		raise TypeError("Cannot be none")
-
 	valid = False
 	for _simple_type in simple_types:
 		if(isinstance(e, _simple_type)):
@@ -361,7 +358,9 @@ def _validate(e, simple_types=(), complex_validations=(), nullable=True, matched
 			except Exception:
 				pass
 	# if no validations are given are we good
-	if(not simple_types and not complex_validations):
+	if(not valid and not simple_types and not complex_validations):
+		if(e is None and not nullable):
+			raise TypeError("Cannot be none")
 		valid = True
 
 	if(valid):
