@@ -920,7 +920,7 @@ class Model(object):
 				# publish update event
 				cls._trigger_event(
 					EVENT_MONGO_AFTER_UPDATE,
-					original_doc, updated_doc
+					self, original_doc, updated_doc
 				)
 
 				# reset all values

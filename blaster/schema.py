@@ -1,12 +1,11 @@
 import re
 from base64 import b64decode
-from itertools import chain
 from datetime import datetime
 import ujson as json
-from typing import get_type_hints, get_args, get_origin, types as Types, Optional
+from typing import get_args, get_origin, types as Types, Optional
 from functools import partial
 
-from blaster.tools import _OBJ_END_, _16KB_
+from blaster.tools import _OBJ_END_, _16KB_, all_subclasses
 # bare minimum validations and schema generators
 
 
@@ -633,14 +632,9 @@ Dict = dict
 schema.defs = {}
 
 
-def init(x, seen):
-	if(x in seen):
-		return
-	seen.add(x)
-	sub_classes = x.__subclasses__()
-	schema(x)
-	for cls in sub_classes:
-		init(cls, seen)
+def init():
+	for cls in all_subclasses(Object):
+		schema(cls)
 
 
-schema.init = lambda: init(Object, seen=set())
+schema.init = init

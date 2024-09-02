@@ -854,6 +854,14 @@ def remove_duplicates(lst, key=None):
 	return ret
 
 
+def get_empty_fields(_dict, *fields):
+	ret = []
+	for field in (fields or _dict.keys()):
+		if(not _dict.get(field, None)):
+			ret.append(field)
+	return ret
+
+
 def get_shard_id(_id):
 	return (int(_id) & (((1 << 12) - 1) << 11)) >> 11
 
@@ -1893,16 +1901,23 @@ def call_after_func(func):
 		return new_func
 
 
-def all_subclasses(cls):
-	return remove_duplicates(
-		list(cls.__subclasses__()) + [s for c in cls.__subclasses__() for s in all_subclasses(c)]
-	)
+def __iter_subclasses(cls, seen, reverse) -> iter:
+	if(cls in seen):
+		return
+	seen.add(cls)
+	if(not reverse):
+		yield cls
+	for sub_class in cls.__subclasses__():
+		yield from __iter_subclasses(sub_class, seen, reverse)
+	if(reverse):
+		yield cls
 
 
-def all_bases(cls):
-	return remove_duplicates(
-		[s for c in cls.__bases__ for s in all_bases(c)] + list(cls.__bases__)
-	)
+def all_subclasses(cls, reverse=False, ignore_initial=True) -> iter:
+	_iter = __iter_subclasses(cls, set(), reverse)
+	if(ignore_initial):
+		next(_iter)
+	return _iter
 
 
 def read_rows_from_url(url, csv_delimiter=",") -> iter:
