@@ -1939,7 +1939,7 @@ def read_rows_from_url(url, csv_delimiter=",") -> iter:
 				for row in csv.reader(resp.iter_lines(decode_unicode=True), delimiter=csv_delimiter):
 					yield row
 	else:
-		with open(url, "r") as file:
+		with open(url, "rb") as file:
 			if(url.endswith(".xlsx")):
 				excel_sheet = openpyxl.load_workbook(file, read_only=True, data_only=True).active
 				for row in excel_sheet.iter_rows(values_only=True):
