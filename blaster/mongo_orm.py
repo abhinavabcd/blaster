@@ -937,7 +937,10 @@ class Model(object):
 				return True
 
 		raise Exception("Concurrent update may have caused this query to fail")
-	
+
+	@classmethod
+	def from_doc(cls, doc):
+		return cls(False)._reset(doc)
 
 	@classmethod
 	def query(
