@@ -43,7 +43,7 @@ class Test5(Object):
 class Test6(Object):
 	_title_ = "test6"
 	_description_ = "test6 description"
-	a = Field(List[int] | List[str], "hello", "a description")
+	a = Field(list[int] | list[str], "hello", "a description")
 
 
 schema.init()

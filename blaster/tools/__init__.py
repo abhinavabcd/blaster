@@ -1949,7 +1949,7 @@ def read_rows_from_url(url, csv_delimiter=",") -> iter:
 				for cells in sheet.get_rows():
 					yield [repr(c.value) for c in cells]
 			else:
-				for row in csv.reader(file, delimiter=csv_delimiter):
+				for row in csv.reader(TextIOWrapper(file), delimiter=csv_delimiter):
 					yield row
 
 

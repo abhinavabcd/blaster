@@ -179,14 +179,45 @@ class _List:
 		self._nullable = _item_validation.keywords.get("nullable", False)
 		self._complex_validations = _item_validation.keywords.get("complex_validations") or ()
 		self._simple_types = _item_validation.keywords.get("simple_types") or ()
-		self.validate = partial(
-			list_validation,  # arg here
-			simple_types=self._simple_types,
-			complex_validations=self._complex_validations,
-			mix=self._mix,
-			nullable=self._nullable,
-			default=default
-		)
+
+	def validate(self, arr):
+		# sequece
+		default = self._default
+		nullable = self._nullable
+		simple_types = self._simple_types
+		complex_validations = self._complex_validations
+		mix = self._mix
+		if(arr is None):
+			if(default is not _OBJ_END_):
+				# None or copy of default
+				return list(default) if default is not None else None
+			if(nullable):
+				return None
+			raise TypeError("Cannot be none")
+
+		if(not isinstance(arr, list)):
+			if(isinstance(arr, str) and arr.startswith("[")):
+				arr = json.loads(arr)
+			else:
+				raise TypeError("Not an array type")
+
+		_prev_mix_check = _OBJ_END_
+		for i in range(len(arr)):
+			val = arr[i]
+			e = _validate(
+				val, simple_types, complex_validations, nullable,
+				matched_validators=(_mix_check := []) if not mix else None
+			)
+			if(e is not val):
+				arr[i] = e
+			# check types should not mixed
+			if(not mix):  # single type, so check type matches with previous
+				if(_prev_mix_check is _OBJ_END_):
+					_prev_mix_check = _mix_check
+				elif(_prev_mix_check != _mix_check):
+					raise TypeError("Array values should not be mixed types")
+				_prev_mix_check = _mix_check
+		return arr
 
 
 class _Set(_List):
@@ -369,41 +400,6 @@ def _validate(e, simple_types=(), complex_validations=(), nullable=True, matched
 		return None
 
 	raise TypeError("Invalid value")
-
-
-def list_validation(arr, simple_types=None, complex_validations=None, mix=False, nullable=True, default=_OBJ_END_):
-	# sequece
-	if(arr is None):
-		if(default is not _OBJ_END_):
-			# None or copy of default
-			return list(default) if default is not None else None
-		if(nullable):
-			return None
-		raise TypeError("Cannot be none")
-
-	if(not isinstance(arr, list)):
-		if(isinstance(arr, str) and arr.startswith("[")):
-			arr = json.loads(arr)
-		else:
-			raise TypeError("Not an array type")
-
-	_prev_mix_check = _OBJ_END_
-	for i in range(len(arr)):
-		val = arr[i]
-		e = _validate(
-			val, simple_types, complex_validations, nullable,
-			matched_validators=(_mix_check := []) if not mix else None
-		)
-		if(e is not val):
-			arr[i] = e
-		# check types should not mixed
-		if(not mix):  # single type, so check type matches with previous
-			if(_prev_mix_check is _OBJ_END_):
-				_prev_mix_check = _mix_check
-			elif(_prev_mix_check != _mix_check):
-				raise TypeError("Array values should not be mixed types")
-			_prev_mix_check = _mix_check
-	return arr
 
 
 # Array(str), Array((int, str), default=None), Array(Object), Array(Pet)
@@ -626,8 +622,22 @@ def schema(x, default=_OBJ_END_):
 
 
 # Defs, that require schema to be defined
-List = list
-Dict = dict
+class DictValidater:
+	def __getitem__(self, *_types):
+		n = len(_types)
+		if(n == 1):
+			return _Dict(str, _types[0])
+		elif(n == 2):
+			return _Dict(_types[0], _types[1])
+
+
+class ListValidater:
+	def __getitem__(self, _type):
+		return _List(_type)
+
+
+List = ListValidater()
+Dict = DictValidater()
 
 schema.defs = {}
 
