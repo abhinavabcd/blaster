@@ -40,6 +40,7 @@ EVENT_MONGO_AFTER_UPDATE = 5
 
 _NOT_EXISTS_QUERY = {"$exists": False}  # just a constant
 
+LIST_OR_DICT_TYPE = frozenset((list, dict))
 
 # utility to print collection name + node for logging
 def COLLECTION_NAME(collection):
@@ -485,7 +486,7 @@ class Model(object):
 				v = str(v)
 			elif(_attr_obj_type is ObjectId and k == "_id"):
 				pass  # could be anything don't try to cast
-			elif(_attr_obj_type in (dict, list)):
+			elif(_attr_obj_type in LIST_OR_DICT_TYPE):
 				if(
 					not (
 						_v_type in (MongoList, MongoDict)
@@ -510,10 +511,9 @@ class Model(object):
 				self._set_query_updates[k] = self.__validate_setattr(_attr_obj, k, v)
 			else:  # LOADING DATA FROM DB
 				# while initializing it, we tranform db data to objects fields
-				if(_attr_obj_type == dict):
+				if(_attr_obj_type in LIST_OR_DICT_TYPE):
 					if(isinstance(v, dict)):
 						v = MongoDict(self, k, v)
-				elif(_attr_obj_type == list):
 					if(isinstance(v, list)):
 						v = MongoList(self, k, v)
 

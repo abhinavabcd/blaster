@@ -53,10 +53,13 @@ class Config:
                             config_files.append(os.path.join(path, "staging.dev.yaml"))
                             config_files.append(os.path.join(path, "staging.dev.secrets.yaml"))
             for f in config_files:
-                if(not os.path.isfile(f)):
+                if(
+                    not os.path.isfile(f)
+                    or (_config := yaml.safe_load(open(f).read())) is None  # empty file
+                ):
                     continue
                 print("Loading config file: ", f)
-                for k, v in yaml.safe_load(open(f).read()).items():
+                for k, v in _config.items():
                     setattr(self, k, v)
 
     def __setattr__(self, key, val):
