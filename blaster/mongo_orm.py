@@ -519,25 +519,17 @@ class Model(object):
 
 		self.__dict__[k] = v
 
-	def to_dict(self, r=None):
+	def to_dict(self):
 		_json = {}
-		if(isinstance(r, str)):
-			r = [r]
-
-		for k, _attr in self.__class__._attrs_.items():
-			v = getattr(self, k, _OBJ_END_)
-			if(v is not _OBJ_END_):
-				attr_read_auth: set = getattr(_attr, "r", None)
-				if(r and attr_read_auth):
-					for i in r:
-						if(i in attr_read_auth):
-							_json[k] = v
-							break
-				else:
+		if(original_doc := self._original_doc):
+			for k in self.__class__._attrs_.keys():
+				if((v := original_doc.get(k, _OBJ_END_)) is not _OBJ_END_):
 					_json[k] = v
-
-		_id = getattr(self, '_id', _OBJ_END_)
-		if(_id is not _OBJ_END_):
+		elif(self._set_query_updates):
+			for k in self.__class__._attrs_.keys():
+				if((v := self._set_query_updates.get(k, _OBJ_END_)) is not _OBJ_END_):
+					_json[k] = v
+		if((_id := _json.get("_id")) is not None):
 			_json['_id'] = str(_id)
 		return _json
 
