@@ -2095,12 +2095,13 @@ def set_requests_default_args(**_kwargs):
 	session.mount("https://", adapter)
 
 
-def xmltodict(xml_node):
+def xmltodict(xml_node, attributes=False):
 	t = etree.fromstring(xml_node, parser=etree.XMLParser(recover=True)) \
 		if isinstance(xml_node, str) else xml_node
-	d = {t.tag: {} if t.attrib else None}
+	attributes = attributes and t.attrib
+	d = {t.tag: {} if attributes else None}
 	children = list(t)
-	if children:
+	if(children):
 		dd = {}
 		for dc in map(xmltodict, children):
 			for k, v in dc.items():
@@ -2112,13 +2113,14 @@ def xmltodict(xml_node):
 				else:
 					dd[k] = v
 		d = {t.tag: dd}
-	if t.attrib:
-		d[t.tag].update(('@' + k, v) for k, v in t.attrib.items())
-	if t.text:
+
+	if(attributes):
+		d[t.tag].update(('@' + k, v) for k, v in attributes.items())
+
+	if(t.text):
 		text = t.text.strip()
-		if children or t.attrib:
-			if text:
-				d[t.tag]['#text'] = text
+		if(children or attributes):
+			d[t.tag]['#text'] = text
 		else:
 			d[t.tag] = text
 	return d
