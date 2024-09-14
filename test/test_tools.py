@@ -336,7 +336,16 @@ class TestTools(unittest.TestCase):
 			get_by_key_path({"a": {"b": 1}}, "a.b"), 1
 		)
 		self.assertEqual(
-			get_by_key_path({"a": [{"b": 1}, {"b": 2}]}, "a[].b"), [1, 2]
+			get_by_key_path({"a": [{"b": 1}, {"b": 2}]}, "a[].b"),
+			[1, 2]
+		)
+		self.assertEqual(
+			get_by_key_path({"a": [{"b": 1}, {"b": 2}]}, "a[0].b"),
+			1
+		)
+		self.assertEqual(
+			get_by_key_path({"a": [{"b": 1}, {"b": 2}]}, "a[0,1].b"),
+			[1, 2]
 		)
 
 		self.assertEqual(

@@ -257,10 +257,13 @@ def get_by_key_path(d, key_path, i=0, default=None):
 		if(isinstance(d, list)):
 			specific_indexes = [int(x) for x in key[1:-1].split(",") if x]
 			ret = []
-			if(not specific_indexes):
+			if(not specific_indexes):   # just .[].xxx -> all elements
 				for val in d:
 					ret.append(get_by_key_path(val, key_path, i + 1))
-			else:
+			elif(len(specific_indexes) == 1):  # just .[1].xxx -> specific element
+				if(specific_indexes[0] < len(d)):
+					return get_by_key_path(d[specific_indexes[0]], key_path, i + 1)
+			else:  # .[1,2,3].xxx -> multiple elements
 				for specific_index in specific_indexes:
 					if(specific_index < len(d)):
 						ret.append(get_by_key_path(d[specific_index], key_path, i + 1))
