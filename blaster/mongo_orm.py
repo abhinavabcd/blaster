@@ -42,6 +42,7 @@ _NOT_EXISTS_QUERY = {"$exists": False}  # just a constant
 
 LIST_OR_DICT_TYPE = frozenset((list, dict))
 
+
 # utility to print collection name + node for logging
 def COLLECTION_NAME(collection):
 	_nodes = collection.database.client.nodes or (("unknown", 0),)

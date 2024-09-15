@@ -18,19 +18,23 @@ try:
     @background_task
     @retry(2)
     def send_via_sendgrid(
-        from_email, to_list, subject,
+        from_email, to_emails, subject,
         body_text=None, body_html=None, cc_list=None, bcc_list=None,
-        sendgrid_api_key=None
+        api_key=None
     ):
         message = Mail(
             from_email=from_email,
-            to_emails=to_list,
+            to_emails=to_emails,
             subject=subject,
+            plain_text_content=body_text,
             html_content=body_html
         )
-        sg = SendGridAPIClient(sendgrid_api_key or SENDGRID_API_KEY)
+        sg = SendGridAPIClient(api_key or SENDGRID_API_KEY)
         response = sg.send(message)
-        LOG_APP_INFO("sendgrid_send_email", response=str(response))
+        LOG_APP_INFO(
+            "sendgrid_send_email", response=str(response.body),
+            status_code=response.status_code
+        )
 
     send_email = send_via_sendgrid
 except ImportError:
