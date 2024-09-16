@@ -359,8 +359,7 @@ def zlfill(tup, n):
 	return tuple(0 for x in range(n - len(tup))) + tup
 
 
-DATE_DD_MM_YYYY_REGEX = re.compile(r"(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})")
-DATE_YYYY_MM_DD_REGEX = re.compile(r"(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})")
+DATE_DD_MM_YYYY_REGEX = re.compile(r"(\d{1,2})[\/\-\.](\d{1,2})(?:[\/\-\.](\d{4}))?")
 TIME_REGEX = re.compile(r"(\d{1,2})(?:\s*:+(\d{1,2}))?(?:\s*:+(\d{1,2}))?(?::+(\d{1,2})|(\s*(?:a|p).?m))", re.IGNORECASE)
 DAY_REGEX = re.compile(r"(mon|tues|wed(nes)?|thur(s)?|fri|sat(ur)?|sun)(day)?", re.IGNORECASE)
 RELATIVE_DAY_REGEX = re.compile(r"(after\s+to|tod|tom)[^\s]*", re.IGNORECASE)
@@ -427,8 +426,10 @@ def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False, interval=None):
 			date_match_pos_list.append(match.span())
 
 	# date matches
+	_dt_a_parts = [a.day, a.month, a.year]
 	for match in DATE_DD_MM_YYYY_REGEX.finditer(x):
-		date_matches.append([int(x) for x in match.groups()])
+		dt_parts = [int(x) for x in match.groups() if x is not None]
+		date_matches.append(dt_parts + _dt_a_parts[len(dt_parts):])
 		date_match_pos_list.append(match.span())
 
 	# day matches

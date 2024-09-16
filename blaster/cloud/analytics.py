@@ -21,14 +21,14 @@ if(GCLOUD_CREDENTIALS):
 		if(num_rows > 0):
 			return bq_client.insert_rows_json(table_id, [q.popleft() for _ in range(num_rows)])
 
-	def bq_insert_rows(table_id, rows):
+	def bq_insert_rows(table_id, rows: dict):
 		if((_pending_to_push := _table_pending_data_to_push.get(table_id)) is None):
 			_pending_to_push = _table_pending_data_to_push[table_id] = deque()
 		_pending_to_push.extend(rows)
 		return bq_push(table_id)  # deferred call
 
 else:
-	def bq_insert_rows(table_id, rows):
+	def bq_insert_rows(table_id, rows: dict):
 		if(IS_DEV):
 			LOG_DEBUG(
 				"bq_insert_rows", desc="BigQuery not configured for tracking events",
@@ -42,7 +42,7 @@ else:
 
 
 @background_task
-def TRACK_EVENT(table_id, rows, ns=None):
+def TRACK_EVENT(table_id, rows: dict, ns=None):
 	'''
 		Parameters:
 		rows:  are a dict or list of dicts containing column_name: value

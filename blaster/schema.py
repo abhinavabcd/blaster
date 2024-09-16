@@ -96,7 +96,7 @@ class Str:
 		self.maxlen = maxlen
 		self.one_of = set(one_of) if one_of else None
 		self._default = default
-		self.regex = regex and re.compile(regex)
+		self.regex = regex and (re.compile(regex) if isinstance(regex, str) else regex)
 		self.before = before
 		self.fmt = format and Str.format_validators[format]
 
@@ -137,7 +137,7 @@ class Str:
 		if(self.one_of and e not in self.one_of):
 			raise TypeError("should be one of {}".format(self.one_of))
 		if(self.regex and not self.regex.fullmatch(e)):
-			raise TypeError("did not match the pattern {}".format(self.one_of))
+			raise TypeError("did not match the pattern {}".format(self.regex.pattern))
 		if(self.fmt):
 			return self.fmt(e)
 		return e
@@ -436,8 +436,7 @@ def schema(x, default=_OBJ_END_):
 
 	if(isinstance(x, type) and issubclass(x, Object) and x != Object):
 		_schema_def_name_ = x.__module__ + "." + x.__name__
-		ret = schema.defs.get(_schema_def_name_)
-		if(ret):
+		if(schema.defs.get(_schema_def_name_)):  # already defined
 			return {"schema": {"$ref": "#/definitions/" + _schema_def_name_}}, x.validate
 
 		x._validations = _validations = {}
@@ -490,21 +489,21 @@ def schema(x, default=_OBJ_END_):
 				# keep track of propeties
 				x._property_types[k] = _type
 		# create schema
-		x._schema_ = ret = schema.defs[_schema_def_name_] = {
+		x._schema_ = _schema = schema.defs[_schema_def_name_] = {
 			"type": "object",
 		}
 		_title = getattr(x, "_title_", None)
 		_description = getattr(x, "_description_", None)
 		if(_title):
-			ret["title"] = _title
+			_schema["title"] = _title
 		if(_description):
-			ret["description"] = getattr(x, "_description_", None)
+			_schema["description"] = getattr(x, "_description_", None)
 
 		if(_schema_properties):
-			ret["properties"] = _schema_properties
+			_schema["properties"] = _schema_properties
 
 		if(_required):
-			ret["required"] = list(_required)
+			_schema["required"] = list(_required)
 
 		return x._schema_, x.validate
 
