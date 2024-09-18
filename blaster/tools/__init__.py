@@ -359,7 +359,7 @@ def zlfill(tup, n):
 	return tuple(0 for x in range(n - len(tup))) + tup
 
 
-DATE_DD_MM_YYYY_REGEX = re.compile(r"(\d{1,2})[\/\-\.](\d{1,2})(?:[\/\-\.](\d{4}))?")
+DATE_DD_MM_YYYY_REGEX = re.compile(r"(?:^|\s)(\d{1,2})[\/\-\.](\d{1,2})(?:[\/\-\.](\d{4}))?(?=\s|$)")
 TIME_REGEX = re.compile(r"(\d{1,2})(?:\s*:+(\d{1,2}))?(?:\s*:+(\d{1,2}))?(?::+(\d{1,2})|(\s*(?:a|p).?m))", re.IGNORECASE)
 DAY_REGEX = re.compile(r"(mon|tues|wed(nes)?|thur(s)?|fri|sat(ur)?|sun)(day)?", re.IGNORECASE)
 RELATIVE_DAY_REGEX = re.compile(r"(after\s+to|tod|tom)[^\s]*", re.IGNORECASE)
