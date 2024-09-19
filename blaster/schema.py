@@ -312,15 +312,16 @@ class Object:
 				attr_value = e.get(k, _OBJ_END_)
 				if(attr_value is not _OBJ_END_):
 					_validated_attr = attr_validation(attr_value)
+					if(_validated_attr != attr_value):
+						e[k] = _validated_attr
 				else:
 					# try getting class attribute default (declaration)
 					_validated_attr = getattr(cls, k, _OBJ_END_)
-
-				if(_validated_attr is _OBJ_END_ and k in cls._required):
-					raise TypeError("Field is required")
-
-				if(_validated_attr != attr_value):
-					e[k] = _validated_attr
+					if(_validated_attr is _OBJ_END_):
+						if(k in cls._required):  # required field
+							raise TypeError("Field is required")
+					elif(_validated_attr is not None):  # non-None default value
+						e[k] = _validated_attr
 
 			return obj
 		except Exception as ex:
@@ -347,13 +348,29 @@ class Object:
 	def to_dict(self):
 		ret = {}
 		for k, attr_validation in self.__class__._validations.items():
-			val = getattr(self, k, None)
+			val = self.__dict__.get(k, _OBJ_END_)
+			if(val is _OBJ_END_):
+				continue
 			if(isinstance(val, Object)):
 				val = val.to_dict()
 			elif(isinstance(val, list)):
 				val = [v.to_dict() if isinstance(v, Object) else v for v in val]
 			ret[k] = val
 		return ret
+
+	# does a deep copy of the object to dict
+	@classmethod
+	def deep_copy_to_dict(cls, obj):
+		if(isinstance(obj, dict)):
+			ret = {}
+			for k, v in obj.items():
+				ret[k] = cls.deep_copy_to_dict(v)
+			return ret
+		elif(isinstance(obj, list)):
+			return [cls.deep_copy_to_dict(v) for v in obj]
+		elif(isinstance(obj, Object)):
+			return obj.to_dict()
+		return obj
 
 
 def to_int(e):
@@ -377,6 +394,7 @@ def _validate(e, simple_types=(), complex_validations=(), nullable=True, matched
 			if(matched_validators is not None):
 				matched_validators.append(_simple_type)
 			break
+	ex = None
 	if(not valid):
 		for _complex_validation in complex_validations:
 			try:
@@ -385,8 +403,8 @@ def _validate(e, simple_types=(), complex_validations=(), nullable=True, matched
 				if(matched_validators is not None):
 					matched_validators.append(_complex_validation)
 				break
-			except Exception:
-				pass
+			except Exception as _ex:
+				ex = _ex
 	# if no validations are given are we good
 	if(not valid and not simple_types and not complex_validations):
 		if(e is None and not nullable):
@@ -399,7 +417,7 @@ def _validate(e, simple_types=(), complex_validations=(), nullable=True, matched
 	if(nullable):
 		return None
 
-	raise TypeError("Invalid value")
+	raise (ex or TypeError("Invalid value"))
 
 
 # Array(str), Array((int, str), default=None), Array(Object), Array(Pet)
