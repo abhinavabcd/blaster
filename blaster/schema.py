@@ -125,7 +125,10 @@ class Str:
 				return _default
 			raise TypeError("should be string")
 		if(not isinstance(e, str)):
-			raise TypeError("should be string")
+			if(isinstance(e, (int, float))):
+				e = str(e)
+			else:
+				raise TypeError("should be string")
 		# e is a string now
 		if(len(e) < self.minlen):
 			if(not e):  # empty string allowed if minlen is 0 or default is set
@@ -290,6 +293,12 @@ class Object:
 		if(default is not _OBJ_END_):
 			_schema["default"] = default
 
+	def after_validate(self) -> (None | Exception):
+		return
+
+	def before_validate(self, _dict: dict) -> (None | Exception):
+		return
+
 	@classmethod
 	def validate(cls, obj):  # obj -> instance of dict, cls, str
 		# regular class instance
@@ -304,6 +313,8 @@ class Object:
 			obj = _obj
 
 		e = obj.__dict__
+
+		obj.before_validate(e)
 
 		k = None
 		attr_value = None
@@ -323,6 +334,7 @@ class Object:
 					elif(_validated_attr is not None):  # non-None default value
 						e[k] = _validated_attr
 
+			obj.after_validate()
 			return obj
 		except Exception as ex:
 			raise BlasterSchemaTypeError({

@@ -52,7 +52,7 @@ def COLLECTION_NAME(collection):
 
 
 def str_validator(_attr, val, obj):
-	max_len = getattr(_attr, "max_len", 2048)
+	max_len = getattr(_attr, "max_len", 4096)
 	if(val and len(val) > max_len):
 		val = val[:max_len]
 	return val
