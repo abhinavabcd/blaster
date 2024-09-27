@@ -6,7 +6,7 @@ def html_escape(s):
 
 # custom containers ##########
 # HtmlSanitizedList and HtmlSanitizedDict are used for HTML safe operation
-# the idea is to wrap them to sanitizeContainers, and escapt them while retrieving
+# the idea is to wrap them to sanitizeContainers, and escape them while retrieving
 # rather than during inserting/parsing stage
 class HtmlSanitizedSetterGetter(object):
 	def __getitem__(self, k, escape_html=True):
@@ -41,6 +41,15 @@ class HtmlSanitizedList(HtmlSanitizedSetterGetter, list):
 	def __iter__(self):
 		# unoptimized but for this it's okay, always returns sanitized one
 		return map(self.__getitem__, range(len(self)))
+
+	def get(self, i, escape_html=True, default=None):
+		try:
+			return self.__getitem__(
+				i,
+				escape_html=escape_html
+			)
+		except Exception:
+			return default
 
 	def at(self, k, escape_html=True):
 		return self.__getitem__(

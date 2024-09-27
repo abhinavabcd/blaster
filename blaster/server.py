@@ -20,7 +20,7 @@ from requests_toolbelt.multipart import decoder
 from . import req_ctx
 from .tools import set_socket_fast_close_options, \
 	BufferedSocket, ltrim, _OBJ_END_
-from .tools.sanitize_html import HtmlSanitizedDict
+from .tools.sanitize_html import HtmlSanitizedDict, HtmlSanitizedList
 from .utils import events
 from .utils.data_utils import FILE_EXTENSION_TO_MIME_TYPE
 from .logging import LOG_ERROR, LOG_SERVER, LOG_WARN, LOG_DEBUG
@@ -248,7 +248,7 @@ class Request:
 	def get(self, key, default=None, **kwargs):
 		val = _OBJ_END_
 		# try post params first
-		if(self._body):
+		if(self._body is not None):
 			val = self._body.get(key, default=_OBJ_END_, **kwargs)
 		# try get param next
 		if(val is _OBJ_END_ and self._params):
@@ -321,10 +321,10 @@ class Request:
 	def parse_request_body(self, post_data_bytes, headers):
 		if(not post_data_bytes):
 			return None
-		self._body = _body = HtmlSanitizedDict()
 		_attachements = None
 		content_type_header = headers.get("Content-Type", "")
 		if(headers and content_type_header.startswith("multipart/form-data")):
+			self._body = _body = HtmlSanitizedDict()
 			for part in decoder.MultipartDecoder(post_data_bytes, content_type_header).parts:
 				content_disposition = part.headers.pop(b'Content-Disposition', None)
 				if(not content_disposition):
@@ -353,12 +353,16 @@ class Request:
 		else:
 			post_data_str = post_data_bytes.decode('utf-8')
 			if(
-				post_data_str[0] == '{'
-				or content_type_header == "application/json"
+				content_type_header == "application/json"
+				or post_data_str[:1] in ('{', '[')
 			):
-				_body.update(json.loads(post_data_str))
+				post_data = json.loads(post_data_str)
+				if(isinstance(post_data, list)):
+					self._body = HtmlSanitizedList(post_data)
+				else:
+					self._body = HtmlSanitizedDict(post_data)
 			else:  # urlencoded form
-				_body.update(parse_qs_modified(post_data_str))
+				self._body = HtmlSanitizedDict(parse_qs_modified(post_data_str))
 
 		return self
 
