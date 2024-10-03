@@ -254,7 +254,7 @@ def get_by_key_path(d, key_path, i=0, default=None):
 		return d
 	key = key_path[i]
 	if(key[0] == "["):
-		if(isinstance(d, list)):
+		if(isinstance(d, (list, tuple))):
 			specific_indexes = [int(x) for x in key[1:-1].split(",") if x]
 			ret = []
 			if(not specific_indexes):   # just .[].xxx -> all elements
