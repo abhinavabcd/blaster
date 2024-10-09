@@ -576,6 +576,8 @@ class Model(object):
 						self.__dict__[attr_name] = MongoDict(self, attr_name, {})  # copy
 					elif(attr_obj._type == list):
 						self.__dict__[attr_name] = MongoList(self, attr_name, [])  # copy
+					else:
+						self.__dict__[attr_name] = None
 
 	def _reset(self, doc):
 		self._is_new_ = False  # this is not a new object
