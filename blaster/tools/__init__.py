@@ -1957,6 +1957,13 @@ def read_rows_from_url(url, csv_delimiter=",") -> iter:
 					yield row
 
 
+def to_csv_bytes(rows):
+	csv_file = StringIO()
+	csv_writer = csv.writer(csv_file, quoting=csv.QUOTE_MINIMAL)
+	csv_writer.writerows(rows)
+	return csv_file.getvalue().encode("utf-8")
+
+
 # print debugging info for networks request called with requests
 def debug_requests_on():
 	import logging
