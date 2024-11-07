@@ -89,7 +89,7 @@ __all_models__ = {}
 
 
 class MongoList(list):
-	_is_local = True
+	_is_local = True  # not tied to db
 	_model_obj = None
 	path = ""  # empty string becuase it doesn't break pickling
 
@@ -105,15 +105,16 @@ class MongoList(list):
 			_model_obj._if_non_empty_set_query_update[path] = self
 
 	def __setitem__(self, k, v):
+		_model_obj = self._model_obj
 		if(not self._is_local):
-			self._model_obj._set_query_updates[self.path + "." + str(k)] = v
-		else:
+			_model_obj._set_query_updates[self.path + "." + str(k)] = v
+		elif(_model_obj._initializing_):
 			# recursively create custom dicts/list when
 			# loading object from db
 			if(isinstance(v, dict)):
-				v = MongoDict(self._model_obj, self.path + "." + str(k), v)
+				v = MongoDict(_model_obj, self.path + "." + str(k), v)
 			elif(isinstance(v, list)):
-				v = MongoList(self._model_obj, self.path + "." + str(k), v)
+				v = MongoList(_model_obj, self.path + "." + str(k), v)
 		super(MongoList, self).__setitem__(k, v)
 
 	def remove(self, item):  # can raise value exception
@@ -213,7 +214,7 @@ class MongoList(list):
 
 
 class MongoDict(dict):
-	_is_local = True
+	_is_local = True  # indicates it's not tied to db
 	_model_obj = None
 	path = ""  # empty string becuase it doesn't break pickling
 
@@ -228,15 +229,16 @@ class MongoDict(dict):
 			_model_obj._if_non_empty_set_query_update[path] = self
 
 	def __setitem__(self, k, v):
+		_model_obj = self._model_obj
 		if(not self._is_local):
-			self._model_obj._set_query_updates_with_no_conflicts(self.path + "." + str(k), v)
-		else:
+			_model_obj._set_query_updates_with_no_conflicts(self.path + "." + str(k), v)
+		elif(_model_obj._initializing_):
 			# recursively create custom dicts/list when
 			# loading object from db
 			if(isinstance(v, dict)):
-				v = MongoDict(self._model_obj, self.path + "." + str(k), v)
+				v = MongoDict(_model_obj, self.path + "." + str(k), v)
 			elif(isinstance(v, list)):
-				v = MongoList(self._model_obj, self.path + "." + str(k), v)
+				v = MongoList(_model_obj, self.path + "." + str(k), v)
 
 		super(MongoDict, self).__setitem__(k, v)
 
