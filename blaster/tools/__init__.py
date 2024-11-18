@@ -593,20 +593,20 @@ def iter_time_overlaps(
 
 	buffer = []
 	heapq.heapify(buffer)
-	for x in include:
+	for i, x in enumerate(include):  # i -> tie breaker
 		try:
 			it = _iter_time_overlaps(
 				a, b, x, tz_delta, partial=partial,
 				interval=interval
 			)
-			heapq.heappush(buffer, (next(it), x, it))
+			heapq.heappush(buffer, (next(it), x, i, it))
 		except StopIteration:
 			pass
 
 	while(len(buffer) > 0):
-		time_range, x, it = heapq.heappop(buffer)
+		time_range, x, i, it = heapq.heappop(buffer)  # pop the least i -> tie breaker
 		try:
-			heapq.heappush(buffer, (next(it), x, it))
+			heapq.heappush(buffer, (next(it), x, i + 1, it))
 		except StopIteration:
 			pass
 		# check if it's excluded
