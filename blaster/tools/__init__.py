@@ -254,7 +254,7 @@ def get_by_key_path(d, key_path, i=0, default=None):
 		return d
 	key = key_path[i]
 	if(key[0] == "["):
-		if(isinstance(d, list)):
+		if(isinstance(d, (list, tuple))):
 			specific_indexes = [int(x) for x in key[1:-1].split(",") if x]
 			ret = []
 			if(not specific_indexes):   # just .[].xxx -> all elements
@@ -1955,6 +1955,13 @@ def read_rows_from_url(url, csv_delimiter=",") -> iter:
 			else:
 				for row in csv.reader(TextIOWrapper(file), delimiter=csv_delimiter):
 					yield row
+
+
+def to_csv_bytes(rows):
+	csv_file = StringIO()
+	csv_writer = csv.writer(csv_file, quoting=csv.QUOTE_MINIMAL)
+	csv_writer.writerows(rows)
+	return csv_file.getvalue().encode("utf-8")
 
 
 # print debugging info for networks request called with requests
