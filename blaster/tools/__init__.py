@@ -1846,7 +1846,7 @@ def background_task(func):
 	def wrapper(*args, **kwargs):
 		# spawn the thread
 		partitioned_tasks_runner.submit_task(None, func, args, kwargs)
-		return True
+		return
 
 	wrapper._original = getattr(func, "_original", func)
 	return wrapper
@@ -1868,7 +1868,7 @@ def background_task_partitioned(partition_key):
 				partition_key_func(args, kwargs) if partition_key_func else None,  # parition key
 				func, args, kwargs
 			)
-			return True
+			return
 		wrapper._original = getattr(func, "_original", func)
 		return wrapper
 	return _wrapper
