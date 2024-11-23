@@ -55,7 +55,7 @@ def make_nearrest_currency(val, f):
 	val = int(val)
 	if val == 0:
 		return f
-	if(val%f == 0):
+	if(val % f == 0):
 		return val
 	return f * (val / f + 1)
 
@@ -88,8 +88,10 @@ def parse_currency_string(currency_str, default_currency_code=None, country_code
 	return int(val * 1000 * INR_EXCHANGE_RATE[currency_code]), currency_code, val
 
 
-def convert_currency(val, from_currency='APP_CURRENCY', to_currency='INR'):
-	# val / from_currency_inr_exchange -> inr  then multiply to_exchange rate 
+def convert_currency(val, from_currency, to_currency):
+	if(from_currency == to_currency):
+		return val
+	# val / from_currency_inr_exchange -> inr  then multiply to_exchange rate
 	return (val * INR_EXCHANGE_RATE[to_currency.upper()]) / INR_EXCHANGE_RATE[from_currency.upper()]
 
 
