@@ -359,6 +359,17 @@ def zlfill(tup, n):
 	return tuple(0 for x in range(n - len(tup))) + tup
 
 
+# remove an item from a set
+# return True if item was removed
+# return False if item was not present
+def set_pop(s, item):
+	try:
+		s.remove(item)
+		return True
+	except KeyError:
+		return False
+
+
 DATE_DD_MM_YYYY_REGEX = re.compile(r"(?:^|\s)(\d{1,2})[\/\-\.](\d{1,2})(?:[\/\-\.](\d{4}))?(?=\s|$)")
 TIME_REGEX = re.compile(r"(\d{1,2})(?:\s*:+(\d{1,2}))?(?:\s*:+(\d{1,2}))?(?::+(\d{1,2})|(\s*(?:a|p).?m))", re.IGNORECASE)
 DAY_REGEX = re.compile(r"(mon|tues|wed(nes)?|thur(s)?|fri|sat(ur)?|sun)(day)?", re.IGNORECASE)
