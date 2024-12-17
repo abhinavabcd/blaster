@@ -466,8 +466,8 @@ def schema(x, default=_OBJ_END_):
 
 	if(isinstance(x, type) and issubclass(x, Object) and x != Object):
 		_schema_def_name_ = x.__module__ + "." + x.__name__
-		if(schema.defs.get(_schema_def_name_)):  # already defined
-			return {"schema": {"$ref": "#/definitions/" + _schema_def_name_}}, x.validate
+		if(_schema := schema.defs.get(_schema_def_name_)):  # already defined
+			return _schema, x.validate
 
 		x._validations = _validations = {}
 		x._schema_properties = _schema_properties = {}
