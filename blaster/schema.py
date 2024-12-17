@@ -88,12 +88,12 @@ class Str:
 	}
 
 	def __init__(
-		self, one_of=None, minlen=1, maxlen=_16KB_,
+		self, one_of=None, minlen=1, maxlen=_OBJ_END_,
 		regex=None, default=_OBJ_END_,
 		before=None, format=None
 	):
 		self.minlen = minlen
-		self.maxlen = maxlen
+		self.maxlen = maxlen if maxlen is not _OBJ_END_ else _16KB_
 		self.one_of = set(one_of) if one_of else None
 		self._default = default
 		self.regex = regex and (re.compile(regex) if isinstance(regex, str) else regex)
@@ -104,11 +104,13 @@ class Str:
 		self._schema_ = _schema = {"type": "string"}
 		if(default is not _OBJ_END_):
 			_schema["default"] = default
-		_schema = {"type": "string"}
-		if(self.minlen):
-			_schema["minimum"] = self.minlen
-		if(self.maxlen and self.maxlen < 4294967295):
-			_schema["maximum"] = self.maxlen
+
+		if(minlen):
+			_schema["minLength"] = minlen
+
+		if(maxlen is not _OBJ_END_):
+			_schema["maxLength"] = maxlen
+
 		if(self.one_of):
 			_schema["enum"] = list(self.one_of)
 		if(regex):
@@ -381,8 +383,15 @@ class Object:
 		elif(isinstance(obj, list)):
 			return [cls.deep_copy_to_dict(v) for v in obj]
 		elif(isinstance(obj, Object)):
-			return obj.to_dict()
-		return obj
+			ret = {}
+			for k, attr_validation in obj.__class__._validations.items():
+				val = obj.__dict__.get(k, _OBJ_END_)
+				if(val is _OBJ_END_):
+					continue
+				ret[k] = cls.deep_copy_to_dict(val)
+			return ret
+		else:
+			return obj
 
 
 def to_int(e):
