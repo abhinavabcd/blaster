@@ -69,7 +69,7 @@ class HtmlSanitizedDict(HtmlSanitizedSetterGetter, dict):
 			self.update(kwargs)
 
 	def raw(self):
-		return dict(super().__iter__())
+		return dict(super().items())
 
 	# can pass escape_html=false if you want raw data
 	def get(self, key, default=None, escape_html=True):

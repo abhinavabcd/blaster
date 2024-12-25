@@ -11,8 +11,20 @@ from blaster.tools import _OBJ_END_, _16KB_, all_subclasses
 
 class BlasterSchemaTypeError(TypeError):
 	def __init__(self, data: object) -> None:
-		self.data = data
+		self.data = self.sanitize_to_dict(data)
 		super().__init__(data)
+
+	def sanitize_to_dict(self, data: object) -> dict:
+		if(isinstance(data, dict)):
+			for k, v in data.items():
+				data[k] = self.sanitize_to_dict(v)
+		elif(isinstance(data, list)):
+			for i, v in enumerate(data):
+				data[i] = self.sanitize_to_dict(v)
+		elif(isinstance(data, Object)):
+			data = data.to_dict()
+
+		return data
 
 
 def RAISE_TYPE_ERROR(msg):
@@ -27,7 +39,7 @@ class Number:
 		self._default = default
 		self._type = _type
 		# make schema
-		self._schema_ = _schema = {"type": "integer"}
+		self._schema_ = _schema = {"type": "integer" if _type == int else "number"}
 		if(default is not _OBJ_END_):
 			_schema["default"] = default
 		if(self._min is not _OBJ_END_):
