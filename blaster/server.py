@@ -1337,3 +1337,21 @@ MOBILE_USER_AGENT_REGEX2 = re.compile(r"1207|6310|6590|3gso|4thp|50[1-6]i|770s|8
 def is_mobile_user_agent(user_agent):
 	return MOBILE_USER_AGENT_REGEX.search(user_agent) \
 		or MOBILE_USER_AGENT_REGEX2.search(user_agent[0:4])
+
+
+def allow_cors(func):
+	def _func(*args, **kwargs):
+		resp = func(*args, **kwargs)
+		status, headers, body = App.response_body_to_parts(resp)
+		headers = headers or {}
+		if(origin := req_ctx.req.HEADERS("origin")):
+			headers.update({
+				"access-control-allow-origin": origin or "*",
+				"access-control-allow-headers": "Content-Type, Origin, Allow",
+				"access-control-allow-methods": "POST, GET, OPTIONS",
+				"access-control-allow-credentials": "true"
+			})
+		return status, headers, body
+
+	_func._original = getattr(func, "_original", func)
+	return _func
