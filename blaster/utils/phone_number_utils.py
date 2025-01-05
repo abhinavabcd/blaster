@@ -35,7 +35,7 @@ class PhoneNumberObj:
 			self.country_phone_code = country_phone_code.lstrip("+")
 
 	@classmethod
-	def validate(cls, phone_number):  # with country code
+	def validate(cls, phone_number) -> 'PhoneNumberObj':  # with country code
 		phone_number = phone_number.lstrip("+0")
 		_root = country_code_num_digits_trie
 		for i in range(0, len(phone_number)):

@@ -40,7 +40,6 @@ default_stream_headers = {
 	'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
 	'X-Content-Type-Options': 'nosniff',
 	'vary': 'Accept-Encoding',
-	'X-Frame-Options': 'SAMEORIGIN',
 	'X-UA-Compatible': 'IE=Edge',
 	'X-XSS-Protection': '0'
 }
