@@ -1345,10 +1345,10 @@ def allow_cors(func):
 		headers = headers or {}
 		if(origin := req_ctx.req.HEADERS("origin")):
 			headers.update({
-				"access-control-allow-origin": origin or "*",
-				"access-control-allow-headers": "Content-Type, Origin, Allow",
-				"access-control-allow-methods": "POST, GET, OPTIONS",
-				"access-control-allow-credentials": "true"
+				"Access-Control-Allow-Origin": origin or "*",
+				"Access-Control-Allow-Headers": "*",
+				"Access-Control-Allow-Methods": "*",
+				"Access-Control-Allow-Credentials": "true"
 			})
 		return status, headers, body
 

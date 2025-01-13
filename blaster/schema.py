@@ -352,8 +352,8 @@ class Object:
 			return obj
 		except Exception as ex:
 			raise BlasterSchemaTypeError({
-				"exception": (ex.args and ex.args[0]) or "Validation failed",
 				"key": k,
+				"exception": (ex.args and ex.args[0]) or "Validation failed",
 				"value": attr_value if attr_value is not _OBJ_END_ else None,
 				"schema": cls._schema_properties[k]
 			})
