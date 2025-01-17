@@ -372,19 +372,28 @@ class Object:
 			raise ex
 
 	def to_dict(self):
+		def __to_dict(obj):
+			if(isinstance(obj, Object)):
+				return obj.to_dict()
+			elif(isinstance(obj, list)):
+				return [__to_dict(e) for e in obj]
+			elif(isinstance(obj, dict)):
+				ret = {}
+				for k, v in obj.items():
+					ret[k] = __to_dict(v)
+				return ret
+			else:
+				return obj
+
 		ret = {}
 		for k, attr_validation in self.__class__._validations.items():
 			val = self.__dict__.get(k, _OBJ_END_)
 			if(val is _OBJ_END_):
 				continue
-			if(isinstance(val, Object)):
-				val = val.to_dict()
-			elif(isinstance(val, list)):
-				val = [v.to_dict() if isinstance(v, Object) else v for v in val]
-			ret[k] = val
+			ret[k] = __to_dict(val)
 		return ret
 
-	# does a deep copy of the object to dict
+	# does a deep copy of any object to dict
 	@classmethod
 	def deep_copy_to_dict(cls, obj):
 		if(isinstance(obj, dict)):
@@ -395,13 +404,7 @@ class Object:
 		elif(isinstance(obj, list)):
 			return [cls.deep_copy_to_dict(v) for v in obj]
 		elif(isinstance(obj, Object)):
-			ret = {}
-			for k, attr_validation in obj.__class__._validations.items():
-				val = obj.__dict__.get(k, _OBJ_END_)
-				if(val is _OBJ_END_):
-					continue
-				ret[k] = cls.deep_copy_to_dict(val)
-			return ret
+			return obj.to_dict()
 		else:
 			return obj
 
