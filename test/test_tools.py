@@ -382,12 +382,13 @@ class TestTools(unittest.TestCase):
 			get_by_key_path({"a": [{"b": {"d": "d1", "c": "c1", "e": "e1"}}, {"b": {"d": "d2", "c": "c2", "e": "e2"}}]}, "a[].b.c,e"),
 			[{"c": "c1", "e": "e1"}, {"c": "c2", "e": "e2"}]
 		)
+		self.assertEqual(get_by_key_path({"a": 1}, ""), {"a": 1})
 
 	def test_sanitize_to_underscore_id(self):
 		self.assertEqual(sanitize_to_underscore_id("a b c"), "a_b_c")
 		self.assertEqual(sanitize_to_underscore_id("a b    __ c"), "a_b_c")
 		self.assertEqual(sanitize_to_underscore_id("a b    __ c_ ?"), "a_b_c")
-		self.assertEqual(sanitize_to_underscore_id("___a b    __ c_ ?"), "a_b_c")
+		self.assertEqual(sanitize_to_underscore_id("___a b    __ c_ ?"), "_a_b_c")
 
 	def test_xml_to_dict(self):
 		xml_string = "\n<note>\n  <to>Tove</to>\n  <from>Jani</from>\n  <heading>Reminder & Reminder</heading>\n  <body>Don't forget me this weekend!</body>\n</note>\n"

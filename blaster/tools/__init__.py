@@ -248,6 +248,8 @@ def set_by_key_list(d, key_list, value):
 
 
 def get_by_key_path(d, key_path, i=0, default=None):
+	if(not key_path):
+		return d
 	if(isinstance(key_path, str)):
 		key_path = key_path.replace("[", ".[").replace("..", ".").split(".")
 	if(i >= len(key_path)):
