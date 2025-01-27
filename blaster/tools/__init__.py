@@ -273,10 +273,18 @@ def get_by_key_path(d, key_path, i=0, default=None):
 		return default
 	elif(isinstance(d, dict)):
 		if("," in key):
-			return {
-				_key: get_by_key_path(d.get(_key), key_path, i + 1)
-				for _key in key.split(",")
-			}
+			ret = {}
+			for _key in key.split(","):
+				_d = d
+				_key_list = _key.split(":")
+				exists = True
+				for __key in _key_list:
+					if(not (_d := _d.get(__key))):
+						exists = False
+						break
+				if(exists):
+					ret[_key_list[-1]] = get_by_key_path(_d, key_path, i + 1)
+			return ret
 		else:
 			return get_by_key_path(d.get(key), key_path, i + 1)
 	elif(isinstance(d, list)):

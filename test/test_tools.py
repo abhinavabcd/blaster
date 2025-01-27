@@ -384,6 +384,11 @@ class TestTools(unittest.TestCase):
 		)
 		self.assertEqual(get_by_key_path({"a": 1}, ""), {"a": 1})
 
+		self.assertEqual(
+			get_by_key_path({"a": [{"b": [{"c": 1, "d": {"e": 1}}, {"c": 2}]}, {"b": [{"c": 3}, {"c": 4}]}]}, "a[].b[].c,d:e"),
+			[[{"c": 1, "e": 1}, {"c": 2}], [{"c": 3}, {"c": 4}]]
+		)
+
 	def test_sanitize_to_underscore_id(self):
 		self.assertEqual(sanitize_to_underscore_id("a b c"), "a_b_c")
 		self.assertEqual(sanitize_to_underscore_id("a b    __ c"), "a_b_c")
