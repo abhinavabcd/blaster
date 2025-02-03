@@ -572,7 +572,7 @@ def schema(x, default=_OBJ_END_):
 				is_nullable = True
 				continue
 
-			_s, _v = schema(_type)
+			_s, _v = schema(_type, default=default)
 			_schemas.append(_s)
 			if(_type in (int, str, float)):
 				simple_types.append(_type)

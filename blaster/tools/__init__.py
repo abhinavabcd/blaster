@@ -247,30 +247,37 @@ def set_by_key_list(d, key_list, value):
 	d[key_list[-1]] = value
 
 
-def get_by_key_path(d, key_path, i=0, default=None):
+def get_by_key_path(d, key_path, i=0, path="", include_path=False):
 	if(not key_path):
 		return d
 	if(isinstance(key_path, str)):
 		key_path = key_path.replace("[", ".[").replace("..", ".").split(".")
+
 	if(i >= len(key_path)):
-		return d
+		return d if not include_path else (d, path)
+
 	key = key_path[i]
 	if(key[0] == "["):
 		if(isinstance(d, (list, tuple))):
 			specific_indexes = [int(x) for x in key[1:-1].split(",") if x]
 			ret = []
 			if(not specific_indexes):   # just .[].xxx -> all elements
-				for val in d:
-					ret.append(get_by_key_path(val, key_path, i + 1))
+				for _i, val in enumerate(d):
+					_ret = get_by_key_path(val, key_path, i + 1, path + f".{_i}", include_path)
+					if(_ret is not None):
+						ret.append(_ret)
 			elif(len(specific_indexes) == 1):  # just .[1].xxx -> specific element
 				if(specific_indexes[0] < len(d)):
-					return get_by_key_path(d[specific_indexes[0]], key_path, i + 1)
+					_i = specific_indexes[0]
+					return get_by_key_path(d[_i], key_path, i + 1, path + f".{_i}", include_path)
 			else:  # .[1,2,3].xxx -> multiple elements
-				for specific_index in specific_indexes:
-					if(specific_index < len(d)):
-						ret.append(get_by_key_path(d[specific_index], key_path, i + 1))
+				for _i in specific_indexes:
+					if(_i < len(d)):
+						_ret = get_by_key_path(d[_i], key_path, i + 1, path + f".{_i}", include_path)
+						if(_ret is not None):
+							ret.append(_ret)
 			return ret
-		return default
+		return
 	elif(isinstance(d, dict)):
 		if("," in key):
 			ret = {}
@@ -283,15 +290,17 @@ def get_by_key_path(d, key_path, i=0, default=None):
 						exists = False
 						break
 				if(exists):
-					ret[_key_list[-1]] = get_by_key_path(_d, key_path, i + 1)
+					_ret = get_by_key_path(_d, key_path, i + 1, path + f".{_key}", include_path)
+					if(_ret is not None):
+						ret[_key_list[-1]] = _ret
 			return ret
 		else:
-			return get_by_key_path(d.get(key), key_path, i + 1)
+			return get_by_key_path(d.get(key), key_path, i + 1, path + f".{key}", include_path)
 	elif(isinstance(d, list)):
 		key = int(key)
 		if(key < len(d)):
-			return get_by_key_path(d[int(key)], key_path, i + 1)
-	return default
+			return get_by_key_path(d[int(key)], key_path, i + 1, path + f".{key}", include_path)
+	return
 
 
 def date2string(date):
@@ -1151,6 +1160,9 @@ class DummyObject:
 
 	def __setitem__(self, key, val):
 		self.entries[key] = val
+
+	def __repr__(self):
+		return str(self.entries)
 
 	def to_dict(self):
 		return self.entries
