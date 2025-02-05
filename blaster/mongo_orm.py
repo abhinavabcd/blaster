@@ -15,7 +15,8 @@ from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError, OperationFailure
 from pymongo import ReturnDocument
 from .tools import all_subclasses, \
-	cur_ms, list_diff2, batched_iter, _OBJ_END_
+	cur_ms, list_diff2, batched_iter, _OBJ_END_, \
+	get_by_key_path
 from .config import IS_DEV, MONGO_WARN_MAX_RESULTS_RATE, \
 	MONGO_MAX_RESULTS_AT_HIGH_SCAN_RATE, \
 	DEBUG_PRINT_LEVEL, IS_TEST
@@ -203,14 +204,8 @@ class MongoList(list):
 		self._model_obj._set_query_updates[self.path] = self
 		self._is_local = True  # Hack for new object
 
-	def copy(self) -> list:
-		ret = []
-		for i in self:
-			if(isinstance(i, (MongoList, MongoDict))):
-				ret.append(i.copy())
-			else:
-				ret.append(i)
-		return ret
+	def copy(self) -> dict:
+		return get_by_key_path(self._model_obj._original_doc, self.path) or []
 
 
 class MongoDict(dict):
@@ -277,13 +272,7 @@ class MongoDict(dict):
 		self._is_local = True  # Hack for new object
 
 	def copy(self) -> dict:
-		ret = {}
-		for k, v in self.items():
-			if(isinstance(v, (MongoList, MongoDict))):
-				ret[k] = v.copy()
-			else:
-				ret[k] = v
-		return ret
+		return get_by_key_path(self._model_obj._original_doc, self.path) or {}
 
 
 # utility function to cache and return a session for transaction
