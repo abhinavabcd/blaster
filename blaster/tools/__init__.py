@@ -1035,6 +1035,7 @@ def jump_hash(key, num_buckets):
 ##############
 
 
+INT_REGEX = re.compile(r"([0-9]+)")
 NUMBER_REGEX = re.compile(r"([0-9\.]+)")
 NON_ALPHA_NUM_SPACE_DOT_REGEX = re.compile(r"[^0-9a-zA-Z \.]", re.DOTALL)  # space, . allowed
 NON_ALPHA_REGEX = re.compile(r"[^0-9a-zA-Z]", re.DOTALL)
@@ -2142,12 +2143,17 @@ def set_requests_default_args(**_kwargs):
 def xmltodict(xml_node, attributes=False):
 	t = etree.fromstring(xml_node, parser=etree.XMLParser(recover=True)) \
 		if isinstance(xml_node, str) else xml_node
-	attributes = attributes and t.attrib
+	if(t is None):
+		return None
+	_attributes = t.attrib if attributes else None
 	d = {t.tag: {} if attributes else None}
 	children = list(t)
 	if(children):
 		dd = {}
-		for dc in map(xmltodict, children):
+		for dc in filter(None, map(
+			lambda n: xmltodict(n, attributes=attributes),
+			children
+		)):
 			for k, v in dc.items():
 				if k in dd:
 					if isinstance(dd[k], list):
@@ -2158,12 +2164,12 @@ def xmltodict(xml_node, attributes=False):
 					dd[k] = v
 		d = {t.tag: dd}
 
-	if(attributes):
-		d[t.tag].update(('@' + k, v) for k, v in attributes.items())
+	if(_attributes):
+		d[t.tag].update(('@' + k, v) for k, v in _attributes.items())
 
 	if(t.text):
 		text = t.text.strip()
-		if(children or attributes):
+		if(children or _attributes):
 			d[t.tag]['#text'] = text
 		else:
 			d[t.tag] = text
