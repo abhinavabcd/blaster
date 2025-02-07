@@ -963,14 +963,16 @@ class Model(object):
 				sort = [sort]
 			_sort_keys = []
 			for _sort_key_tuple in sort:
+				_ordering = 1
+				_sort_key_name = None
 				if(not isinstance(_sort_key_tuple, tuple)):
-					_sort_keys.append(
-						(cls._attrs_to_name[_sort_key_tuple], 1)
-					)
+					_sort_key_name = _sort_key_tuple
 				else:
-					_sort_keys.append(
-						(cls._attrs_to_name[_sort_key_tuple[0]], _sort_key_tuple[1])
-					)
+					_sort_key_name = _sort_key_tuple[0]
+					_ordering = _sort_key_tuple[1]
+				_sort_key_name = cls._attrs_to_name.get(_sort_key_name) \
+					or _sort_key_name
+				_sort_keys.append((_sort_key_name, _ordering))
 			sort = _sort_keys
 
 		# collection: [_query,...]
