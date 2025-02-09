@@ -150,7 +150,7 @@ class Str:
 					return _default
 			raise TypeError("should be minlen {:d}".format(self.minlen))
 		if(len(e) > self.maxlen):
-			raise TypeError("should be maxlen {:d}".format(self.minlen))
+			raise TypeError("should be maxlen {:d}".format(self.maxlen))
 		if(self.one_of and e not in self.one_of):
 			raise TypeError("should be one of {}".format(self.one_of))
 		if(self.regex and not self.regex.fullmatch(e)):
@@ -580,7 +580,9 @@ def schema(x, default=_OBJ_END_):
 				complex_validations.append(_v)
 
 		ret = None
-		if(len(_schemas) == 1):
+		if(len(_schemas) == 0):
+			ret = {}
+		elif(len(_schemas) == 1):
 			ret = _schemas[0]
 		elif(isinstance(x, list)):
 			ret = {"oneOf": _schemas}
