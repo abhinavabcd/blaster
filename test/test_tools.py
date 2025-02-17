@@ -3,7 +3,6 @@ import gevent
 from blaster import tools, blaster_exit
 import time
 import random
-import ujson as json
 from blaster.tools import get_time_overlaps, retry, \
 	ExpiringCache, create_signed_value, decode_signed_value, \
 	submit_background_task, background_task, ignore_exceptions, \

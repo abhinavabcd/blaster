@@ -284,10 +284,10 @@ class Request:
 			return self._body.get(key, **kwargs)
 		return None
 
-	def ATTACHMENTS(self, key):
+	def ATTACHMENTS(self, key=None):
 		if(key == None):
 			return self._attachments
-		return self._attachments[key]
+		return self._attachments.get(key)
 
 	def HEADERS(self, key=None, default=None):
 		if(key is None):
