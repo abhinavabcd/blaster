@@ -20,7 +20,7 @@ try:
     def send_via_sendgrid(
         from_email, to_emails, subject,
         body_text=None, body_html=None, cc_list=None, bcc_list=None,
-        api_key=None
+        api_key=None, template_id=None, dynamic_template_data=None
     ):
         message = Mail(
             from_email=from_email,
@@ -29,6 +29,10 @@ try:
             plain_text_content=body_text,
             html_content=body_html
         )
+        if(template_id):
+            message.template_id = template_id
+        if(dynamic_template_data):
+            message.dynamic_template_data = dynamic_template_data
         sg = SendGridAPIClient(api_key or SENDGRID_API_KEY)
         response = sg.send(message)
         LOG_APP_INFO(
