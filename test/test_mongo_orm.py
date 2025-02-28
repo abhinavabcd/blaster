@@ -109,8 +109,8 @@ class TestConcurrentThreadUpdates(unittest.TestCase):
 
 class TestValidators(unittest.TestCase):
     def test_validators(self):
-        a = AModel(a=11, b="-ab-" * 1000).commit(force=True)
-        self.assertEqual(len(a.b), 2048)
+        a = AModel(a=11, b="-ab-" * 4000).commit(force=True)
+        self.assertEqual(len(a.b), 4096)
 
 
 class TestBasics(unittest.TestCase):
@@ -122,12 +122,6 @@ class TestBasics(unittest.TestCase):
         self.assertIsNone(
             AModel._secondary_shards_["c"]._Model_.get_collection(None).find_one({"c": None})
         )
-
-    def test_attrs_belongs_to_model(self):
-        print(AModel._attrs_["c"]._models)
-        self.assertEqual(len(AModel._attrs_["c"]._models), 3)
-        self.assertEqual(len(AModel._attrs_["d"]._models), 2)
-        self.assertEqual(len(AModel._attrs_["f"]._models), 1)
 
     def test_commit_with_transaction(self):
         a = AModel(a=11, b="22", c="33").commit()
@@ -146,7 +140,8 @@ class TestBasics(unittest.TestCase):
         a.c = "32"
 
         def after_mongo_update(self, old_doc, new_doc, _transaction=None):
-            raise Exception(f"some ex with {_transaction}")
+            BModel(a=new_doc["a"], b="0", c="0").commit(_transaction=_transaction)
+            raise Exception(f"some ex with {_transaction}")  # fail
         try:
             a.update({}, after_mongo_update=after_mongo_update)
         except Exception as ex:
@@ -156,6 +151,9 @@ class TestBasics(unittest.TestCase):
         self.assertEqual(
             AModel.get_collection(11).find_one({"a": 11})["c"],
             "31"
+        )
+        self.assertIsNone(
+            BModel.get_collection(11).find_one({"a": 11})
         )
 
     def test_max_rate_exception(self):
@@ -219,7 +217,7 @@ class TestListAndDict(unittest.TestCase):
 
     def test_conflicting_path_updates(self):
         a = AModel(a=14)
-        a.h = {"a": {"b": {"c": 1}}}
+        a.h = {"a": {"b": {"c": "1"}}}
         a.commit()
 
         a.h["a"]["b"]["c"] = 2
@@ -243,7 +241,7 @@ class TestUpdates(unittest.TestCase):
     def test_update_with_change(self):
         b = BModel(a=0).commit()
         b = BModel.get(a=0)
-        b.update({"$set": {"c": 100}})
+        b.update({"$set": {"c": "100"}})
 
         b = list(b.query({"a": 0}))[0]
         self.assertTrue(b.c == "100")

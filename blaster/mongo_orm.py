@@ -77,7 +77,6 @@ DEFAULT_VALIDATORS = {
 class Attribute(object):
 	_type = None
 	_validator = None
-	_models = None
 
 	def __init__(self, _type, validator=_OBJ_END_, **kwargs):
 		self._type = _type
@@ -279,6 +278,11 @@ class MongoDict(dict):
 def _with_transaction(collection, _transaction, exit_stack):
 	dbnode = collection._db_node_
 	mclient = dbnode.mongo_client
+
+	if(_stack := _transaction.get("stack")):  # reuse top level exit stack
+		exit_stack = _stack
+	else:
+		_transaction["stack"] = exit_stack
 	session = _transaction.get(mclient)
 	if(not session):
 		_transaction[mclient] = session = mclient.start_session()
@@ -722,8 +726,20 @@ class Model(object):
 		if(not _update_query):
 			return True  # nothing to update, hence true
 
-		with ExitStack() as stack:
-			for _update_retry_count in range(3):
+		for _update_retry_count in range(3):
+
+			if(
+				_transaction is True
+				or (after_mongo_update and _transaction is None)
+			):
+				_transaction = {}
+
+			__transaction = None
+			if(_transaction is not None):
+				__transaction = dict(_transaction)  # must be a dict, we copy so on retry we start new session
+
+			# create or reuse stack(when nested)
+			with ExitStack() as stack:
 				original_doc = self._original_doc
 				updated_doc = None
 				_query = {
@@ -739,12 +755,6 @@ class Model(object):
 				# get the shard where current object is
 				primary_shard_key = original_doc[cls._shard_key_ or "_id"]
 				primary_shard_collection = cls.get_collection(primary_shard_key)
-
-				if(
-					_transaction is True
-					or (after_mongo_update and _transaction is None)
-				):
-					_transaction = {}  # use transaction
 
 				#: VVIMPORTANT: set `_` -> to current timestamp
 				_to_set = _update_query.get("$set", _OBJ_END_)
@@ -773,8 +783,8 @@ class Model(object):
 						_update_query,
 						return_document=ReturnDocument.AFTER,
 						session=(
-							_with_transaction(primary_shard_collection, _transaction, stack)
-							if _transaction is not None
+							_with_transaction(primary_shard_collection, __transaction, stack)
+							if __transaction is not None
 							else None
 						),
 						**kwargs
@@ -901,7 +911,7 @@ class Model(object):
 				# call any explicit callback
 				after_mongo_update and after_mongo_update(
 					self, original_doc, updated_doc,
-					_transaction=_transaction
+					_transaction=__transaction
 				)
 				# publish update event
 				cls._trigger_event(
@@ -1293,17 +1303,16 @@ class Model(object):
 					set_query=str(self._set_query_updates)
 				)
 			try:
-				# find which shard we should insert
-				with ExitStack() as stack:
+				if(cls._secondary_shards_ and _transaction is None):
 					_transaction = _transaction if _transaction is not None else {}
 
+				# find which shard we should insert
+				with ExitStack() as stack:
 					self._insert_result = primary_shard_collection.insert_one(
 						self._set_query_updates,
-						session=(
-							_with_transaction(primary_shard_collection, _transaction, stack)
-							if cls._secondary_shards_
+						session=_with_transaction(primary_shard_collection, _transaction, stack)
+							if _transaction is not None
 							else None
-						)
 					)
 
 					self._id = self._set_query_updates["_id"] = self._insert_result.inserted_id
