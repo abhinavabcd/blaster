@@ -1059,7 +1059,10 @@ def sanitize_to_underscore_id(text):
 	return NON_ALPHA_GROUPS_REGEX.sub("_", text.strip().lower()).rstrip("_")
 
 
-EMAIL_REGEX = re.compile(r'^[_a-z0-9-]+(\.[_a-z0-9-]+)*(\+[_a-z0-9-]+)?\@[a-z0-9-]+(\.[a-z0-9-]+)*(\.[a-z]{2,6})$')
+EMAIL_REGEX = re.compile(
+	r'^[_a-z0-9-]+(\.[_a-z0-9-]+)*(\+[_a-z0-9-]+)?\@[a-z0-9-]+(\.[a-z0-9-]+)*(\.[a-z]{2,6})$',
+	re.IGNORECASE
+)
 
 
 def is_valid_email(email):

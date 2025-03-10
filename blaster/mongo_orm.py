@@ -12,7 +12,7 @@ from bson.objectid import ObjectId
 from itertools import chain
 from collections import OrderedDict
 from pymongo import MongoClient
-from pymongo.errors import DuplicateKeyError, OperationFailure
+from pymongo.errors import DuplicateKeyError, PyMongoError
 from pymongo import ReturnDocument
 from .tools import all_subclasses, \
 	cur_ms, list_diff2, batched_iter, _OBJ_END_, \
@@ -100,8 +100,8 @@ class MongoList(list):
 		if(initial_value):
 			for item in initial_value:
 				self.append(item)
-		self._is_local = _model_obj._is_new_  # Hack for new object
-		if(_model_obj._is_new_):
+		self._is_local = _model_obj._is_create_new_  # Hack for new object
+		if(_model_obj._is_create_new_):
 			_model_obj._if_non_empty_set_query_update[path] = self
 
 	def __setitem__(self, k, v):
@@ -218,8 +218,8 @@ class MongoDict(dict):
 		self.path = path
 		if(initial_value):
 			self.update(initial_value)
-		self._is_local = _model_obj._is_new_  # Hack for new object
-		if(_model_obj._is_new_):
+		self._is_local = _model_obj._is_create_new_  # Hack for new object
+		if(_model_obj._is_create_new_):
 			_model_obj._if_non_empty_set_query_update[path] = self
 
 	def __setitem__(self, k, v):
@@ -275,9 +275,12 @@ class MongoDict(dict):
 
 
 # utility function to cache and return a session for transaction
-def _with_transaction(collection, _transaction, exit_stack):
+def _with_session(collection, _transaction, exit_stack):
 	dbnode = collection._db_node_
 	mclient = dbnode.mongo_client
+
+	if(_transaction is None or not dbnode.replicaset):
+		return None
 
 	if(_stack := _transaction.get("stack")):  # reuse top level exit stack
 		exit_stack = _stack
@@ -287,9 +290,41 @@ def _with_transaction(collection, _transaction, exit_stack):
 	if(not session):
 		_transaction[mclient] = session = mclient.start_session()
 		exit_stack.enter_context(session)
-		if(dbnode.replicaset):  # TODO: do better to indentify replicaset
-			exit_stack.enter_context(session.start_transaction())
+
+	if((_tracked_transactions := _transaction.get("transactions")) is None):  # cleared when failed
+		_transaction["transactions"] = _tracked_transactions = OrderedDict()
+
+	if(session not in _tracked_transactions):
+		if(session.in_transaction):
+			session.abort_transaction()
+		_tracked_transactions[session] = session.start_transaction()
 	return session
+
+
+def _commit_transaction(_transaction):
+	if(not _transaction):
+		return
+
+	for session in reversed(list(_transaction["transactions"].keys())):
+		while(True):
+			try:
+				session.commit_transaction()
+				break
+			except PyMongoError as exc:
+				if (exc.has_error_label("UnknownTransactionCommitResult")):
+					# Retry the commit.
+					continue
+				raise
+	_transaction.pop("transactions", None)
+
+
+def _abort_transaction(_transaction):
+	if(not _transaction):
+		return
+	for session in reversed(list(_transaction["transactions"].keys())):
+		session.abort_transaction()
+
+	_transaction.pop("transactions", None)
 
 
 ModelType = TypeVar('ModelType', bound='Model')  # use string
@@ -305,7 +340,7 @@ class Model(object):
 	_is_secondary_shard = False
 
 	# ###instance level###
-	_is_new_ = True
+	_is_create_new_ = True
 	# this means the object is being initialized by this orm,
 	# and not available to user yet
 	_initializing_ = False
@@ -319,11 +354,11 @@ class Model(object):
 	_insert_result = None
 
 	# initialize a new object
-	def __init__(self, _is_new_=True, **values):
+	def __init__(self, _is_create_new_=True, **values):
 
 		# defaults
-		self._is_new_ = _is_new_
-		self._initializing_ = not _is_new_
+		self._is_create_new_ = _is_create_new_
+		self._initializing_ = not _is_create_new_
 		self._set_query_updates = {}
 		self._if_non_empty_set_query_update = {}
 		self._other_query_updates = {}
@@ -331,7 +366,7 @@ class Model(object):
 		for k, v in cls._attrs_.items():
 			self.__dict__[k] = None  # set all initial attributes to None
 
-		if(_is_new_):
+		if(_is_create_new_):
 			# setup default values
 			self.__check_and_set_initial_defaults(values)  # from empty doc
 
@@ -575,7 +610,7 @@ class Model(object):
 						self.__dict__[attr_name] = None
 
 	def _reset(self, doc):
-		self._is_new_ = False  # this is not a new object
+		self._is_create_new_ = False  # this is not a new object
 		self._initializing_ = True
 
 		self.__check_and_set_initial_defaults(doc)
@@ -725,214 +760,219 @@ class Model(object):
 
 		if(not _update_query):
 			return True  # nothing to update, hence true
+		if(
+			_transaction is True
+			or (after_mongo_update and _transaction is None)
+		):
+			_transaction = {}
 
-		for _update_retry_count in range(3):
+		is_new_transaction = (
+			_transaction is not None
+			and not _transaction.get("transactions")
+		)
+		break_with_exception = None
+		with ExitStack() as stack:
+			for _update_retry_count in range(3):
+				try:
+					# create or reuse stack(when nested)
+					original_doc = self._original_doc
+					updated_doc = None
+					_query = {
+						"_id": self._id,
+						"_": original_doc.get("_", _NOT_EXISTS_QUERY)  # IMP to check
+					}
 
-			if(
-				_transaction is True
-				or (after_mongo_update and _transaction is None)
-			):
-				_transaction = {}
+					# update with more given conditions,
+					# (it's only for local<->remote comparision)
+					if(conditions):
+						_query.update(conditions)
 
-			__transaction = None
-			if(_transaction is not None):
-				__transaction = dict(_transaction)  # must be a dict, we copy so on retry we start new session
+					# get the shard where current object is
+					primary_shard_key = original_doc[cls._shard_key_ or "_id"]
+					primary_shard_collection = cls.get_collection(primary_shard_key)
 
-			# create or reuse stack(when nested)
-			with ExitStack() as stack:
-				original_doc = self._original_doc
-				updated_doc = None
-				_query = {
-					"_id": self._id,
-					"_": original_doc.get("_", _NOT_EXISTS_QUERY)  # IMP to check
-				}
+					#: VVIMPORTANT: set `_` -> to current timestamp
+					_to_set = _update_query.get("$set", _OBJ_END_)
+					if(_to_set is _OBJ_END_):
+						_update_query["$set"] = _to_set = {}
 
-				# update with more given conditions,
-				# (it's only for local<->remote comparision)
-				if(conditions):
-					_query.update(conditions)
-
-				# get the shard where current object is
-				primary_shard_key = original_doc[cls._shard_key_ or "_id"]
-				primary_shard_collection = cls.get_collection(primary_shard_key)
-
-				#: VVIMPORTANT: set `_` -> to current timestamp
-				_to_set = _update_query.get("$set", _OBJ_END_)
-				if(_to_set is _OBJ_END_):
-					_update_query["$set"] = _to_set = {}
-
-				_to_set["_"] = max(
-					original_doc.get("_", 0) + 1,
-					int(time.time() * 1000)
-				)
-
-				# query and update the document
-				IS_DEV \
-					and DEBUG_PRINT_LEVEL > 8 \
-					and LOG_DEBUG(
-						"MONGO", description="update before and query",
-						model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
-						query=str(_query), original_doc=str(original_doc),
-						update_query=str(_update_query)
+					_to_set["_"] = max(
+						original_doc.get("_", 0) + 1,
+						int(time.time() * 1000)
 					)
 
-				# 1: try updating
-				try:
+					# query and update the document
+					IS_DEV \
+						and DEBUG_PRINT_LEVEL > 8 \
+						and LOG_DEBUG(
+							"MONGO", description="update before and query",
+							model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
+							query=str(_query), original_doc=str(original_doc),
+							update_query=str(_update_query)
+						)
+
+					# 1: try updating
 					updated_doc = primary_shard_collection.find_one_and_update(
 						_query,
 						_update_query,
 						return_document=ReturnDocument.AFTER,
-						session=(
-							_with_transaction(primary_shard_collection, __transaction, stack)
-							if __transaction is not None
-							else None
-						),
+						session=_with_session(primary_shard_collection, _transaction, stack),
 						**kwargs
 					)
-				except OperationFailure as ex:
-					if ex.has_error_label("TransientTransactionError"):
-						time.sleep(0.03 * _update_retry_count)
-						continue
-					raise ex
 
-				IS_DEV \
-					and DEBUG_PRINT_LEVEL > 8\
-					and LOG_DEBUG(
-						"MONGO", description="after update",
-						model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
-						updated_doc=str(updated_doc)
+					IS_DEV \
+						and DEBUG_PRINT_LEVEL > 8\
+						and LOG_DEBUG(
+							"MONGO", description="after update",
+							model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
+							updated_doc=str(updated_doc)
+						)
+
+					if(not updated_doc):
+						# update was unsuccessful
+						# is this concurrent update by someone else?
+						_update_retry_count and time.sleep(0.03 * _update_retry_count)
+						# 1. fetch from db again
+						_doc_in_db = primary_shard_collection.find_one({"_id": self._id})
+						if(not _doc_in_db):  # moved out of shard or pk changed
+							raise Exception(f"Document {self._id} pk:{self.pk()} not found")
+
+						# 2. update our local copy
+						self.reset_and_update_cache(_doc_in_db)
+
+						# 3. check if basic consistency between local and remote
+						if(_doc_in_db.get("_", _OBJ_END_) != original_doc.get("_", _OBJ_END_)):
+							continue  # can retry
+
+						# cannot retry, may be the given conditions could have failed
+						return False
+
+					# doc successfully updated
+					# check if need to migrate to another shard if sharding is enabled
+					if(cls._shard_key_ is not None):
+						_new_primary_shard_key = updated_doc[cls._shard_key_]
+						if(_new_primary_shard_key != primary_shard_key):
+							new_primary_shard_collection = cls.get_collection(_new_primary_shard_key)
+							if(new_primary_shard_collection != primary_shard_collection):
+								# migrate to new shard
+								# will crash if duplicate _id key
+								new_primary_shard_collection.insert_one(updated_doc)
+								primary_shard_collection.delete_one({"_id": self._id})
+
+					# 1. propagate the updates to secondary shards
+					for _secondary_shard_key, _shard in cls._secondary_shards_.items():
+						_SecondayModel = _shard._Model_
+
+						_old_shard_key_val = original_doc.get(_secondary_shard_key)
+						_new_shard_key_val = updated_doc.get(_secondary_shard_key)
+						# 2. check if shard key has been changed
+						_old_secondary_collection = None
+						_new_secondary_collection = None
+
+						if(_old_shard_key_val is not None):
+							_old_secondary_collection = _SecondayModel\
+								.get_collection(_old_shard_key_val)
+						if(_new_shard_key_val is not None):
+							_new_secondary_collection = _SecondayModel\
+								.get_collection(_new_shard_key_val)
+
+						# 2.1. If old shard exists, delete that secondary doc
+						if(
+							_old_secondary_collection is not None
+							and (
+								_old_secondary_collection != _new_secondary_collection
+							)
+						):
+							_old_secondary_collection.delete_one({"_id": self._id})
+
+						# 2.2.  if new shard key exists insert into appropriate node
+						# insert only if non null
+						if(_new_secondary_collection is not None):
+							_to_insert = {}
+							is_shard_data_changed = False
+							for _k in _shard.attrs:
+								_v = updated_doc.get(_k, _OBJ_END_)
+								if(_v is not _OBJ_END_):
+									_to_insert[_k] = _v
+								if(_v != original_doc.get(_k, _OBJ_END_)):
+									# changed during update
+									is_shard_data_changed = True
+
+							# nothing changed in the shard
+							# don't replace/update
+							if(not is_shard_data_changed):
+								continue
+
+							_to_insert["_"] = updated_doc["_"]
+							# insert the doc in new collection
+							try:
+								_new_secondary_collection.replace_one(
+									{
+										"_id": self._id,
+										"_": {"$not": {"$gte": updated_doc["_"]}}
+									},
+									_to_insert,
+									upsert=True
+								)
+							except DuplicateKeyError as ex:
+								LOG_ERROR(
+									"MONGO",
+									desc="upserting failed(concurrent update)/duplicate entry on seconday shard",
+									ex=str(ex),
+									model=cls.__name__,
+									collection=COLLECTION_NAME(_new_secondary_collection),
+								)
+							except Exception as ex:
+								# updating to secondary failed
+								LOG_ERROR(
+									"MONGO",
+									desc="secondary not be propagated",
+									ex=str(ex),
+									model=cls.__name__,
+									collection=COLLECTION_NAME(_new_secondary_collection),
+									secondary_doc=str(_to_insert)
+								)
+
+					# call any explicit callback
+					after_mongo_update and after_mongo_update(
+						self, original_doc, updated_doc,
+						_transaction=_transaction
+					)
+					# publish update event
+					cls._trigger_event(
+						EVENT_MONGO_AFTER_UPDATE,
+						self, original_doc, updated_doc
 					)
 
-				if(not updated_doc):
-					# update was unsuccessful
-					# is this concurrent update by someone else?
-					_update_retry_count and time.sleep(0.03 * _update_retry_count)
-					# 1. fetch from db again
-					_doc_in_db = primary_shard_collection.find_one({"_id": self._id})
-					if(not _doc_in_db):  # moved out of shard or pk changed
-						raise Exception(f"Document {self._id} pk:{self.pk()} not found")
+					# reset all values
+					self.reset_and_update_cache(updated_doc)
+					# waint on threads
 
-					# 2. update our local copy
-					self.reset_and_update_cache(_doc_in_db)
+					# cleanup if pending updates already applied
+					if(include_pending_updates):
+						self._set_query_updates.clear()
+						self._other_query_updates.clear()
 
-					# 3. check if basic consistency between local and remote
-					if(_doc_in_db.get("_", _OBJ_END_) != original_doc.get("_", _OBJ_END_)):
-						continue  # can retry
-
-					# cannot retry, may be the given conditions could have failed
-					return False
-
-				# doc successfully updated
-				# check if need to migrate to another shard if sharding is enabled
-				if(cls._shard_key_ is not None):
-					_new_primary_shard_key = updated_doc[cls._shard_key_]
-					if(_new_primary_shard_key != primary_shard_key):
-						new_primary_shard_collection = cls.get_collection(_new_primary_shard_key)
-						if(new_primary_shard_collection != primary_shard_collection):
-							# migrate to new shard
-							# will crash if duplicate _id key
-							new_primary_shard_collection.insert_one(updated_doc)
-							primary_shard_collection.delete_one({"_id": self._id})
-
-				# 1. propagate the updates to secondary shards
-				for _secondary_shard_key, _shard in cls._secondary_shards_.items():
-					_SecondayModel = _shard._Model_
-
-					_old_shard_key_val = original_doc.get(_secondary_shard_key)
-					_new_shard_key_val = updated_doc.get(_secondary_shard_key)
-					# 2. check if shard key has been changed
-					_old_secondary_collection = None
-					_new_secondary_collection = None
-
-					if(_old_shard_key_val is not None):
-						_old_secondary_collection = _SecondayModel\
-							.get_collection(_old_shard_key_val)
-					if(_new_shard_key_val is not None):
-						_new_secondary_collection = _SecondayModel\
-							.get_collection(_new_shard_key_val)
-
-					# 2.1. If old shard exists, delete that secondary doc
+					is_new_transaction and _commit_transaction(_transaction)
+					# triggered after update event
+					cls._trigger_event(EVENT_AFTER_UPDATE, self)
+					# whoever created the transaction should commit it
+					return True
+				except PyMongoError as ex:
 					if(
-						_old_secondary_collection is not None
-						and (
-							_old_secondary_collection != _new_secondary_collection
-						)
+						is_new_transaction
+						and ex.has_error_label("TransientTransactionError")
 					):
-						_old_secondary_collection.delete_one({"_id": self._id})
+						# RETRY
+						_transaction.pop("transactions", None)
+						continue
+					raise ex  # re-raise the exception
+				except Exception as ex:
+					break_with_exception = ex  # any other exception abort and raise
+					break
 
-					# 2.2.  if new shard key exists insert into appropriate node
-					# insert only if non null
-					if(_new_secondary_collection is not None):
-						_to_insert = {}
-						is_shard_data_changed = False
-						for _k in _shard.attrs:
-							_v = updated_doc.get(_k, _OBJ_END_)
-							if(_v is not _OBJ_END_):
-								_to_insert[_k] = _v
-							if(_v != original_doc.get(_k, _OBJ_END_)):
-								# changed during update
-								is_shard_data_changed = True
-
-						# nothing changed in the shard
-						# don't replace/update
-						if(not is_shard_data_changed):
-							continue
-
-						_to_insert["_"] = updated_doc["_"]
-						# insert the doc in new collection
-						try:
-							_new_secondary_collection.replace_one(
-								{
-									"_id": self._id,
-									"_": {"$not": {"$gte": updated_doc["_"]}}
-								},
-								_to_insert,
-								upsert=True
-							)
-						except DuplicateKeyError as ex:
-							LOG_ERROR(
-								"MONGO",
-								desc="upserting failed(concurrent update)/duplicate entry on seconday shard",
-								ex=str(ex),
-								model=cls.__name__,
-								collection=COLLECTION_NAME(_new_secondary_collection),
-							)							
-						except Exception as ex:
-							# updating to secondary failed
-							LOG_ERROR(
-								"MONGO",
-								desc="secondary not be propagated",
-								ex=str(ex),
-								model=cls.__name__,
-								collection=COLLECTION_NAME(_new_secondary_collection),
-								secondary_doc=str(_to_insert)
-							)
-
-				# call any explicit callback
-				after_mongo_update and after_mongo_update(
-					self, original_doc, updated_doc,
-					_transaction=__transaction
-				)
-				# publish update event
-				cls._trigger_event(
-					EVENT_MONGO_AFTER_UPDATE,
-					self, original_doc, updated_doc
-				)
-
-				# reset all values
-				self.reset_and_update_cache(updated_doc)
-				# waint on threads
-
-				# cleanup if pending updates already applied
-				if(include_pending_updates):
-					self._set_query_updates.clear()
-					self._other_query_updates.clear()
-
-				# triggered after update event
-				cls._trigger_event(EVENT_AFTER_UPDATE, self)
-				return True
-
-		raise Exception("Concurrent update may have caused this query to fail")
+		is_new_transaction and _abort_transaction(_transaction)
+		raise break_with_exception or Exception("Concurrent update may have caused this query to fail")
 
 	@classmethod
 	def from_doc(cls, doc):
@@ -1272,7 +1312,7 @@ class Model(object):
 		cls = self.__class__
 		committed = False
 
-		if(self._is_new_):  # try inserting
+		if(self._is_create_new_):  # try inserting
 			cls._trigger_event(EVENT_BEFORE_CREATE, self)
 
 			if(self._if_non_empty_set_query_update):
@@ -1302,71 +1342,89 @@ class Model(object):
 					model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
 					set_query=str(self._set_query_updates)
 				)
-			try:
-				if(cls._secondary_shards_ and _transaction is None):
-					_transaction = _transaction if _transaction is not None else {}
+			if(cls._secondary_shards_ and _transaction is None):
+				_transaction = {}
 
-				# find which shard we should insert
-				with ExitStack() as stack:
-					self._insert_result = primary_shard_collection.insert_one(
-						self._set_query_updates,
-						session=_with_transaction(primary_shard_collection, _transaction, stack)
-							if _transaction is not None
-							else None
-					)
+			is_new_transaction = (
+				_transaction is not None
+				and _transaction.get("transactions") is None
+			)				# find which shard we should insert
+			break_with_ex = None
+			with ExitStack() as stack:
+				for _insert_retry_count in range(3):
+					try:
+						self._insert_result = primary_shard_collection.insert_one(
+							self._set_query_updates,
+							session=_with_session(primary_shard_collection, _transaction, stack)
+						)
 
-					self._id = self._set_query_updates["_id"] = self._insert_result.inserted_id
+						self._id = self._set_query_updates["_id"] = self._insert_result.inserted_id
 
-					# insert in secondary shards now
-					for _secondary_shard_key, _shard in cls._secondary_shards_.items():
-						_SecondaryModel = _shard._Model_
-						_shard_key_val = self._set_query_updates.get(_secondary_shard_key)
-						if(_shard_key_val is not None):
-							_to_insert = {}
-							for attr in _shard.attrs:
-								_attr_val = self._set_query_updates.get(attr, _OBJ_END_)
-								if(_attr_val is not _OBJ_END_):
-									_to_insert[attr] = _attr_val
-							secondary_collection = _SecondaryModel.get_collection(_shard_key_val)
-							if(_to_insert):
-								secondary_collection.insert_one(
-									_to_insert,
-									session=_with_transaction(secondary_collection, _transaction, stack)
-								)
+						# insert in secondary shards now
+						for _secondary_shard_key, _shard in cls._secondary_shards_.items():
+							_SecondaryModel = _shard._Model_
+							_shard_key_val = self._set_query_updates.get(_secondary_shard_key)
+							if(_shard_key_val is not None):
+								_to_insert = {}
+								for attr in _shard.attrs:
+									_attr_val = self._set_query_updates.get(attr, _OBJ_END_)
+									if(_attr_val is not _OBJ_END_):
+										_to_insert[attr] = _attr_val
+								secondary_collection = _SecondaryModel.get_collection(_shard_key_val)
+								if(_to_insert):
+									secondary_collection.insert_one(
+										_to_insert,
+										session=_with_session(secondary_collection, _transaction, stack)
+									)
+						# set _id updates
+						committed = True
+						is_new_transaction and _commit_transaction(_transaction)
+						# set original doc and custom dict and set fields
+						# copy the dict to another
+						self.reset_and_update_cache(dict(self._set_query_updates))
+						# hook to do something for newly created db entries
+						cls._trigger_event(EVENT_AFTER_CREATE, self)
+						break
+					except DuplicateKeyError as ex:
 
-				# set _id updates
-				committed = True
-				# set original doc and custom dict and set fields
-				# copy the dict to another
-				self.reset_and_update_cache(dict(self._set_query_updates))
-				# hook to do something for newly created db entries
-				cls._trigger_event(EVENT_AFTER_CREATE, self)
+						if(ignore_exceptions and DuplicateKeyError in ignore_exceptions):
+							return None
 
-			except DuplicateKeyError as ex:
+						if(not force):
+							raise(ex)  # re reaise
 
-				if(ignore_exceptions and DuplicateKeyError in ignore_exceptions):
-					return None
+						# get original doc from mongo shard
+						doc_in_db = primary_shard_collection.find_one(ex.details["keyValue"])
+						self.reset_and_update_cache(doc_in_db)
+						IS_DEV \
+							and DEBUG_PRINT_LEVEL > 8 \
+							and LOG_DEBUG(
+								"MONGO", description="created a duplicate, refetching and updating",
+								model=cls.__name__,
+								collection=COLLECTION_NAME(primary_shard_collection),
+								pk=str(self.pk())
+							)
 
-				if(not force):
-					raise(ex)  # re reaise
+						# remove _id, not need to update it
+						if("_id" in self._set_query_updates):
+							del self._set_query_updates["_id"]
+						break  # CONTINUE TO UPDATE WITHOUT EXCEPTION
+					except PyMongoError as ex:
+						if(is_new_transaction and ex.has_error_label("TransientTransactionError")):
+							# RETRY
+							_transaction.pop("transactions", None)
+							continue
+						raise ex  # re-raise
+					except Exception as ex:
+						break_with_ex = ex
+						break
 
-				# get original doc from mongo shard
-				doc_in_db = primary_shard_collection.find_one(ex.details["keyValue"])
-				self.reset_and_update_cache(doc_in_db)
-				IS_DEV \
-					and DEBUG_PRINT_LEVEL > 8 \
-					and LOG_DEBUG(
-						"MONGO", description="created a duplicate, refetching and updating",
-						model=cls.__name__,
-						collection=COLLECTION_NAME(primary_shard_collection),
-						pk=str(self.pk())
-					)
+			if(not committed):
+				is_new_transaction and _abort_transaction(_transaction)  # abort transaction
+				if(break_with_ex):
+					raise break_with_ex
 
-				# remove _id, not need to update it
-				if("_id" in self._set_query_updates):
-					del self._set_query_updates["_id"]
-
-		if(not self._is_new_ and not committed):  # try updating
+		if(not self._is_create_new_ and not committed):  # try updating
 			# automatically picks up _set_query_updates inside .update function
 			is_committed = self.update({}, conditions=conditions)
 			if(not is_committed and not conditions):
@@ -1998,7 +2056,7 @@ def initialize_mongo(control_db_nodes, default_db_name=None):
 #   and run query on them
 # - We return a combined cusor from all nodes we queried
 # - We analyse the query and sometimes we decide the query
-#   can run on a secondary shard, we query, get the cursor              
+#   can run on a secondary shard, we query, get the cursor
 #   and batch fetch original docs from the primary when returning
 # - When you update document, we identify shard it belongs to
 #   and update that doc, then get the diff that has changed
