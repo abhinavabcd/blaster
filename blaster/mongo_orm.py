@@ -771,6 +771,8 @@ class Model(object):
 			and not _transaction.get("transactions")
 		)
 		break_with_exception = None
+		is_updated = False
+		conditions_have_failed = False
 		with ExitStack() as stack:
 			for _update_retry_count in range(3):
 				try:
@@ -845,7 +847,8 @@ class Model(object):
 							continue  # can retry
 
 						# cannot retry, may be the given conditions could have failed
-						return False
+						conditions_have_failed = True
+						break
 
 					# doc successfully updated
 					# check if need to migrate to another shard if sharding is enabled
@@ -948,16 +951,18 @@ class Model(object):
 					self.reset_and_update_cache(updated_doc)
 					# waint on threads
 
+					is_updated = True
+					is_new_transaction and _commit_transaction(_transaction)
+
 					# cleanup if pending updates already applied
 					if(include_pending_updates):
 						self._set_query_updates.clear()
 						self._other_query_updates.clear()
 
-					is_new_transaction and _commit_transaction(_transaction)
 					# triggered after update event
 					cls._trigger_event(EVENT_AFTER_UPDATE, self)
 					# whoever created the transaction should commit it
-					return True
+					break  # UPDATE SUCCESS
 				except PyMongoError as ex:
 					if(
 						is_new_transaction
@@ -971,8 +976,15 @@ class Model(object):
 					break_with_exception = ex  # any other exception abort and raise
 					break
 
-		is_new_transaction and _abort_transaction(_transaction)
-		raise break_with_exception or Exception("Concurrent update may have caused this query to fail")
+		if(not is_updated):
+			is_new_transaction and _abort_transaction(_transaction)
+		if(break_with_exception):
+			raise break_with_exception
+		if(is_updated):
+			return True
+		if(not conditions_have_failed):
+			Exception("Concurrent update may have caused this query to fail")
+		return False  # conditions failed
 
 	@classmethod
 	def from_doc(cls, doc):
@@ -1310,8 +1322,8 @@ class Model(object):
 		conditions=None, _transaction=None
 	) -> ModelType:
 		cls = self.__class__
-		committed = False
-
+		is_committed = False
+		break_with_ex = None
 		if(self._is_create_new_):  # try inserting
 			cls._trigger_event(EVENT_BEFORE_CREATE, self)
 
@@ -1349,7 +1361,6 @@ class Model(object):
 				_transaction is not None
 				and _transaction.get("transactions") is None
 			)				# find which shard we should insert
-			break_with_ex = None
 			with ExitStack() as stack:
 				for _insert_retry_count in range(3):
 					try:
@@ -1377,7 +1388,7 @@ class Model(object):
 										session=_with_session(secondary_collection, _transaction, stack)
 									)
 						# set _id updates
-						committed = True
+						is_committed = True
 						is_new_transaction and _commit_transaction(_transaction)
 						# set original doc and custom dict and set fields
 						# copy the dict to another
@@ -1388,7 +1399,7 @@ class Model(object):
 					except DuplicateKeyError as ex:
 
 						if(ignore_exceptions and DuplicateKeyError in ignore_exceptions):
-							return None
+							break  # no exception
 
 						if(not force):
 							raise(ex)  # re reaise
@@ -1408,10 +1419,11 @@ class Model(object):
 						# remove _id, not need to update it
 						if("_id" in self._set_query_updates):
 							del self._set_query_updates["_id"]
-						break  # CONTINUE TO UPDATE WITHOUT EXCEPTION
+						break  # CONTINUE TO UPDATE AS A EXISTING OBJECT
 					except PyMongoError as ex:
 						if(is_new_transaction and ex.has_error_label("TransientTransactionError")):
 							# RETRY
+							time.sleep(0.03 * _insert_retry_count)
 							_transaction.pop("transactions", None)
 							continue
 						raise ex  # re-raise
@@ -1419,12 +1431,10 @@ class Model(object):
 						break_with_ex = ex
 						break
 
-			if(not committed):
-				is_new_transaction and _abort_transaction(_transaction)  # abort transaction
-				if(break_with_ex):
-					raise break_with_ex
+				if(not is_committed):
+					is_new_transaction and _abort_transaction(_transaction)  # abort transaction
 
-		if(not self._is_create_new_ and not committed):  # try updating
+		if(not self._is_create_new_ and not is_committed):  # try updating
 			# automatically picks up _set_query_updates inside .update function
 			is_committed = self.update({}, conditions=conditions)
 			if(not is_committed and not conditions):
@@ -1433,10 +1443,14 @@ class Model(object):
 					"MONGO: Couldn't commit, either a concurrent update modified this or query has issues",
 					self.pk(), self._set_query_updates, self._other_query_updates
 				)
+		if(not is_committed):
+			if(break_with_ex):
+				raise break_with_ex
+			return None
+
 		# clear
 		self._set_query_updates.clear()
 		self._other_query_updates.clear()
-
 		return self
 
 	def delete(self):
