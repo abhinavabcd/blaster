@@ -321,8 +321,10 @@ def _commit_transaction(_transaction):
 def _abort_transaction(_transaction):
 	if(not _transaction):
 		return
-	for session in reversed(list(_transaction["transactions"].keys())):
-		session.abort_transaction()
+	# sometimes many transient errors and exits with cleanedup
+	if(_transactions := _transaction.get("transactions")):
+		for session in reversed(list(_transactions.keys())):
+			session.abort_transaction()
 
 	_transaction.pop("transactions", None)
 
@@ -951,8 +953,8 @@ class Model(object):
 					self.reset_and_update_cache(updated_doc)
 					# waint on threads
 
-					is_updated = True
 					is_new_transaction and _commit_transaction(_transaction)
+					is_updated = True
 
 					# cleanup if pending updates already applied
 					if(include_pending_updates):
@@ -969,6 +971,7 @@ class Model(object):
 						and ex.has_error_label("TransientTransactionError")
 					):
 						# RETRY
+						time.sleep(0.03 * _update_retry_count)
 						_transaction.pop("transactions", None)
 						continue
 					raise ex  # re-raise the exception
@@ -1388,8 +1391,8 @@ class Model(object):
 										session=_with_session(secondary_collection, _transaction, stack)
 									)
 						# set _id updates
-						is_committed = True
 						is_new_transaction and _commit_transaction(_transaction)
+						is_committed = True
 						# set original doc and custom dict and set fields
 						# copy the dict to another
 						self.reset_and_update_cache(dict(self._set_query_updates))
