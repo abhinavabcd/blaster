@@ -979,8 +979,9 @@ class Model(object):
 					break_with_exception = ex  # any other exception abort and raise
 					break
 
-		if(not is_updated):
-			is_new_transaction and _abort_transaction(_transaction)
+			if(not is_updated):
+				is_new_transaction and _abort_transaction(_transaction)
+
 		if(break_with_exception):
 			raise break_with_exception
 		if(is_updated):
