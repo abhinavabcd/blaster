@@ -7,7 +7,7 @@ from blaster.tools import get_time_overlaps, retry, \
 	ExpiringCache, create_signed_value, decode_signed_value, \
 	submit_background_task, background_task, ignore_exceptions, \
 	ASSERT_RATE_PER_MINUTE, RateLimitingException, get_by_key_path, \
-	xmltodict, sanitize_to_underscore_id
+	xmltodict, sanitize_to_underscore_id, nsplit
 from blaster.tools.sanitize_html import HtmlSanitizedDict, HtmlSanitizedList
 from datetime import datetime, timedelta
 from blaster.utils.data_utils import parse_string_to_units, parse_string_to_int, \
@@ -400,6 +400,38 @@ class TestTools(unittest.TestCase):
 		xml_string = "<note><to>Tove</to><from>Jani</from><heading>Reminder &amp; Reminder</heading><body>Don't forget me this weekend!</body></note>"
 		print(xmltodict(xml_string))
 
+	def test_nsplit(self):
+		# "", 3  -> None, None, None
+		self.assertListEqual(
+			nsplit("", ":", 2),
+			["", None, None]
+		)
+		# "a:b:c", 3 -> "a", "b", "c"
+		self.assertListEqual(
+			nsplit("a:b:c", ":", 2),
+			["a", "b", "c"]
+		)
+		# "a::b:c" -> "a", "", "b", "c"
+		self.assertListEqual(
+			nsplit("a::b:c", ":", 2),
+			["a", "", "b:c"]
+		)
+		# "a:::c", 3 -> "a", "", "", "c"
+		self.assertListEqual(
+			nsplit("a:::c", ":", 2),
+			["a", "", ":c"]
+		)
+
+		self.assertListEqual(
+			nsplit(":", ":", 2),
+			["", "", None]
+		)
+
+		self.assertListEqual(
+			nsplit("dpoint::Localpickup : ikea", ":", 2),
+			["dpoint", "", "Localpickup : ikea"]
+		)
+
 
 class TestBackgroundTasks(unittest.TestCase):
 	def test_background_threads_and_order(self):
@@ -445,7 +477,6 @@ class TestBackgroundTasks(unittest.TestCase):
 		# exit blaster and wait for it to finish
 		blaster_exit()
 		self.assertEqual(abt.a, 200)
-
 
 
 if __name__ == "__main__":
