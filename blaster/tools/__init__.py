@@ -391,7 +391,7 @@ def set_pop(s, item):
 
 DATE_DD_MM_YYYY_REGEX = re.compile(r"(?:^|\s)(\d{1,2})[\/\-\.](\d{1,2})(?:[\/\-\.](\d{4}))?(?=\s|$)")
 TIME_REGEX = re.compile(r"(\d{1,2})(?:\s*:+(\d{1,2}))?(?:\s*:+(\d{1,2}))?(?::+(\d{1,2})|(\s*(?:a|p).?m))", re.IGNORECASE)
-DAY_REGEX = re.compile(r"(mon|tues|wed(nes)?|thur(s)?|fri|sat(ur)?|sun)(day)?", re.IGNORECASE)
+DAY_REGEX = re.compile(r"(mon|tues|wed(nes)?|thur(s)?|fri|sat(ur)?|sun)(?!t)", re.IGNORECASE)
 RELATIVE_DAY_REGEX = re.compile(r"(after\s+to|tod|tom)[^\s]*", re.IGNORECASE)
 
 DAYS_OF_WEEK = [
@@ -415,12 +415,30 @@ def get_overlap(start, end, a, b, partial):
 
 def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False, interval=None):
 	x, *params = x.split("|")
+	x = x.lower().strip()
 	if(isinstance(a, int)):
 		a = timestamp2date(a)
 
 	if(isinstance(b, int)):
 		b = timestamp2date(b)
 	x = x.strip()
+
+	if("weekend" in x):
+		x = x.replace("weekend", "sat,sun")
+
+	if("next" in x):  # some keyword checks
+		if("month" in x):
+			_month = a.month + 1
+			a = datetime(a.year + _month // 12, _month % 12, 1)
+			x = x.replace("month", "")
+		elif("week" in x):
+			a = datetime(a.year, a.month, a.day) + timedelta(days=7 - a.weekday())
+			x = x.replace("week", "")
+		else:
+			a = datetime(a.year, a.month, a.day) + timedelta(days=1)
+			# next day
+			x = x.replace("day", "")
+		x = x.replace("next", "")
 
 	time_matches = []
 	date_matches = []
