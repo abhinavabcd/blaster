@@ -276,6 +276,15 @@ class TestTools(unittest.TestCase):
 			[(datetime(2024, 10, 5, 0, 0), datetime(2024, 10, 7, 0, 0), [])]
 		)
 
+		self.assertEqual(
+			get_time_overlaps(
+				dt_from, dt_from + timedelta(days=365),
+				"Fri 14 April 2025 6:00 PM",
+				limit=1
+			),
+			[(datetime(2025, 4, 14, 18, 0), datetime(2025, 4, 14, 19, 0), [])]
+		)
+
 	def test_thread_pool(self):
 		from blaster.tools import ThreadPool
 		tp = ThreadPool(5)

@@ -389,7 +389,7 @@ def set_pop(s, item):
 		return False
 
 
-DATE_DD_MM_YYYY_REGEX = re.compile(r"(?:^|\s)(\d{1,2})[\/\-\.](\d{1,2})(?:[\/\-\.](\d{4}))?(?=\s|$)")
+DATE_DD_MM_YYYY_REGEX = re.compile(r"(?:^|\s)(\d{1,2})(?:th|nd|rd)?[\/\-\.\s](\d{1,2}|(?:(?:jan|feb|mar|apr|may|june|jul|aug|sep|oct|nov|dec)\w*))(?:[\/\-\.\s](\d{4}))?(?=\s|$)", re.IGNORECASE)
 TIME_REGEX = re.compile(r"(\d{1,2})(?:\s*:+(\d{1,2}))?(?:\s*:+(\d{1,2}))?(?::+(\d{1,2})|(\s*(?:a|p).?m))", re.IGNORECASE)
 DAY_REGEX = re.compile(r"(mon|tues|wed(nes)?|thur(s)?|fri|sat(ur)?|sun)(?!t)", re.IGNORECASE)
 RELATIVE_DAY_REGEX = re.compile(r"(after\s+to|tod|tom)[^\s]*", re.IGNORECASE)
@@ -398,6 +398,12 @@ DAYS_OF_WEEK = [
 	'monday', 'tuesday', 'wednesday',
 	'thursday', 'friday', 'saturday', 'sunday'
 ]
+MONTHS_OF_YEAR = {
+	'jan': 1, 'feb': 2, 'mar': 3,
+	'apr': 4, 'may': 5, 'jun': 6,
+	'jul': 7, 'aug': 8, 'sep': 9,
+	'oct': 10, 'nov': 11, 'dec': 12
+}
 
 
 def get_overlap(start, end, a, b, partial):
@@ -476,8 +482,11 @@ def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False, interval=None):
 	# date matches
 	_dt_a_parts = [a.day, a.month, a.year]
 	for match in DATE_DD_MM_YYYY_REGEX.finditer(x):
-		dt_parts = [int(x) for x in match.groups() if x is not None]
-		date_matches.append(dt_parts + _dt_a_parts[len(dt_parts):])
+		_dt_parts = [x for x in match.groups() if x is not None]
+		dt_parts = _dt_parts + _dt_a_parts[len(_dt_parts):]
+		if(month := MONTHS_OF_YEAR.get(dt_parts[1][:3].lower())):
+			dt_parts[1] = month
+		date_matches.append([int(x) for x in dt_parts])
 		date_match_pos_list.append(match.span())
 
 	# day matches
