@@ -279,8 +279,8 @@ class TestTools(unittest.TestCase):
 		self.assertEqual(
 			get_time_overlaps(
 				dt_from, dt_from + timedelta(days=365),
-				"Fri 14 April 2025 6:00 PM",
-				limit=1
+				"Fri 14th, April 2025 6:00 PM",
+				limit=1, delim="\n"
 			),
 			[(datetime(2025, 4, 14, 18, 0), datetime(2025, 4, 14, 19, 0), [])]
 		)

@@ -389,7 +389,7 @@ def set_pop(s, item):
 		return False
 
 
-DATE_DD_MM_YYYY_REGEX = re.compile(r"(?:^|\s)(\d{1,2})(?:th|nd|rd)?[\/\-\.\s](\d{1,2}|(?:(?:jan|feb|mar|apr|may|june|jul|aug|sep|oct|nov|dec)\w*))(?:[\/\-\.\s](\d{4}))?(?=\s|$)", re.IGNORECASE)
+DATE_DD_MM_YYYY_REGEX = re.compile(r"(?:^|\s)(\d{1,2})(?:th|nd|rd|st)?[\/\-\.\s\,]+(\d{1,2}|(?:(?:jan|feb|mar|apr|may|june|jul|aug|sep|oct|nov|dec)\w*))(?:[\/\-\.\s](\d{4}))?(?=\s|$)", re.IGNORECASE)
 TIME_REGEX = re.compile(r"(\d{1,2})(?:\s*:+(\d{1,2}))?(?:\s*:+(\d{1,2}))?(?::+(\d{1,2})|(\s*(?:a|p).?m))", re.IGNORECASE)
 DAY_REGEX = re.compile(r"(mon|tues|wed(nes)?|thur(s)?|fri|sat(ur)?|sun)(?!t)", re.IGNORECASE)
 RELATIVE_DAY_REGEX = re.compile(r"(after\s+to|tod|tom)[^\s]*", re.IGNORECASE)
@@ -482,11 +482,11 @@ def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False, interval=None):
 	# date matches
 	_dt_a_parts = [a.day, a.month, a.year]
 	for match in DATE_DD_MM_YYYY_REGEX.finditer(x):
-		_dt_parts = [x for x in match.groups() if x is not None]
+		_dt_parts = [_x for _x in match.groups() if _x is not None]
 		dt_parts = _dt_parts + _dt_a_parts[len(_dt_parts):]
 		if(month := MONTHS_OF_YEAR.get(dt_parts[1][:3].lower())):
 			dt_parts[1] = month
-		date_matches.append([int(x) for x in dt_parts])
+		date_matches.append([int(_x) for _x in dt_parts])
 		date_match_pos_list.append(match.span())
 
 	# day matches
@@ -635,12 +635,12 @@ def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False, interval=None):
 def iter_time_overlaps(
 	a, b, include: list, exclude=None,
 	partial=False, tz_delta=timedelta(),
-	milliseconds=False, interval=None
+	milliseconds=False, interval=None, delim=","
 ):
 	if(isinstance(include, str)):
-		include = include.split(",")
+		include = include.split(delim)
 	if(isinstance(exclude, str)):
-		exclude = exclude.split(",")
+		exclude = exclude.split(delim)
 
 	if(
 		interval is not None
@@ -701,12 +701,12 @@ def iter_time_overlaps(
 def get_time_overlaps(
 	a, b, include: list, exclude=None,
 	partial=False, tz_delta=timedelta(), milliseconds=False,
-	limit=10, interval=None
+	limit=10, interval=None, delim=","
 ):
 	iter = iter_time_overlaps(
 		a, b, include, exclude=exclude, partial=partial,
 		tz_delta=tz_delta, milliseconds=milliseconds,
-		interval=interval
+		interval=interval, delim=delim
 	)
 	ret = []
 	for i in range(limit):
