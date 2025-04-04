@@ -423,9 +423,13 @@ def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False, interval=None):
 	x, *params = x.split("|")
 	x = x.lower().strip()
 	if(isinstance(a, int)):
+		if(a > 1e11):
+			a = a // 1000
 		a = timestamp2date(a)
 
 	if(isinstance(b, int)):
+		if(b > 1e11):
+			b = b // 1000
 		b = timestamp2date(b)
 	x = x.strip()
 

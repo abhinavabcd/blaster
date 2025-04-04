@@ -668,6 +668,7 @@ class App:
 		LOG_SERVER("server_start", port=port)
 		self.stream_server = CustomStreamServer(
 			('', port),
+			spawn=100000,
 			handle=self.handle_connection,
 			**ssl_args
 		)
