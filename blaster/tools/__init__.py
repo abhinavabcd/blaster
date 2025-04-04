@@ -2179,8 +2179,10 @@ def set_requests_default_args(**_kwargs):
 
 
 def xmltodict(xml_node, attributes=False):
-	t = etree.fromstring(xml_node, parser=etree.XMLParser(recover=True)) \
-		if isinstance(xml_node, str) else xml_node
+	t = etree.fromstring(
+		xml_node.encode("utf-8"),
+		parser=etree.XMLParser(recover=True)
+	) if isinstance(xml_node, str) else xml_node
 	if(t is None):
 		return None
 	_attributes = t.attrib if attributes else None
