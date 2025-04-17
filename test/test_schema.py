@@ -50,6 +50,8 @@ schema.init()
 
 
 class TestTools(unittest.TestCase):
+	def setUp(self):
+		self.maxDiff = 2048
 	def test_1(self):
 		with self.assertRaises(Exception) as context:
 			t = Test1.from_dict({"a": [1, 2, 3], "b": "1", "c": None, "e": "1"})
@@ -106,6 +108,6 @@ class TestTools(unittest.TestCase):
 		self.assertDictEqual(
 			schema.defs["test.test_schema.Test6"],
 			{
-				'type': 'object', 'title': 'test6', 'description': 'test6 description', 'properties': {'a': {'anyOf': [{'type': 'array', 'items': {'type': 'integer'}}, {'type': 'array', 'items': {'type': 'string'}}], 'title': 'hello', 'description': 'a description'}}, 'required': ['a']
+				'type': 'object', 'title': 'test6', 'description': 'test6 description', 'properties': {'a': {'anyOf': [{'type': 'array', 'items': {'type': 'integer'}}, {'type': 'array', 'items': {'minLength': 1, 'type': 'string'}}], 'title': 'hello', 'description': 'a description'}}, 'required': ['a']
 			}
 		)

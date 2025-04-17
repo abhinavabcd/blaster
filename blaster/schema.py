@@ -430,7 +430,7 @@ def _validate(e, simple_types=(), complex_validations=(), nullable=True, matched
 			if(matched_validators is not None):
 				matched_validators.append(_simple_type)
 			break
-	ex = None
+	ex_list = None
 	if(not valid):
 		for _complex_validation in complex_validations:
 			try:
@@ -440,7 +440,9 @@ def _validate(e, simple_types=(), complex_validations=(), nullable=True, matched
 					matched_validators.append(_complex_validation)
 				break
 			except Exception as _ex:
-				ex = _ex
+				if(ex_list is None):
+					ex_list = []
+				ex_list.append(_ex)
 	# if no validations are given are we good
 	if(not valid and not simple_types and not complex_validations):
 		if(e is None and not nullable):
@@ -453,7 +455,11 @@ def _validate(e, simple_types=(), complex_validations=(), nullable=True, matched
 	if(nullable):
 		return None
 
-	raise (ex or TypeError("Invalid value"))
+	if(ex_list):
+		raise TypeError(
+			f"Invalid value. Exceptions: {[str(ex) for ex in ex_list]}"
+		)
+	raise TypeError("Invalid value")
 
 
 # Array(str), Array((int, str), default=None), Array(Object), Array(Pet)
