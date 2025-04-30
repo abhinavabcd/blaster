@@ -1867,7 +1867,13 @@ class PartitionedTasksRunner:
 
 	def submit_task(self, partition_key, func, args, kwargs, max_backlog=None, timeout=None):
 		if(not self.is_processing):
-			raise Exception("this has stopped processing new background tasks")
+			# CHECK IF THIS SPANED FROM A BACKGROUND TASK
+			LOG_ERROR(
+				"background_tasks_runner", msg="cannot process new tasks in background as it's stopped. running them in main thread",
+				stack_trace_string=traceback.format_exc()
+			)
+			func(*args, **kwargs)
+			return
 
 		now_millis = cur_ms()
 		if(partition_key is None):
