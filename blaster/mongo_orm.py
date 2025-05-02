@@ -1725,6 +1725,8 @@ def initialize_model(_Model):
 	# parse all attributes
 	_mro = _Model.__mro__
 	for _M in reversed(_mro[1:_mro.index(Model)]):  # parent classes until Model class reversed
+		if(_Model._collection_name_ == _M._collection_name_):
+			return  # NOT A MODEL, NO NEED TO INITIALIZE AGAIN
 		_Model._attrs_.update(_M._attrs_)
 		_Model._attrs_to_name_.update(_M._attrs_to_name_)
 		_Model._indexes_ += _M._indexes_
