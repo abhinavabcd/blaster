@@ -359,7 +359,9 @@ class Object:
 			})
 
 	@classmethod
-	def from_dict(cls, _dict: dict, default=_OBJ_END_):
+	def from_dict(cls, _dict: dict, default=_OBJ_END_, inplace=True):
+		if(not inplace):
+			_dict = cls.deep_copy_to_dict(_dict)
 		try:
 			for _k, k in cls._remap_dict_key_to_object_key.items():
 				if(_k in _dict):
