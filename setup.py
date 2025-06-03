@@ -23,7 +23,7 @@ setup(
 		"requests>=2.25.1",
 		"requests-toolbelt>=1.0.0",
 		"urllib3>=1.26.4",
-		"metrohash>=0.3.3",
+		"cityhash>=0.4.8",
 		"PyYAML>=6.0"
 	],
 	classifiers=[
