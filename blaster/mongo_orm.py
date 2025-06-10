@@ -3,6 +3,7 @@ import json
 import heapq
 import types
 import pymongo
+import ujson  # it's fastest even to copy as it's a C extension
 from functools import cmp_to_key
 from contextlib import ExitStack
 from typing import TypeVar, Iterator, Type
@@ -204,7 +205,10 @@ class MongoList(list):
 		self._is_local = True  # Hack for new object
 
 	def copy(self) -> dict:
-		return get_by_key_path(self._model_obj._original_doc, self.path) or []
+		ret = get_by_key_path(self._model_obj._original_doc, self.path)
+		if(ret is not None):
+			return ujson.loads(ujson.dumps(ret))
+		return []  # return empty list if not found
 
 
 class MongoDict(dict):
@@ -271,7 +275,10 @@ class MongoDict(dict):
 		self._is_local = True  # Hack for new object
 
 	def copy(self) -> dict:
-		return get_by_key_path(self._model_obj._original_doc, self.path) or {}
+		ret = get_by_key_path(self._model_obj._original_doc, self.path)
+		if(ret is not None):
+			return ujson.loads(ujson.dumps(ret))
+		return {}  # return empty dict if not found
 
 
 # utility function to cache and return a session for transaction
