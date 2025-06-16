@@ -2220,3 +2220,13 @@ def xmltodict(xml_node, attributes=False):
 		else:
 			d[t.tag] = text
 	return d
+
+
+def mask_strings(val, mask_char="*"):
+	if(isinstance(val, str)):
+		val = (val[:2] + mask_char * (len(val) - 2)) if val else val
+	elif(isinstance(val, (list, tuple))):
+		val = [mask_strings(v, mask_char) for v in val]
+	elif(isinstance(val, dict)):
+		val = {k: mask_strings(v, mask_char) for k, v in val.items()}
+	return val
