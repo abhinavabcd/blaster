@@ -1081,9 +1081,11 @@ class App:
 				if(body):
 					content_length = len(body)
 					# finalize all the headers
-					buffered_socket.sendb(b'Content-Length: ', str(content_length), b'\r\n\r\n')
 					if(request_type != "HEAD"):
+						buffered_socket.sendb(b'Content-Length: ', str(content_length), b'\r\n\r\n')
 						buffered_socket.sendb(body)
+					else:
+						buffered_socket.sendb(b'Suggested-Content-Length: ', str(content_length), b'\r\n\r\n')
 				else:
 					buffered_socket.sendb(b'Content-Length: 0', b'\r\n\r\n')
 
@@ -1263,10 +1265,10 @@ def static_file_handler(
 			except Exception:
 				pass
 
-		return file_resp if file_resp else (
-			file_not_found_cb
-			and file_not_found_cb(path, req=req)
-		) or ("404 Not Found", [], "-NO-FILE-")
+		if(not file_resp):
+			if(file_not_found_cb):
+				file_resp = file_not_found_cb(path, req=req)
+		return file_resp or ("404 Not Found", [], "-NO-FILE-")
 	# headers , data
 	# preload all files once on load
 	file_names = [

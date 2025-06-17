@@ -231,9 +231,7 @@ def get_by_key_list(d, key_list, default=None):
 		for key in key_list:
 			d = d[key]
 		return d
-	except KeyError:
-		return default
-	except IndexError:
+	except (KeyError, IndexError, TypeError):
 		return default
 
 

@@ -7,7 +7,7 @@ from blaster.tools import get_time_overlaps, retry, \
 	ExpiringCache, create_signed_value, decode_signed_value, \
 	submit_background_task, background_task, ignore_exceptions, \
 	ASSERT_RATE_PER_MINUTE, RateLimitingException, get_by_key_path, \
-	xmltodict, sanitize_to_underscore_id, nsplit
+	xmltodict, sanitize_to_underscore_id, nsplit, get_by_key_list
 from blaster.tools.sanitize_html import HtmlSanitizedDict, HtmlSanitizedList
 from datetime import datetime, timedelta
 from blaster.utils.data_utils import parse_string_to_units, parse_string_to_int, \
@@ -413,6 +413,22 @@ class TestTools(unittest.TestCase):
 		self.assertEqual(
 			get_by_key_path({"a": [{"b": [{"c": 1, "d": {"e": 1}}, {"c": 2}]}, {"b": [{"c": 3}, {"c": 4}]}]}, "a[].b[].c,d:e"),
 			[[{"c": 1, "e": 1}, {"c": 2}], [{"c": 3}, {"c": 4}]]
+		)
+
+	def test_get_by_key_list(self):
+		self.assertEqual(
+			get_by_key_list({"a": {"b": 1}}, ["a", "b"]), 1
+		)
+		self.assertEqual(
+			get_by_key_list({"a": [{"b": 1}, {"b": 2}]}, ["a", 0, "b"]),
+			1
+		)
+		# NONE
+		self.assertIsNone(
+			get_by_key_list({"a": [{"b": 1}, {"b": 2}]}, ["a", 0, "c"])
+		)
+		self.assertIsNone(
+			get_by_key_list({"a": [{"b": None}, {"b": 2}]}, ["a", 0, "b", "c"])
 		)
 
 	def test_sanitize_to_underscore_id(self):
