@@ -77,6 +77,9 @@ EPOCH = datetime.utcfromtimestamp(0)
 _OBJ_END_ = object()
 _1KB_ = 1024
 _16KB_ = _1KB_ * 16
+_32KB_ = _1KB_ * 32
+_64KB_ = _1KB_ * 64
+_128KB_ = _1KB_ * 128
 _1MB_ = _1KB_ * _1KB_
 
 
