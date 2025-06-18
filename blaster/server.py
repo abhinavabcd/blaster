@@ -1085,7 +1085,9 @@ class App:
 						buffered_socket.sendb(b'Content-Length: ', str(content_length), b'\r\n\r\n')
 						buffered_socket.sendb(body)
 					else:
-						buffered_socket.sendb(b'Suggested-Content-Length: ', str(content_length), b'\r\n\r\n')
+						# HEAD request with body
+						buffered_socket.sendb(b'Suggested-Content-Length: ', str(content_length), b'\r\n')
+						buffered_socket.sendb(b'Content-Length: 0', b'\r\n\r\n')
 				else:
 					buffered_socket.sendb(b'Content-Length: 0', b'\r\n\r\n')
 

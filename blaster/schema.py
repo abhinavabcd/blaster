@@ -686,7 +686,7 @@ def schema(x, default=_OBJ_END_):
 
 # Defs, that require schema to be defined
 class DictValidater:
-	def __getitem__(self, *_types):
+	def __getitem__(self, _types):
 		n = len(_types)
 		if(n == 1):
 			return _Dict(str, _types[0])
