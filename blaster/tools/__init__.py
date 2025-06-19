@@ -597,10 +597,23 @@ def _iter_time_overlaps(a, b, x: str, tz_delta, partial=False, interval=None):
 		if(len(day_matches) > 1):
 			end_day = day_matches[1]
 
-		t = next(
-			x for i in range(7)
-				if start_day <= (x := a + timedelta(days=i)).weekday() <= end_day
-		)
+		segments = [(start_day, end_day)]\
+			if(end_day >= start_day) \
+			else [(start_day, 6), (0, end_day)]
+
+		# should be atleast one match
+		found = False
+		for i in range(7):
+			t = a + timedelta(days=i)
+			t_weekday = t.weekday()
+			for start_day, end_day in segments:
+				if(start_day <= t_weekday <= end_day):
+					# found a day in the week that matches
+					found = True
+					break
+			if(found):
+				break
+
 		t_start_of_day = datetime(year=t.year, month=t.month, day=t.day)
 		if(not is_time_per_day):
 			# find the day from now that matches start_day
