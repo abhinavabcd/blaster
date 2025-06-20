@@ -543,8 +543,14 @@ def schema(x, default=_OBJ_END_):
 				):
 					_required.add(k)  # required if no default value
 
-				_schema_properties[k]["title"] = _field_data.get("title")
-				_schema_properties[k]["description"] = _field_data.get("description")
+				_field_title = _field_data.get("title")
+				_field_description = _field_data.get("description")
+				if(_field_title or _field_description):
+					_schema_properties[k] = {
+						**_schema_properties[k],
+						"title": _field_title,
+						"description": _field_description
+					}
 				if(dict_key := _field_data.get("json_name")):
 					x._remap_dict_key_to_object_key[dict_key] = k
 
