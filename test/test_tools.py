@@ -7,7 +7,7 @@ from blaster.tools import get_time_overlaps, retry, \
 	ExpiringCache, create_signed_value, decode_signed_value, \
 	submit_background_task, background_task, ignore_exceptions, \
 	ASSERT_RATE_PER_MINUTE, RateLimitingException, get_by_key_path, \
-	xmltodict, sanitize_to_underscore_id, nsplit, get_by_key_list
+	xmltodict, sanitize_to_underscore_id, nsplit, get_by_key_list, create_operator_tree
 from blaster.tools.sanitize_html import HtmlSanitizedDict, HtmlSanitizedList
 from datetime import datetime, timedelta
 from blaster.utils.data_utils import parse_string_to_units, parse_string_to_int, \
@@ -451,6 +451,21 @@ class TestTools(unittest.TestCase):
 		xmltodict(xml_string)
 		xml_string = "<note><to>Tove</to><from>Jani</from><heading>Reminder &amp; Reminder</heading><body>Don't forget me this weekend!</body></note>"
 		print(xmltodict(xml_string))
+
+	def test_operator_tree(self):
+		# tree -> {"left", "right", "operator"}
+		tree1 = create_operator_tree("a + b - c * d / e", operators=["+", "-", "*", "/"])
+		self.assertEqual(
+			tree1,
+			{'op': '+', 'left': 'a', 'right': {'op': '-', 'left': 'b', 'right': {'op': '*', 'left': 'c', 'right': {'op': '/', 'left': 'd', 'right': 'e'}}}}
+		)
+		# with parantheses
+		tree2 = create_operator_tree("(a + b) - (c * d) / e", operators=["+", "-", "*", "/"])
+		self.assertDictEqual(tree2, {'op': '-', 'left': {'op': '+', 'left': 'a', 'right': 'b'}, 'right': {'op': '/', 'left': {'op': '*', 'left': 'c', 'right': 'd'}, 'right': 'e'}})
+
+		tree3 = create_operator_tree("", operators=["+", "-", "*", "/"])
+		self.assertIsNone(tree3)
+
 
 	def test_nsplit(self):
 		# "", 3  -> None, None, None

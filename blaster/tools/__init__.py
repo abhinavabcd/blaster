@@ -2244,3 +2244,69 @@ def mask_strings(val, mask_char="*"):
 	elif(isinstance(val, dict)):
 		val = {k: mask_strings(v, mask_char) for k, v in val.items()}
 	return val
+
+
+def create_operator_tree(expression, operators: list):
+	# split the expression by the operators list and also '(' and ')' and build the tokens
+	# convert infix to postfix and then build the tree
+	# operators are already in sorted order of precedence
+	tokens = []
+	current_token = ""
+	for char in expression:
+		if(char.isspace()):
+			if current_token:
+				tokens.append(current_token)
+				current_token = ""
+			continue
+		if(char in "()"):
+			if current_token:
+				tokens.append(current_token)
+				current_token = ""
+			tokens.append(char)
+			continue
+
+		current_token += char
+		if current_token in operators:
+			tokens.append(current_token)
+			current_token = ""
+	if(current_token):
+		tokens.append(current_token)
+
+	precedence = {op: i for i, op in enumerate(operators)}
+
+	def infix_to_postfix(tokens):
+		output = []
+		stack = []
+		for token in tokens:
+			if(token in precedence):
+				while(stack and stack[-1] != '(' and precedence[stack[-1]] >= precedence[token]):
+					output.append(stack.pop())
+				stack.append(token)
+			elif(token == '('):
+				stack.append(token)
+			elif(token == ')'):
+				while(stack and stack[-1] != '('):
+					output.append(stack.pop())
+				if(stack and stack[-1] == '('):
+					stack.pop()
+			else:
+				# it's an operand
+				output.append(token)
+		while(stack):
+			output.append(stack.pop())
+		return output
+
+	def build_tree(postfix_tokens):
+		stack = []
+		for token in postfix_tokens:
+			if(token in precedence):
+				right = stack.pop()
+				left = stack.pop()
+				node = {'op': token, 'left': left, 'right': right}
+				stack.append(node)
+			else:
+				stack.append(token)
+		return stack[0] if stack else None
+	postfix_tokens = infix_to_postfix(tokens)
+	tree = build_tree(postfix_tokens)
+	return tree
