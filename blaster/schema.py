@@ -625,6 +625,12 @@ def schema(x, default=_OBJ_END_):
 			x._schema_["default"] = default
 		return x._schema_, x.validate
 
+	elif(isinstance(x, Float)):
+		if(default is not _OBJ_END_):
+			x._default = default
+			x._schema_["default"] = default
+		return x._schema_, x.validate
+
 	elif(isinstance(x, _Dict)):
 		if(default is not _OBJ_END_):
 			x._default = default
@@ -661,7 +667,7 @@ def schema(x, default=_OBJ_END_):
 		x = Int(default=default)
 		return x._schema_, x.validate
 
-	elif(x == float):
+	elif(x == float or x == Float):
 		x = Float(default=default)
 		return x._schema_, x.validate
 
