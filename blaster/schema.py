@@ -5,7 +5,7 @@ import ujson as json
 from typing import get_args, get_origin, types as Types, Optional
 from functools import partial
 
-from blaster.tools import _OBJ_END_, _16KB_, all_subclasses
+from blaster.tools import _OBJ_END_, _16KB_, all_subclasses, NUMBER_REGEX
 # bare minimum validations and schema generators
 
 
@@ -54,8 +54,11 @@ class Number:
 			if(self._default is not _OBJ_END_):
 				return self._default
 			raise TypeError("should be int")
-		if(isinstance(e, str) and len(e) > 50):
-			raise TypeError("should be valid int")
+		if(isinstance(e, str)):
+			if(len(e) > 20):
+				raise TypeError("should be valid number")
+			e = NUMBER_REGEX.match(e).group()
+
 		e = self._type(e)
 		if(self._min is not _OBJ_END_ and e < self._min):
 			raise TypeError("should be min {:d}".format(self._min))
