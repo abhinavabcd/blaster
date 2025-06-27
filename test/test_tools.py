@@ -466,7 +466,6 @@ class TestTools(unittest.TestCase):
 		tree3 = create_operator_tree("", operators=["+", "-", "*", "/"])
 		self.assertIsNone(tree3)
 
-
 	def test_nsplit(self):
 		# "", 3  -> None, None, None
 		self.assertListEqual(

@@ -50,7 +50,12 @@ def TRACK_EVENT(table_id, rows: dict, ns=None):
 	if(ns):
 		table_id += f"_{ns}"
 	# collect all rows to push into a bucket to batch
-	bq_insert_rows(table_id, rows if isinstance(rows, list) else [rows])
+	errors = bq_insert_rows(table_id, rows if isinstance(rows, list) else [rows])
+	if(errors): 
+		LOG_ERROR(
+			"bq_insert_rows", desc=f"errors: {errors}",
+			table_id=table_id, rows=str(rows)
+		)
 
 
 # property_id cannot contain ":"
