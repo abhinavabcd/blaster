@@ -1715,7 +1715,7 @@ def run_shell(
 # args is array of strings or array or array of words
 # you can use this to return a bunch of strings to index
 # in elasticsearch with key "search_words"
-def condense_for_search(*args):
+def condense_for_search(*args, duplicates=False):
 	global_word_map = {}
 	for arg in args:
 		if(not arg):
@@ -1744,7 +1744,7 @@ def condense_for_search(*args):
 	for key, vals in global_word_map.items():
 		ret.extend(vals)
 
-	return ret
+	return ret if duplicates else list(set(ret))
 
 
 # returns None when there are exceptions instead of throwing
