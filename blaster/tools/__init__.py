@@ -1080,8 +1080,8 @@ def jump_hash(key, num_buckets):
 ##############
 
 
-INT_REGEX = re.compile(r"([0-9]+)")
-NUMBER_REGEX = re.compile(r"([0-9\.]+)")
+INT_REGEX = re.compile(r"(-?[0-9]+)")
+NUMBER_REGEX = re.compile(r"(-?[0-9\.]+)")
 NON_ALPHA_NUM_SPACE_DOT_REGEX = re.compile(r"[^0-9a-zA-Z \.]", re.DOTALL)  # space, . allowed
 NON_ALPHA_REGEX = re.compile(r"[^0-9a-zA-Z]", re.DOTALL)
 NON_ALPHA_NUM_UNDERSCORE_REGEX = re.compile(r"[^0-9a-zA-Z_]", re.DOTALL)
