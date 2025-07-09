@@ -463,8 +463,14 @@ class TestTools(unittest.TestCase):
 		tree2 = create_operator_tree("(a + b) - (c * d) / e", operators=["+", "-", "*", "/"])
 		self.assertDictEqual(tree2, {'op': '-', 'left': {'op': '+', 'left': 'a', 'right': 'b'}, 'right': {'op': '/', 'left': {'op': '*', 'left': 'c', 'right': 'd'}, 'right': 'e'}})
 
+		tree2_5 = create_operator_tree("(('a c' + b) - (c * d)) / e", operators=["+", "-", "*", "/"])
+		self.assertDictEqual(tree2_5, {'op': '/', 'left': {'op': '-', 'left': {'op': '+', 'left': "'a c'", 'right': 'b'}, 'right': {'op': '*', 'left': 'c', 'right': 'd'}}, 'right': 'e'})
+
 		tree3 = create_operator_tree("", operators=["+", "-", "*", "/"])
 		self.assertIsNone(tree3)
+
+		tree4 = create_operator_tree("ordered:gte:2025-07-01 18:49,lte:2025-07-09 18:49", operators=["AND", "OR", "NOT"])
+		print(tree4)
 
 	def test_nsplit(self):
 		# "", 3  -> None, None, None

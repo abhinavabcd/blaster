@@ -2252,27 +2252,39 @@ def create_operator_tree(expression, operators: list):
 	# operators are already in sorted order of precedence
 	tokens = []
 	current_token = ""
+	OPERAND = 1
+	OPERATOR = 2
+	BRACES = 3
+
 	for char in expression:
 		if(char.isspace()):
 			if current_token:
-				tokens.append(current_token)
+				if(tokens and tokens[-1][0] == OPERAND):
+					tokens[-1] = (OPERAND, tokens[-1][1] + " " + current_token)
+				else:
+					tokens.append((OPERAND, current_token))
 				current_token = ""
 			continue
 		if(char in "()"):
 			if current_token:
-				tokens.append(current_token)
+				tokens.append((OPERAND, current_token))
 				current_token = ""
-			tokens.append(char)
+			tokens.append((BRACES, char))
 			continue
 
 		current_token += char
 		if current_token in operators:
-			tokens.append(current_token)
+			tokens.append((OPERATOR, current_token))
 			current_token = ""
+
 	if(current_token):
-		tokens.append(current_token)
+		if(tokens and tokens[-1][0] == OPERAND):
+			tokens[-1] = (OPERAND, tokens[-1][1] + " " + current_token)
+		else:
+			tokens.append((OPERAND, current_token))
 
 	precedence = {op: i for i, op in enumerate(operators)}
+	tokens = [token[1] for token in tokens]  # filter out braces
 
 	def infix_to_postfix(tokens):
 		output = []
