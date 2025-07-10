@@ -128,8 +128,8 @@ class Str:
 
 		if(self.one_of):
 			_schema["enum"] = list(self.one_of)
-		if(regex):
-			_schema["pattern"] = regex
+		if(self.regex):
+			_schema["pattern"] = self.regex.pattern
 		if(format):
 			_schema["format"] = format
 
