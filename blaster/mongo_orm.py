@@ -3,6 +3,7 @@ import json
 import heapq
 import types
 import pymongo
+import random
 import ujson  # it's fastest even to copy as it's a C extension
 from functools import cmp_to_key
 from contextlib import ExitStack
@@ -842,7 +843,7 @@ class Model(object):
 					if(not updated_doc):
 						# update was unsuccessful
 						# is this concurrent update by someone else?
-						_update_retry_count and time.sleep(0.03 * _update_retry_count)
+						_update_retry_count and time.sleep(0.03 * _update_retry_count + random.random() / 10)  # 100 ms randomized delay
 						# 1. fetch from db again
 						_doc_in_db = primary_shard_collection.find_one({"_id": self._id})
 						if(not _doc_in_db):  # moved out of shard or pk changed
