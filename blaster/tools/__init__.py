@@ -2256,6 +2256,13 @@ def create_operator_tree(expression, operators: list):
 	OPERATOR = 2
 	BRACES = 3
 
+	operators_check = {}
+	for op in operators:
+		c = op[-1]
+		if((_l := operators_check.get(c)) is None):
+			operators_check[c] = _l = []
+		_l.append(op)
+
 	for char in expression:
 		if(char.isspace()):
 			if current_token:
@@ -2276,6 +2283,16 @@ def create_operator_tree(expression, operators: list):
 		if current_token in operators:
 			tokens.append((OPERATOR, current_token))
 			current_token = ""
+
+		if(char in operators_check and current_token):
+			for op in operators_check[char]:
+				if(current_token.endswith(op)):
+					# we found an operator
+					if current_token[:-len(op)]:
+						tokens.append((OPERAND, current_token[:-len(op)]))
+					tokens.append((OPERATOR, op))
+					current_token = ""
+					break
 
 	if(current_token):
 		if(tokens and tokens[-1][0] == OPERAND):

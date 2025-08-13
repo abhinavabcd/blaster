@@ -470,7 +470,13 @@ class TestTools(unittest.TestCase):
 		self.assertIsNone(tree3)
 
 		tree4 = create_operator_tree("ordered:gte:2025-07-01 18:49,lte:2025-07-09 18:49", operators=["AND", "OR", "NOT"])
-		print(tree4)
+		self.assertEqual(tree4, "ordered:gte:2025-07-01 18:49,lte:2025-07-09 18:49")
+
+		tree5 = create_operator_tree("A:gte:&&B:lte:&&C:gte", operators=["&&"])
+		self.assertEqual(
+			tree5,
+			{'op': '&&', 'left': {'op': '&&', 'left': 'A:gte:', 'right': 'B:lte:'}, 'right': 'C:gte'}
+		)
 
 	def test_nsplit(self):
 		# "", 3  -> None, None, None

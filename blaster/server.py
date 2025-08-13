@@ -1241,9 +1241,12 @@ def static_file_handler(
 
 	def get_file_resp(path):
 		file_path = os.path.abspath(_base_folder_path_ + str(path))
-
-		if(not file_path.startswith(_base_folder_path_)):
+		if(
+			path
+			and not file_path.startswith(_base_folder_path_)
+		):
 			return "404 Not Found", [], "Invalid path submitted"
+
 		data = open(file_path, "rb").read()
 		resp_headers = None
 		# add mime type header
@@ -1257,7 +1260,7 @@ def static_file_handler(
 
 	def file_handler(req: Request, path):
 		if(not path):
-			path = default_file
+			path = default_file or ""
 
 		file_resp = file_cache.get(url_path + path, None)
 		if(not file_resp and dynamic_files):  # always reload from filesystem in devmode
