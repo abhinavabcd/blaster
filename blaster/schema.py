@@ -563,18 +563,18 @@ def schema(x, default=_OBJ_END_):
 		x._schema_ = _schema = schema.defs[_schema_def_name_] = {
 			"type": "object",
 		}
-		_title = getattr(x, "_title_", None)
-		_description = getattr(x, "_description_", None)
-		if(_title):
-			_schema["title"] = _title
-		if(_description):
-			_schema["description"] = getattr(x, "_description_", None)
 
 		if(_schema_properties):
 			_schema["properties"] = _schema_properties
 
 		if(_required):
 			_schema["required"] = list(_required)
+
+		# optional title/description
+		if(_title := getattr(x, "__title__", None)):
+			_schema["title"] = _title
+		if(_description := getattr(x, "__description__", None)):
+			_schema["description"] = _description
 
 		return x._schema_, x.validate
 
