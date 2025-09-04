@@ -101,14 +101,14 @@ class TestTools(unittest.TestCase):
 			get_time_overlaps(
 				datetime(year=2021, month=10, day=1),
 				datetime(year=2021, month=10, day=20),
-				["Monday 10:30 - 12:30|100EUR", "Tuesday 10:30|200EUR"],
+				["Monday 10:30 - 12:30|100EUR|a=b", "Tuesday 10:30|200EUR"],
 				exclude=["05/10/2021 10:30"]
 			),
 			[
-				(datetime(2021, 10, 4, 10, 30), datetime(2021, 10, 4, 12, 30), ['100EUR']), 
-				(datetime(2021, 10, 11, 10, 30), datetime(2021, 10, 11, 12, 30), ['100EUR']),
+				(datetime(2021, 10, 4, 10, 30), datetime(2021, 10, 4, 12, 30), ['100EUR', 'a=b']), 
+				(datetime(2021, 10, 11, 10, 30), datetime(2021, 10, 11, 12, 30), ['100EUR', 'a=b']),
 				(datetime(2021, 10, 12, 10, 30), datetime(2021, 10, 12, 11, 30), ['200EUR']),
-				(datetime(2021, 10, 18, 10, 30), datetime(2021, 10, 18, 12, 30), ['100EUR']),
+				(datetime(2021, 10, 18, 10, 30), datetime(2021, 10, 18, 12, 30), ['100EUR', 'a=b']),
 				(datetime(2021, 10, 19, 10, 30), datetime(2021, 10, 19, 11, 30), ['200EUR'])
 			]
 		)

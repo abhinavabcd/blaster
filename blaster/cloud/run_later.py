@@ -4,7 +4,6 @@ Created on 27-Feb-2017
 '''
 import types
 from datetime import datetime
-from functools import partial
 import base64
 import pickle
 import traceback
@@ -233,10 +232,8 @@ def run_later_partitioned(partition_key):
 
 	def _simple_partition_key_func(args, kwargs):
 		return str(partition_key)
-
 	if(not callable(partition_key)):
 		partition_key_func = _simple_partition_key_func
-
 	return lambda func: run_later(func, partition_key_func=partition_key_func)
 
 

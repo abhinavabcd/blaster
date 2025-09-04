@@ -1150,6 +1150,9 @@ class Model(object):
 					map(lambda x: x.distinct(key), self._cursors)
 				)
 
+			def explain(self, arg):
+				return map(lambda c: c.explain()[arg], self._cursors)
+
 			def push_query_iter_into_heap(self, _query_result_iter):
 				try:
 					next_value = next(_query_result_iter)
