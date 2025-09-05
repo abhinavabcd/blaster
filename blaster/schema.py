@@ -153,7 +153,7 @@ class Str:
 					return _default
 			raise TypeError("should be minlen {:d}".format(self.minlen))
 		if(len(e) > self.maxlen):
-			raise TypeError("should be maxlen {:d}".format(self.maxlen))
+			raise TypeError("should be maxlen {:d}, given length: {:d}".format(self.maxlen, len(e)))
 		if(self.one_of and e not in self.one_of):
 			raise TypeError("should be one of {}".format(self.one_of))
 		if(self.regex and not self.regex.fullmatch(e)):
