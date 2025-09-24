@@ -2426,6 +2426,16 @@
         "tz_name": "Pacific/Apia",
         "tz_delta": 46800
     },
+    "XK": {
+        "ios3": "XKX",
+        "phone_code": "383",
+        "country_name": "Kosovo",
+        "currency_code": "EUR",
+        "currency_name": "Euro",
+        "currency_symbol": "\u20ac",
+        "tz_name": "Europe/Pristina",
+        "tz_delta": 7200
+    },
     "YE": {
         "ios3": "YEM",
         "phone_code": "967",
