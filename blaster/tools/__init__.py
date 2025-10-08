@@ -1180,11 +1180,11 @@ def compress_lists(lists) -> dict:
 
 
 def last(arr, default=None):
-	return arr[-1] if len(arr) > 0 else default
+	return arr[-1] if arr is not None and len(arr) > 0 else default
 
 
 def first(arr, default=None):
-	return arr[0] if len(arr) > 0 else default
+	return arr[0] if arr is not None and len(arr) > 0 else default
 
 
 # a dummy object with given keys,values

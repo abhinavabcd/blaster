@@ -243,5 +243,9 @@ def LOG_WARN(log_type, **kwargs):
 	LOG(WARN, log_type, **kwargs)
 
 
-def LOG_ERROR(log_type, **kwargs):
-	LOG(ERROR, log_type, **kwargs)
+def LOG_ERROR(log_type, stacktrace_string=None, **kwargs):
+	if(stacktrace_string is None):
+		stacktrace_string = '''Traceback (Error Log From Calling Function):'''
+		f = sys._getframe(1)
+		stacktrace_string += f'\n  File "{f.f_code.co_filename}", line {f.f_lineno}, in {f.f_code.co_name}'
+	LOG(ERROR, log_type, stacktrace_string=stacktrace_string, **kwargs)
