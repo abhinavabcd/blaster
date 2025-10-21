@@ -2089,34 +2089,63 @@ def debug_requests():
 	debug_requests_off()
 
 
-def cached_request(
-	url, ignore_cache_read=False, cache_folder="/tmp/",
-	as_string_buffer=False, _json=None, data=None, headers=None
-):
-	cache_hash = url
-	if(_json):
-		cache_hash += json.dumps(_json)
-	elif(data):
-		cache_hash += json.dumps(data)
-	cache_hash = hashlib.md5(cache_hash.encode("utf-8")).hexdigest()
-	cache_file_path = cache_folder + cache_hash
-	if(ignore_cache_read or not os.path.isfile(cache_file_path)):
-		if(_json or data):
-			resp = requests.post(url, json=_json, data=data, headers=headers, stream=True)
-		else:
-			resp = requests.get(url, headers=headers, stream=True)
-		try:
-			with open(cache_file_path, "wb") as cache_file:
-				for chunk in resp.iter_content():
-					cache_file.write(chunk)
-		except Exception:
-			os.remove(cache_file_path)
+# USEFUL FOR CACHING REQUEST
+class FileCacheSession(requests.Session):
+	def __init__(self, cache_dir=".cache_requests"):
+		super().__init__()
+		self.cache_dir = cache_dir
+		os.makedirs(cache_dir, exist_ok=True)
 
-	bytes_buffer = BytesIO(open(cache_file_path, "rb").read())
-	if(as_string_buffer):
-		return StringIO(bytes_buffer.read().decode())
-	else:
-		return bytes_buffer
+	def _make_cache_key(self, method, url, params, headers, data=None, json_data=None):
+		"""Generate a stable hash key based on the request identity."""
+		key_data = {
+			"method": method.upper(),
+			"url": url,
+			"params": params or {},
+			"headers": {k.lower(): v for k, v in (headers or {}).items()},
+			"data": data if isinstance(data, (str, bytes)) else str(data),
+			"json": json_data if json_data is None else json.dumps(json_data, sort_keys=True)
+		}
+		key_str = json.dumps(key_data, sort_keys=True)
+		return hashlib.sha256(key_str.encode()).hexdigest()
+
+	def _cache_path(self, key):
+		return os.path.join(self.cache_dir, f"{key}.json")
+
+	def request(self, method, url, allow_redirects=True, **kwargs):
+		params = kwargs.get("params")
+		headers = kwargs.get("headers")
+		data = kwargs.get("data")
+		json_data = kwargs.get("json")
+
+		key = self._make_cache_key(method, url, params, headers, data, json_data)
+		path = self._cache_path(key)
+
+		# Load from cache if available
+		if os.path.exists(path):
+			with open(path, "r", encoding="utf-8") as f:
+				cached = json.load(f)
+			response = requests.Response()
+			response.status_code = cached["status_code"]
+			response._content = cached["content"].encode("utf-8")
+			response.headers = cached["headers"]
+			response.url = cached["url"]
+			response.request = requests.Request(method, url, **kwargs).prepare()
+			return response
+
+		# Otherwise, make the real request
+		response = super().request(method, url, **kwargs)
+
+		# Save to cache
+		with open(path, "w", encoding="utf-8") as f:
+			json.dump({
+				"url": response.url,
+				"status_code": response.status_code,
+				"headers": dict(response.headers),
+				"content": response.text,
+			}, f)
+
+		return response
 
 
 def memoized_method(func):
