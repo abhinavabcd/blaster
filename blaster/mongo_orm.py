@@ -1127,6 +1127,7 @@ class Model(object):
 			buffer = None
 			results_returned = 0
 			__start_timestamp = 0
+			_max_results_scan_rate_ = MONGO_MAX_RESULTS_AT_HIGH_SCAN_RATE
 
 			def __init__(self):
 				self.query_count_funcs = []
@@ -1185,8 +1186,8 @@ class Model(object):
 							"mongo_results_high_rate",
 							desc=f"scanned {cls._collection_name_with_shard_}/{cls.__name__} {_queries}: {self.results_returned}"
 						)
-						if(self.results_returned > MONGO_MAX_RESULTS_AT_HIGH_SCAN_RATE):  # high scan rate for 1000 results, must be doing something wrong
-							raise Exception(f"Scanned {MONGO_MAX_RESULTS_AT_HIGH_SCAN_RATE} results at max scan rate")
+						if(self.results_returned > self._max_results_scan_rate_):  # high scan rate for 1000 results, must be doing something wrong
+							raise Exception(f"Scanned {self.results_returned} results at max scan rate")
 
 				return _ret
 
