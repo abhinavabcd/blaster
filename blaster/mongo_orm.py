@@ -384,9 +384,6 @@ class Model(object):
 		for k, v in values.items():
 			setattr(self, k, v)
 
-	def get_id(self):
-		return str(self._id)
-
 	# Usage:
 	# YourTable.get(a=c, b=d)
 	# YourTable.get({"p": "q", "r": "s"}) # this will kick in cache use

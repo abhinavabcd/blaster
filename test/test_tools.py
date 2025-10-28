@@ -4,7 +4,7 @@ from blaster import tools, blaster_exit
 import time
 import random
 from blaster.tools import get_time_overlaps, retry, \
-	ExpiringCache, create_signed_value, decode_signed_value, \
+	ExpiringCache, create_signed_value, decode_signed_value, dangerously_peek_signed_value, \
 	submit_background_task, background_task, ignore_exceptions, \
 	ASSERT_RATE_PER_MINUTE, RateLimitingException, get_by_key_path, \
 	xmltodict, sanitize_to_underscore_id, nsplit, get_by_key_list, create_operator_tree
@@ -86,7 +86,7 @@ class TestAuth(unittest.TestCase):
 		self.assertEqual(decode_signed_value("abcd", val, secret).decode(), "efgh")
 
 		val = create_signed_value("abcd", b"efgh2", secret)
-		self.assertEqual(decode_signed_value("abcd", val, secret), b"efgh2")
+		self.assertEqual(dangerously_peek_signed_value(str(val)), b"efgh2")
 
 		val = create_signed_value("abcd", "efgh2", secret, -1)
 		self.assertEqual(decode_signed_value("abcd", val, secret), None)

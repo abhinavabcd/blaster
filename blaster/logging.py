@@ -246,7 +246,8 @@ def LOG_WARN(log_type, **kwargs):
 def LOG_ERROR(log_type, stacktrace_string=None, **kwargs):
 	if(stacktrace_string is None):
 		stacktrace_string = '''Traceback (most recent call last):'''
-		f = sys._getframe(1)
-		stacktrace_string += f'\n  File "{f.f_code.co_filename}", line {f.f_lineno}, in {f.f_code.co_name}'
+		# ADD TOP 4 FRAMES
+		for f_record in traceback.extract_stack(limit=5)[:-1]:
+			stacktrace_string += f'\n  File "{f_record.filename}", line {f_record.lineno}, in {f_record.name}'
 		stacktrace_string += f'\nErrorLogId: {log_type}\n'
 	LOG(ERROR, log_type, stacktrace_string=stacktrace_string, **kwargs)

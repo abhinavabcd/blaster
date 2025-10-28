@@ -1000,7 +1000,7 @@ def decode_signed_value(name, signed_value, secret, expiry_check=True) -> bytes:
 
 
 def dangerously_peek_signed_value(value) -> bytes:
-	_parts = utf8(value).split(b"|")
+	_parts = value.split("|")
 	if len(_parts) < 3:
 		return None
 	_value, *parts, expires_at, _signature = _parts
