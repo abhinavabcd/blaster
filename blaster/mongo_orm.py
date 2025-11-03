@@ -645,7 +645,13 @@ class Model(object):
 		conflicting_keys_updates_to_remove = None
 		path_len = len(path)
 		for _path in self._set_query_updates.keys():
-			if(path_len < len(_path) and _path.startswith(path)):  # prefix
+			# a.b was set, and now a is being set
+			# this is kinda acceptable frequently used case
+			if(
+				len(_path) > path_len  # longer path
+				and _path.startswith(path) 	# current one can override
+				and _path[path_len] == "."
+			):  # prefix
 				if(conflicting_keys_updates_to_remove is None):
 					conflicting_keys_updates_to_remove = []
 				conflicting_keys_updates_to_remove.append(_path)
