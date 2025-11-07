@@ -75,10 +75,9 @@ class WebSocketServerHandler(object):
 		self.maxheader = MAXHEADER
 		self.maxpayload = MAXPAYLOAD
 
-
-		#additional fields convinience
+		# additional fields convenience
 		self.conn_obj = None
-		
+
 	def start_handling(self):
 		while(True):
 			try:
@@ -88,11 +87,10 @@ class WebSocketServerHandler(object):
 				self.client.close()
 				break
 			except socket.timeout as ex:
-					if(not self.on_timeout()):
-						self.on_close(ex)
-						self.client.close()
-						break
-
+				if(not self.on_timeout()):
+					self.on_close(ex)
+					self.client.close()
+					break
 
 	def on_timeout(self):
 		return False
@@ -106,13 +104,7 @@ class WebSocketServerHandler(object):
 		"""
 		pass
 
-	def on_connected(self):
-		"""
-				Called when a websocket client connects to the server.
-		"""
-		pass
-
-	def on_close(self , ex):
+	def on_close(self, ex):
 		"""
 				Called when a websocket server gets a Close frame from a client.
 		"""
@@ -129,9 +121,9 @@ class WebSocketServerHandler(object):
 			pass
 		elif self.opcode == PONG or self.opcode == PING:
 			if len(self.data) > 125:
-					raise Exception('control frame length can not be > 125')
+				raise Exception('control frame length can not be > 125')
 		else:
-				# unknown or reserved opcode so just close
+			# unknown or reserved opcode so just close
 			raise Exception('unknown opcode')
 
 		if self.opcode == CLOSE:
@@ -140,7 +132,7 @@ class WebSocketServerHandler(object):
 			length = len(self.data)
 
 			if length == 0:
-					pass
+				pass
 			elif length >= 2:
 					status = struct.unpack_from('!H', self.data[:2])[0]
 					reason = self.data[2:]
@@ -236,7 +228,6 @@ class WebSocketServerHandler(object):
 			hStr = HANDSHAKE_STR % {'acceptstr': k_s}
 			self._send_buffer(hStr.encode('utf-8'))
 			self.handshaked = True
-			self.on_connected()
 			
 #          base64.b64encode(
 #                 hashlib.sha1(key + self.GUID).digest())

@@ -1,5 +1,5 @@
 import re
-from base64 import b64decode
+from pybase64 import b64decode
 from datetime import datetime
 import ujson as json
 from typing import get_args, get_origin, types as Types, Optional

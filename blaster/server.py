@@ -194,6 +194,7 @@ class Request:
 
 	# instance level
 	sock = None
+	wsock = None
 	_params = None
 	_body = None
 	_body_raw = None
@@ -840,6 +841,7 @@ class App:
 
 		return status, response_headers, body
 
+	# returns none or REUSE_SOCKET_FOR_HTTP
 	def process_http_request(self, buffered_socket: BufferedSocket):
 		resuse_socket_for_next_http_request = True
 		# ignore request lines > 4096 bytes
@@ -1002,14 +1004,14 @@ class App:
 			status, response_headers, body = App.response_body_to_parts(response_from_handler)
 
 			# resp.1 Send status line
-			if(status or (body != I_AM_HANDLING_THE_SOCKET)):
+			if(status or (body is not I_AM_HANDLING_THE_SOCKET)):
 				# we will send the status, either default
 				# or given from response
 				status = str(status) if status else '200 OK'
 				buffered_socket.sendb(b'HTTP/1.1 ', status, b'\r\n')
 
 			# resp.2 Send headers
-			if(response_headers or (body != I_AM_HANDLING_THE_SOCKET)):
+			if(response_headers or (body is not I_AM_HANDLING_THE_SOCKET)):
 				# we will be sending headers of this request
 				# either default or given by response
 				if(isinstance(response_headers, list)):
@@ -1054,18 +1056,20 @@ class App:
 				if(resuse_socket_for_next_http_request):
 					buffered_socket.sendb(b'Connection: keep-alive\r\n')
 
-				if(body == I_AM_HANDLING_THE_SOCKET):
+				if(body is I_AM_HANDLING_THE_SOCKET):
 					# close the headers
 					buffered_socket.sendb(b'\r\n')
 
 			# resp.3 Send body
 			# resp.3.1 If handler is handling socket
-			if(body == I_AM_HANDLING_THE_SOCKET):
+			if(body is I_AM_HANDLING_THE_SOCKET):
 				LOG_SERVER(
 					"http_socket", request_type=request_type,
 					path=request_path, wallclockms=int(1000 * time.time()) - cur_millis
 				)
 				buffered_socket.flush()  # flush the socket
+				if((wsock := req.wsock) is not None):
+					wsock.start_handling()
 				return I_AM_HANDLING_THE_SOCKET
 
 			# resp.3.2 Send finalizing headers(content related only) and body
@@ -1173,9 +1177,9 @@ class App:
 		close_socket = True
 		while(True):
 			ret = self.process_http_request(buffered_socket)
-			if(ret == REUSE_SOCKET_FOR_HTTP):
+			if(ret is REUSE_SOCKET_FOR_HTTP):
 				continue  # try again
-			elif(ret == I_AM_HANDLING_THE_SOCKET):
+			elif(ret is I_AM_HANDLING_THE_SOCKET):
 				close_socket = False
 			break
 
@@ -1303,10 +1307,10 @@ def proxy_file_handler(url_path, proxy_url):
 
 
 # Get args hook
-def _get_web_socket_handler(req):
+def _get_web_socket_handler(req: Request):
 	set_socket_fast_close_options(req.sock)
 	# sends handshake automatically
-	ws = WebSocketServerHandler(req.sock)
+	ws = req.wsock = WebSocketServerHandler(req.sock)
 	ws.do_handshake(req.HEADERS())
 	return ws
 

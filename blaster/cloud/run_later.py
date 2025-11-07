@@ -4,7 +4,7 @@ Created on 27-Feb-2017
 '''
 import types
 from datetime import datetime
-import base64
+from base64 import a85decode, a85encode
 import pickle
 import traceback
 import ujson as json
@@ -28,7 +28,7 @@ partitioned_tasks_runner = PartitionedTasksRunner(max_parallel=100)
 # just submit to background wait a max of 10 seconds
 # careful: raises an exception if queue limits reaches, should try to reprocess in that case
 def exec_push_task(raw_bytes_message: bytes, verify_secret=None):
-	message_payload = pickle.loads(base64.a85decode(raw_bytes_message))
+	message_payload = pickle.loads(a85decode(raw_bytes_message))
 	kwargs = message_payload.get("kwargs") or {}
 	args = message_payload.get("args") or []
 	func_name = message_payload.get("func", "")
@@ -90,7 +90,7 @@ def process_from_cloud_pubsub(subscription_path):
 
 @use_connection_pool(gcloud_pubsub_publisher="gcloud_pubsub_publisher")
 def run_later_via_gcloud_pubsub(topic, message_body: dict, gcloud_pubsub_publisher=None):
-	message_body = base64.a85encode(pickle.dumps(message_body))  # bytes
+	message_body = a85encode(pickle.dumps(message_body))  # bytes
 	ret = gcloud_pubsub_publisher.publish(topic, message_body)
 	ret.result()  # wait for it to be published
 
@@ -128,7 +128,7 @@ def run_later_via_sqs(run_later_sqs_url, message_body, sqs_client=None):
 	message_body = pickle.dumps(message_body)
 	return sqs_client.send_message(
 		QueueUrl=run_later_sqs_url,
-		MessageBody=base64.a85encode(message_body).decode(),  # to utf-8 string
+		MessageBody=a85encode(message_body).decode(),  # to utf-8 string
 		DelaySeconds=1
 	)
 
@@ -140,7 +140,7 @@ def run_later_via_gcloud_tasks(queue_path, host, message_body: dict, gcloudtasks
 			GCLOUD_TASKS_AUTH_SECRET, message_body["func"]
 		)
 
-	message_body = base64.a85encode(pickle.dumps(message_body))  # bytes
+	message_body = a85encode(pickle.dumps(message_body))  # bytes
 	task = {
 		"http_request": {  # Specify the type of request.
 			"http_method": 1,  # tasks_v2.HttpMethod.POST,
@@ -202,7 +202,7 @@ def _run_later(partition_key, func, args, kwargs):
 	else:
 		LOG_WARN("server_info", data="calling directly as not queue provided")
 		# test pickling
-		# exec_push_task(base64.a85encode(pickle.dumps(message_body)))
+		# exec_push_task(a85encode(pickle.dumps(message_body)))
 		func = run_later_tasks.get(
 			message_body.get("func", ""),
 			None

@@ -26,7 +26,7 @@ from gevent.lock import BoundedSemaphore
 from datetime import timezone, timedelta, datetime
 import time
 import hmac
-import base64
+from pybase64 import b64decode, b64encode
 import hashlib
 import re
 import six
@@ -969,7 +969,7 @@ def hmac_hexdigest(secret, *parts) -> str:
 
 def create_signed_value(name, value: bytes | str, secret, expires_in=31 * SECONDS_IN_DAY, values=()) -> str:
 	expires_at = str(int(time.time() + expires_in))
-	value = base64.b64encode(utf8(value)).decode()  # hide value
+	value = b64encode(utf8(value)).decode()  # hide value
 	# ~ to prevent changing value, timestamp but value + timestamp being same
 	signature = hmac_hexdigest(secret, name, value, *values, expires_at)
 	signed_value = "|".join([value, *values, expires_at, signature])
@@ -994,7 +994,7 @@ def decode_signed_value(name, signed_value, secret, expiry_check=True) -> bytes:
 		if(time.time() > expires_at):
 			return None
 	try:
-		return base64.b64decode(_value)
+		return b64decode(_value)
 	except Exception:
 		return None
 
@@ -1005,7 +1005,7 @@ def dangerously_peek_signed_value(value) -> bytes:
 		return None
 	_value, *parts, expires_at, _signature = _parts
 	try:
-		return base64.b64decode(_value)
+		return b64decode(_value)
 	except Exception:
 		return None
 
@@ -1378,7 +1378,7 @@ class BufferedSocket():
 		self.sock.close()
 		self.is_eof = True
 
-	def sendb(self, *_data):  # send but buffered
+	def sendb(self, *_data) -> int:  # send but buffered
 		n = 0
 		for data in _data:
 			if(isinstance(data, str)):
@@ -1386,22 +1386,24 @@ class BufferedSocket():
 			n += len(data)
 			self.sendbuf.extend(data)
 		if(len(self.sendbuf) > _1MB_):
-			return self.flush()
-		return n
+			return self.flush()  # flush if more than 1MB buffered
+		return n  # buffer and wait for flush
 
-	def send(self, *_data):
+	def send(self, *_data) -> int:
 		for data in _data:
 			if(isinstance(data, str)):
 				data = data.encode()
 			self.sendbuf.extend(data)
 		return self.flush()
 
-	def flush(self):
-		if(len(self.sendbuf) == 0):
+	def flush(self) -> int:
+		n = len(self.sendbuf)
+		if(n == 0):
 			return 0
 		send_buf = self.sendbuf
 		self.sendbuf = bytearray()  # reset
-		return self.sock.sendall(send_buf)
+		self.sock.sendall(send_buf)  # send all data and returns None
+		return n
 
 	def sendl(self, *_data):
 		if(not self.lock):
