@@ -211,6 +211,9 @@ class MongoList(list):
 			return ujson.loads(ujson.dumps(ret))
 		return []  # return empty list if not found
 
+	def __reduce__(self):
+		return (list, (self.copy(),))
+
 
 class MongoDict(dict):
 	_is_local = True  # indicates it's not tied to db
@@ -280,6 +283,9 @@ class MongoDict(dict):
 		if(ret is not None):
 			return ujson.loads(ujson.dumps(ret))
 		return {}  # return empty dict if not found
+
+	def __reduce__(self):
+		return (dict, (self.copy(),))
 
 
 # utility function to cache and return a session for transaction
@@ -1584,6 +1590,12 @@ class Model(object):
 				include_pending_updates=False
 			)
 		self.__locks.pop(lock_name, None)
+
+	def __setstate__(self, state):
+		self._reset(state)
+
+	def __reduce__(self):
+		return (self.__class__, (False, ), self._original_doc)
 
 
 # decorator to prevent concurrent updates

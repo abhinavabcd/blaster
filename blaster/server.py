@@ -846,9 +846,16 @@ class App:
 		resuse_socket_for_next_http_request = True
 		# ignore request lines > 4096 bytes
 		post_data = None
-		req_ctx.req = req = Request(buffered_socket, req_ctx)
 		# set all usable timestamp variables at once
+		req_ctx.req = req = Request(buffered_socket, req_ctx)
 		req_ctx.cache = {}
+		req_ctx.user = None
+
+		cur_millis \
+			= req_ctx.timestamp \
+			= req.timestamp \
+			= int(1000 * time.time())
+
 		request_type = None
 		request_path = None
 		headers = None
@@ -858,11 +865,6 @@ class App:
 				return
 		except Exception:
 			return  # won't resuse socket, broken
-
-		cur_millis \
-			= req_ctx.timestamp \
-			= req.timestamp \
-			= int(1000 * time.time())
 
 		try:
 			request_line = request_line.decode("utf-8")
