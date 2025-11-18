@@ -1449,6 +1449,7 @@ class BufferedSocket():
 		_store = self.readbuf  # get a reference
 		while(True):
 			if(i > max_size):
+				# WITHIN THE LIMIT DELIMITER NOT FOUND
 				self.is_eof = True
 				return None
 			if(i >= delimiter_len):
@@ -1467,7 +1468,7 @@ class BufferedSocket():
 					self.readbuf = _store[i:]  # set store to unscanned/pending
 					return ret
 			if(i >= to_scan_len):
-				# scanned all buffer
+				# scanned all buffer, need more
 				data = self.sock.recv(4096)
 				if(not data):
 					self.is_eof = True

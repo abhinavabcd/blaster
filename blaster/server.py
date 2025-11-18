@@ -36,7 +36,6 @@ if(IS_DEV):
 
 
 default_stream_headers = {
-	'Content-Type': 'text/html; charset=utf-8',
 	'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
 	'X-Content-Type-Options': 'nosniff',
 	'X-Frame-Options': 'SAMEORIGIN',
@@ -851,11 +850,6 @@ class App:
 		req_ctx.cache = {}
 		req_ctx.user = None
 
-		cur_millis \
-			= req_ctx.timestamp \
-			= req.timestamp \
-			= int(1000 * time.time())
-
 		request_type = None
 		request_path = None
 		headers = None
@@ -865,6 +859,12 @@ class App:
 				return
 		except Exception:
 			return  # won't resuse socket, broken
+
+		# AFTER THE FIRST LINE, SET ALL TIMESTAMPS
+		cur_millis \
+			= req_ctx.timestamp \
+			= req.timestamp \
+			= int(1000 * time.time())
 
 		try:
 			request_line = request_line.decode("utf-8")
@@ -996,10 +996,10 @@ class App:
 				for after_handling_hook in after_handling_hooks:  # post processing
 					response_from_handler = after_handling_hook(req, response_from_handler)
 
-				# check and respond to keep alive
-				resuse_socket_for_next_http_request \
-					= headers.get('Connection', "").lower() == "keep-alive"
-
+				# if there is connection header, handle it
+				if(_connection_header := headers.get('Connection')):
+					resuse_socket_for_next_http_request \
+						= _connection_header.lower() != "close"
 				# app specific headers
 				# handle various return values from handler functions
 
@@ -1032,7 +1032,7 @@ class App:
 					elif(response_headers is None):  # no headers => use default stream headers
 						response_headers = default_stream_headers
 
-					# send all basic headers
+					# Send all specified headers
 					for key, val in response_headers.items():
 						buffered_socket.sendb(key, b': ', val, b'\r\n')
 
@@ -1054,17 +1054,18 @@ class App:
 					for cookie_name, cookie_val in req._cookies_to_set.items():
 						buffered_socket.sendb(b'Set-Cookie: ', cookie_name, b'=', cookie_val, b'\r\n')
 
-				# send back keep alive
-				if(resuse_socket_for_next_http_request):
-					buffered_socket.sendb(b'Connection: keep-alive\r\n')
+				# keep-alive by default unless close hinted
+				if(not resuse_socket_for_next_http_request):
+					buffered_socket.sendb(b'Connection: close\r\n')
 
-				if(body is I_AM_HANDLING_THE_SOCKET):
-					# close the headers
-					buffered_socket.sendb(b'\r\n')
-
+			# FINALIZE
 			# resp.3 Send body
 			# resp.3.1 If handler is handling socket
 			if(body is I_AM_HANDLING_THE_SOCKET):
+				# EITHER RESPONSE HEADERS OR IT IS HANDLED BY THE FUNCTION ITSELF
+				if(response_headers is not None):
+					buffered_socket.sendb(b'\r\n')
+
 				LOG_SERVER(
 					"http_socket", request_type=request_type,
 					path=request_path, wallclockms=int(1000 * time.time()) - cur_millis
@@ -1079,6 +1080,8 @@ class App:
 				if(isinstance(body, (dict, list))):
 					body = json.dumps(body)
 					buffered_socket.sendb(b'Content-Type: application/json\r\n')
+				elif(isinstance(response_headers, dict) and ("Content-Type" not in response_headers)):
+					buffered_socket.sendb(b'Content-Type: text/html; charset=utf-8\r\n')
 
 				# encode body
 				if(isinstance(body, str)):
@@ -1183,7 +1186,7 @@ class App:
 				continue  # try again
 			elif(ret is I_AM_HANDLING_THE_SOCKET):
 				close_socket = False
-			break
+			break  # DEFAULT: break the loop
 
 		if(close_socket):
 			buffered_socket.close()
