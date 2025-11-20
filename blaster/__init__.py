@@ -28,7 +28,6 @@ class __ReqCtx(local.local):
 	req = None
 	timestamp = None
 	cache = None
-	user = None
 
 
 req_ctx = __ReqCtx()

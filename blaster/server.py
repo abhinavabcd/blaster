@@ -23,7 +23,7 @@ from .tools import set_socket_fast_close_options, \
 from .tools.sanitize_html import HtmlSanitizedDict, HtmlSanitizedList
 from .utils import events
 from .utils.data_utils import FILE_EXTENSION_TO_MIME_TYPE
-from .logging import LOG_ERROR, LOG_SERVER, LOG_WARN, LOG_DEBUG
+from .logging import LOG_ERROR, LOG_SERVER, LOG_WARN, LOG_DEBUG, log_ctx
 from .schema import Object, schema as schema_func
 from .websocket.server import WebSocketServerHandler
 from .config import IS_DEV, BLASTER_HTTP_TOOK_LONG_WARN_THRESHOLD
@@ -205,8 +205,9 @@ class Request:
 	# url data, doesn't contain query string
 	request_type = None
 	path = None
-	ctx = None
 	timestamp = None
+	user = None
+	guest_user = None
 
 	@classmethod
 	def before(cls, func=None):
@@ -239,11 +240,10 @@ class Request:
 	def client_name(self):
 		return self._headers.get("x-client") or ""
 
-	def __init__(self, buffered_socket, ctx):
+	def __init__(self, buffered_socket):
 		self._params = HtmlSanitizedDict()  # empty params by default
 		self._headers = HeadersDict()
 		self.sock = buffered_socket
-		self.ctx = ctx
 
 	# searches in post and get
 	def get(self, key, default=None, **kwargs):
@@ -846,10 +846,7 @@ class App:
 		# ignore request lines > 4096 bytes
 		post_data = None
 		# set all usable timestamp variables at once
-		req_ctx.req = req = Request(buffered_socket, req_ctx)
-		req_ctx.cache = {}
-		req_ctx.user = None
-
+		req = Request(buffered_socket)
 		request_type = None
 		request_path = None
 		headers = None
@@ -860,11 +857,14 @@ class App:
 		except Exception:
 			return  # won't resuse socket, broken
 
-		# AFTER THE FIRST LINE, SET ALL TIMESTAMPS
+		# IMP:  RESET ALL CTX VARIABLES
+		req_ctx.req = req  # useful to not passing req around
+		req_ctx.cache = {}
 		cur_millis \
 			= req_ctx.timestamp \
 			= req.timestamp \
 			= int(1000 * time.time())
+		log_ctx._trace_id = None
 
 		try:
 			request_line = request_line.decode("utf-8")

@@ -1852,7 +1852,7 @@ class PartitionedTasksRunner:
 		LOG_DEBUG("partitioned_tasks_runner", msg="tasks runner worker started")
 		while(_task := _queue.get()):  # idenfinitely waits for task until None (flushed)
 			partition_key, queued_at, log_trace_id, func, args, kwargs = _task
-			log_ctx._trace_id = log_trace_id  # set the trace id
+			log_ctx._trace_id = log_trace_id  # set the trace id from the original submitter
 			# call the function
 			now_millis = cur_ms()
 			if((delay := now_millis - queued_at) > 4000):

@@ -15,8 +15,7 @@ from . import req_ctx
 
 
 class __LogCtx(local.local):
-	def __init__(self, **kwargs):
-		self.__dict__.update({"_trace_id": None})
+	_trace_id = None
 
 	@property
 	def trace_id(self):  # generate a trace id when not present
