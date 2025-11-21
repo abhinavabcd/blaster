@@ -25,9 +25,8 @@ sys.modules["blaster.config"] = config  # hack
 
 # gevent local with some default
 class __ReqCtx(local.local):
-	req = None
-	timestamp = None
-	cache = None
+	def __init__(self, **kwargs):
+		self.__dict__.update({"req": None, "timestamp": None, "cache": None})
 
 
 req_ctx = __ReqCtx()

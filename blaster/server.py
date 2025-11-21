@@ -842,7 +842,7 @@ class App:
 
 	# returns none or REUSE_SOCKET_FOR_HTTP
 	def process_http_request(self, buffered_socket: BufferedSocket):
-		resuse_socket_for_next_http_request = True
+		reuse_socket_for_next_http_request = True
 		# ignore request lines > 4096 bytes
 		post_data = None
 		# set all usable timestamp variables at once
@@ -899,7 +899,7 @@ class App:
 						break
 
 			if(not handler):
-				resuse_socket_for_next_http_request = False
+				reuse_socket_for_next_http_request = False
 				raise Exception("Method not found")
 
 			# parse the headers
@@ -928,7 +928,7 @@ class App:
 				if(content_length < _max_body_size):
 					post_data = buffered_socket.recvn(content_length)
 				else:
-					resuse_socket_for_next_http_request = False
+					reuse_socket_for_next_http_request = False
 					raise Exception("Content length too large")
 			else:  # handle chuncked encoding
 				transfer_encoding = headers.get("transfer-encoding")
@@ -998,7 +998,7 @@ class App:
 
 				# if there is connection header, handle it
 				if(_connection_header := headers.get('Connection')):
-					resuse_socket_for_next_http_request \
+					reuse_socket_for_next_http_request \
 						= _connection_header.lower() != "close"
 				# app specific headers
 				# handle various return values from handler functions
@@ -1055,7 +1055,7 @@ class App:
 						buffered_socket.sendb(b'Set-Cookie: ', cookie_name, b'=', cookie_val, b'\r\n')
 
 				# keep-alive by default unless close hinted
-				if(not resuse_socket_for_next_http_request):
+				if(not reuse_socket_for_next_http_request):
 					buffered_socket.sendb(b'Connection: close\r\n')
 
 			# FINALIZE
@@ -1139,6 +1139,7 @@ class App:
 			status = str(status) if status else b'502 Server error'
 			body = body or b'Internal server error'
 
+			reuse_socket_for_next_http_request = False
 			try:
 				# err.2 send the error response
 				# err.2.1 send status line
@@ -1164,13 +1165,13 @@ class App:
 					req_str=str(req.to_dict())
 				)
 			except Exception:
-				resuse_socket_for_next_http_request = False
+				pass
 
 			if(IS_DEV):
 				traceback.print_exc()
 			# BREAK THIS CONNECTION
 
-		if(resuse_socket_for_next_http_request):
+		if(reuse_socket_for_next_http_request):
 			return REUSE_SOCKET_FOR_HTTP
 
 	'''
