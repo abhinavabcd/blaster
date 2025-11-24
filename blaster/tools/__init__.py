@@ -2242,18 +2242,25 @@ def xmltodict(xml_node, attributes=False):
 	children = list(t)
 	if(children):
 		dd = {}
-		for dc in filter(None, map(
-			lambda n: xmltodict(n, attributes=attributes),
-			children
-		)):
+		for child in children:
+			dc = xmltodict(child, attributes=attributes)
+			if(not dc):
+				continue
 			for k, v in dc.items():
-				if k in dd:
+				if(k in dd):
 					if isinstance(dd[k], list):
 						dd[k].append(v)
 					else:
 						dd[k] = [dd[k], v]
 				else:
 					dd[k] = v
+
+			# append tail text
+			if(child.tail and child.tail.strip()):
+				if('#text' in dd):
+					dd['#text'] += ' ' + child.tail.strip()
+				else:
+					dd['#text'] = child.tail.strip()
 		d = {t.tag: dd}
 
 	if(_attributes):
@@ -2261,8 +2268,12 @@ def xmltodict(xml_node, attributes=False):
 
 	if(t.text):
 		text = t.text.strip()
-		if(children or _attributes):
-			d[t.tag]['#text'] = text
+		if children or _attributes:
+			# Append to existing combined text if needed
+			if '#text' in d[t.tag]:
+				d[t.tag]['#text'] = text + ' ' + d[t.tag]['#text']
+			else:
+				d[t.tag]['#text'] = text
 		else:
 			d[t.tag] = text
 	return d
