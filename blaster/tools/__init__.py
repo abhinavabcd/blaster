@@ -2232,40 +2232,51 @@ def set_requests_default_args(**_kwargs):
 
 def xmltodict(xml_node, attributes=False):
 	t = etree.fromstring(
-		xml_node.replace('&', '&amp;').encode("utf-8"),
+		xml_node.encode("utf-8"),
 		parser=etree.XMLParser(recover=True)
 	) if isinstance(xml_node, str) else xml_node
+
 	if(t is None):
 		return None
-	_attributes = t.attrib if attributes else None
-	d = {t.tag: {} if attributes else None}
+
+	node_dict = {}
+
+	# Attributes
+	if(attributes and t.attrib):
+		for k, v in t.attrib.items():
+			node_dict['@' + k] = v
+
+	# Initial text
+	if(t.text and t.text.strip()):
+		node_dict['#text'] = t.text.strip()
+
+	# Children
 	children = list(t)
-	if(children):
-		dd = {}
-		for dc in filter(None, map(
-			lambda n: xmltodict(n, attributes=attributes),
-			children
-		)):
-			for k, v in dc.items():
-				if k in dd:
-					if isinstance(dd[k], list):
-						dd[k].append(v)
-					else:
-						dd[k] = [dd[k], v]
+	for child in children:
+		child_dict = xmltodict(child, attributes=attributes)
+
+		# Insert child element
+		for k, v in child_dict.items():
+			if(k in node_dict):
+				if(isinstance(node_dict[k], list)):
+					node_dict[k].append(v)
 				else:
-					dd[k] = v
-		d = {t.tag: dd}
+					node_dict[k] = [node_dict[k], v]
+			else:
+				node_dict[k] = v
 
-	if(_attributes):
-		d[t.tag].update(('@' + k, v) for k, v in _attributes.items())
+		# Append child tail to #text
+		if(child.tail and child.tail.strip()):
+			if('#text' in node_dict):
+				node_dict['#text'] += ' ' + child.tail.strip()
+			else:
+				node_dict['#text'] = child.tail.strip()
 
-	if(t.text):
-		text = t.text.strip()
-		if(children or _attributes):
-			d[t.tag]['#text'] = text
-		else:
-			d[t.tag] = text
-	return d
+	# Leaf node: single text
+	if(not children and not (attributes and t.attrib)):
+		return {t.tag: t.text.strip() if t.text else ''}
+
+	return {t.tag: node_dict}
 
 
 def mask_strings(val, mask_char="*"):
