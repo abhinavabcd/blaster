@@ -156,9 +156,9 @@ class MongoList(list):
 			_pop[self.path] = i
 		# convert them to original object types
 		if(isinstance(ret, list)):
-			return list(ret)
+			return ret.copy()
 		if(isinstance(ret, dict)):
-			return dict(ret)
+			return ret.copy()
 		return ret
 
 	def insert(self, pos, item):
@@ -261,9 +261,9 @@ class MongoDict(dict):
 			_unset[new_path] = ""
 		# convert them to original object types
 		if(isinstance(popped_val, list)):
-			return list(popped_val)
+			return popped_val.copy()
 		if(isinstance(popped_val, dict)):
-			return dict(popped_val)
+			return popped_val.copy()
 		return popped_val
 
 	def update(self, another):
