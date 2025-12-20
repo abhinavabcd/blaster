@@ -209,7 +209,7 @@ def LOG(level, log_type, **kwargs):
 		print(json.dumps(_log))
 	else:
 		print(
-			"%s%s [%s]"%(
+			"%s%s [%s]" % (
 				log_level_colors.get(level, PrintColors.OKGREEN),
 				datetime.now(),
 				log_level_name

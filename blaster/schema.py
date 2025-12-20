@@ -258,7 +258,7 @@ class _Set(_List):
 # - Object(Str, Optional[Int, Str])
 #  {"a": "1", "b": "2"...}
 
-# - Object({"names": List, "canPlay": Optional[Int], "attrs": Required[Object] }) 
+# - Object({"names": List, "canPlay": Optional[Int], "attrs": Required[Object] })
 #  {"names" : ["a", None, "c"], "attrs": {} }
 
 # - Dict[Int, Str]

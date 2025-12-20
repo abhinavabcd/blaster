@@ -105,7 +105,7 @@ class TestTools(unittest.TestCase):
 				exclude=["05/10/2021 10:30"]
 			),
 			[
-				(datetime(2021, 10, 4, 10, 30), datetime(2021, 10, 4, 12, 30), ['100EUR', 'a=b']), 
+				(datetime(2021, 10, 4, 10, 30), datetime(2021, 10, 4, 12, 30), ['100EUR', 'a=b']),
 				(datetime(2021, 10, 11, 10, 30), datetime(2021, 10, 11, 12, 30), ['100EUR', 'a=b']),
 				(datetime(2021, 10, 12, 10, 30), datetime(2021, 10, 12, 11, 30), ['200EUR']),
 				(datetime(2021, 10, 18, 10, 30), datetime(2021, 10, 18, 12, 30), ['100EUR', 'a=b']),
@@ -181,7 +181,7 @@ class TestTools(unittest.TestCase):
 				(datetime(2022, 6, 22, 14, 30), datetime(2022, 6, 22, 18, 30), []),
 				(datetime(2022, 6, 23, 9, 30), datetime(2022, 6, 23, 12, 30), []),
 				(datetime(2022, 6, 23, 14, 30), datetime(2022, 6, 23, 18, 30), []),
-				(datetime(2022, 6, 24, 9, 30), datetime(2022, 6, 24, 12, 30), []), 
+				(datetime(2022, 6, 24, 9, 30), datetime(2022, 6, 24, 12, 30), []),
 				(datetime(2022, 6, 24, 14, 30), datetime(2022, 6, 24, 18, 30), []),
 				(datetime(2022, 6, 25, 9, 30), datetime(2022, 6, 25, 12, 30), [])
 			]
@@ -363,7 +363,7 @@ class TestTools(unittest.TestCase):
 		self.assertEqual(parse_currency_string("INR 2000"), (2000000, "INR", 2000))
 		self.assertEqual(parse_currency_string("2000INR D"), (2000000, "INR", 2000))
 		self.assertEqual(parse_currency_string("D INR2000"), (2000000, "INR", 2000))
-		self.assertEqual(parse_currency_string("2000", default_currency_code="INR"), (2000000, "INR", 2000))	
+		self.assertEqual(parse_currency_string("2000", default_currency_code="INR"), (2000000, "INR", 2000))
 		self.assertEqual(parse_string_to_int("20,00"), 2000)
 		self.assertEqual(parse_string_to_int("20.00"), 20)
 		self.assertIsNone(parse_string_to_int("20a", full_match=True))

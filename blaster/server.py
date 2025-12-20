@@ -394,7 +394,7 @@ class Request:
 	@classmethod
 	def arg_generator(cls, name, _type, default):
 		'''
-			This should PREPROCESS as much as possible and return a function 
+			This should PREPROCESS as much as possible and return a function
 			that create the argument from the request
 		'''
 		if(_type == Request):  # req: Request
