@@ -1214,6 +1214,9 @@ class DummyObject:
 	def __setitem__(self, key, val):
 		self.entries[key] = val
 
+	def __contains__(self, key):
+		return key in self.entries
+
 	def __repr__(self):
 		return str(self.entries)
 
