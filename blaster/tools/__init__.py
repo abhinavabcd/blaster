@@ -2385,3 +2385,13 @@ def create_operator_tree(expression, operators: list):
 	postfix_tokens = infix_to_postfix(tokens)
 	tree = build_tree(postfix_tokens)
 	return tree
+
+
+class NoDuplicateValuesMeta(type):
+	def __setattr__(cls, name, value):
+		for key, val in cls.__dict__.items():
+			if(val == value):
+				raise ValueError(
+					f"Value {value!r} already exists as a class attribute with name {key!r}"
+				)
+		super().__setattr__(name, value)
