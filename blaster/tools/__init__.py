@@ -164,7 +164,6 @@ class ExpiringCache:
 			return default
 		if(timestamp_and_value[0] > cur_ms()):
 			return timestamp_and_value[1]
-		self.cache.pop(key, None)  # expired object
 		return default
 
 	def set(self, key, value):
@@ -180,7 +179,7 @@ class ExpiringCache:
 			keys_to_remove.append(_key)
 
 		for _key in keys_to_remove:
-			removed_entries.append(self.cache.pop(_key))
+			removed_entries.append((key, self.cache.pop(_key)))
 
 		self.cache[key] = (cur_timestamp + self.ttl, value)
 		return removed_entries
