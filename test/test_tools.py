@@ -424,6 +424,11 @@ class TestTools(unittest.TestCase):
 			[[{"c": 1, "e": 1}, {"c": 2}], [{"c": 3}, {"c": 4}]]
 		)
 
+		self.assertEqual(get_by_key_path([{"a": None}], "[].a"), [None])
+		self.assertEqual(get_by_key_path({"a": None}, "a"), None)
+
+
+
 	def test_get_by_key_list(self):
 		self.assertEqual(
 			get_by_key_list({"a": {"b": 1}}, ["a", "b"]), 1

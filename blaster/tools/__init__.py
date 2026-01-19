@@ -253,18 +253,21 @@ def get_by_key_path(d, key_path, i=0, path="", include_path=False):
 	if(isinstance(key_path, str)):
 		key_path = key_path.replace("[", ".[").replace("..", ".").split(".")
 
-	if(i >= len(key_path)):
+	n = len(key_path)
+	if(i >= n):
 		return d if not include_path else (d, path)
 
 	key = key_path[i]
-	if(key[0] == "["):
+	if(not key):
+		return get_by_key_path(d, key_path, i + 1, path, include_path)
+	elif(key[0] == "["):
 		if(isinstance(d, (list, tuple))):
 			specific_indexes = [int(x) for x in key[1:-1].split(",") if x]
 			ret = []
 			if(not specific_indexes):   # just .[].xxx -> all elements
 				for _i, val in enumerate(d):
 					_ret = get_by_key_path(val, key_path, i + 1, path + f".{_i}", include_path)
-					if(_ret is not None):
+					if(i >= n - 2 or _ret is not None):
 						ret.append(_ret)
 			elif(len(specific_indexes) == 1):  # just .[1].xxx -> specific element
 				if(specific_indexes[0] < len(d)):
@@ -274,7 +277,7 @@ def get_by_key_path(d, key_path, i=0, path="", include_path=False):
 				for _i in specific_indexes:
 					if(_i < len(d)):
 						_ret = get_by_key_path(d[_i], key_path, i + 1, path + f".{_i}", include_path)
-						if(_ret is not None):
+						if(i >= n - 2 or _ret is not None):
 							ret.append(_ret)
 			return ret
 		return
@@ -291,7 +294,7 @@ def get_by_key_path(d, key_path, i=0, path="", include_path=False):
 						break
 				if(exists):
 					_ret = get_by_key_path(_d, key_path, i + 1, path + f".{_key}", include_path)
-					if(_ret is not None):
+					if(i >= n - 2 or _ret is not None):
 						ret[_key_list[-1]] = _ret
 			return ret
 		else:
