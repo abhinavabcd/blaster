@@ -1514,12 +1514,39 @@ class Model(object):
 	# utility to keep track of locks
 	__locks = None
 
+	class _LockHandle:
+		def __init__(self, model_obj, name, acquired):
+			self._model_obj = model_obj
+			self._name = name
+			self._acquired = acquired
+			self._released = False
+
+		def __bool__(self):
+			return self._acquired
+
+		def __enter__(self):
+			if(not self._acquired):
+				raise TimeoutError("Lock not acquired")
+			return self._model_obj
+
+		def __exit__(self, exc_type, exc, tb):
+			if(self._acquired and not self._released):
+				self._model_obj.unlock(name=self._name)
+				self._released = True
+			return False
+
+		def unlock(self, force=False):
+			if(self._acquired and not self._released):
+				self._model_obj.unlock(name=self._name, force=force)
+				self._released = True
+
 	# timeout -> can try to get lock until
 	# can_hold_until -> after acquired, how long we can hold it,
 	# - beyong that time, we know other can interfere
 	def lock(self, name="", timeout=5000, silent=False, can_hold_until=2 * 60 * 1000):
 		# return true for objects not yet in db too
 		lock_name = f"_lock_{name}"
+		lock_handle = self._LockHandle(self, name, False)
 		start_timestamp = cur_ms()
 
 		if(self.__locks is None):
@@ -1541,10 +1568,11 @@ class Model(object):
 							self.pk_tuple()
 						)
 					)
-				return False
+				return lock_handle
 
 			self.__locks[lock_name] = None
-			return True  # no lock needed
+			lock_handle._acquired = True
+			return lock_handle  # no lock needed
 
 		# db lock
 		count = 0
@@ -1564,7 +1592,8 @@ class Model(object):
 				)
 			):
 				self.__locks[lock_name] = locked_until
-				return True
+				lock_handle._acquired = True
+				return lock_handle
 			time.sleep(0.2 * count)  # wait
 
 		if(not silent):
@@ -1575,9 +1604,11 @@ class Model(object):
 				)
 			)
 
-		return False
+		return lock_handle
 
 	def unlock(self, name="", force=False):
+		if(self.__locks is None):
+			self.__locks = {}
 		lock_name = f"_lock_{name}"
 		if(not force and lock_name not in self.__locks):
 			# not acqurired by us and no force
