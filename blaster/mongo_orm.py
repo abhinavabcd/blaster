@@ -1540,7 +1540,7 @@ class Model(object):
 				self._model_obj.unlock(name=self._name, force=force)
 				self._released = True
 
-	# timeout -> can try to get lock until
+	# timeout -> can try to get lock until millis
 	# can_hold_until -> after acquired, how long we can hold it,
 	# - beyong that time, we know other can interfere
 	def lock(self, name="", timeout=5000, silent=False, can_hold_until=2 * 60 * 1000):

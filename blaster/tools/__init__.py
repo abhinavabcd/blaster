@@ -969,7 +969,7 @@ def hmac_hexdigest(secret, *parts) -> str:
 	return hash.hexdigest()
 
 
-def create_signed_value(name, value: bytes | str, secret, expires_in=31 * SECONDS_IN_DAY, values=()) -> str:
+def create_signed_value(name, value: bytes | str, secret, expires_in=15 * SECONDS_IN_DAY, values=()) -> str:
 	expires_at = str(int(time.time() + expires_in))
 	value = b64encode(utf8(value)).decode()  # hide value
 	# ~ to prevent changing value, timestamp but value + timestamp being same
