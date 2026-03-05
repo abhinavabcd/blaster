@@ -7,14 +7,22 @@ import psycopg2
 import psycopg2.pool
 import psycopg2.extras
 
-from .tools import cur_ms
-from .logging import LOG_WARN, LOG_ERROR
+from .tools import cur_ms, all_subclasses
+from .logging import LOG_WARN
 from .config import IS_TEST
 
 T = TypeVar("T", bound="Model")
 
 ASCENDING = 1
 DESCENDING = -1
+
+EVENT_BEFORE_DELETE = -2
+EVENT_AFTER_DELETE = -1
+EVENT_BEFORE_UPDATE = 1
+EVENT_AFTER_UPDATE = 2
+EVENT_BEFORE_CREATE = 3
+EVENT_AFTER_CREATE = 4
+EVENT_ROW_AFTER_UPDATE = 5
 
 _NOT_SET = object()
 
@@ -40,18 +48,6 @@ IndexesToCreate = {}
 
 # Registry of named DatabaseNode instances.  Populated by DatabaseNode(name=...) or register_db_node().
 _DB_NODES_: dict = {}
-_default_db_node_: "DatabaseNode" = None
-
-
-def register_db_node(name: str, node: "DatabaseNode"):
-	"""Register a DatabaseNode under a name so models can reference it as a string."""
-	_DB_NODES_[name] = node
-
-
-def set_default_db_node(node: "DatabaseNode"):
-	"""Set the fallback DatabaseNode used when a model has no _db_node_ set."""
-	global _default_db_node_
-	_default_db_node_ = node
 
 
 def INDEX(*indexes):
@@ -72,7 +68,10 @@ def INDEX(*indexes):
 	        INDEX((id, ASCENDING), {'unique': True})
 	        INDEX((name, ASCENDING))
 	"""
-	table_name = inspect.currentframe().f_back.f_locals["_table_name_"]
+	locals_ = inspect.currentframe().f_back.f_locals
+	table_name = locals_.get("_table_name_") or locals_.get("_collection_name_")
+	if not table_name:
+		return  # not a pg model — silently ignore (e.g. mongo-only models)
 	IndexesToCreate.setdefault(table_name, [])
 	IndexesToCreate[table_name].append(indexes)
 
@@ -314,7 +313,7 @@ class DatabaseNode:
 		self._pool: Optional[psycopg2.pool.ThreadedConnectionPool] = None
 		self.replica = replica  # resolved lazily in _get_replica()
 		if name:
-			register_db_node(name, self)
+			_DB_NODES_[name] = self
 
 	def _get_replica(self) -> "DatabaseNode":
 		"""Return the replica node, resolving a string name if needed."""
@@ -365,6 +364,25 @@ class Model:
 	_pk_attrs_: list = []   # set by initialize_model from first unique INDEX
 	_col_attrs_: dict = {}  # {name: Attribute} for column=True non-pk fields
 	_indexes_: list = []    # parsed index specs, set by initialize_model
+	_event_listeners_: dict = {}
+
+	@classmethod
+	def on(cls, events, func):
+		"""Register func as a handler for one or more events on this model class."""
+		if not isinstance(events, list):
+			events = [events]
+		for event in events:
+			# Each class gets its own _event_listeners_ dict (not shared with base/siblings)
+			if "_event_listeners_" not in cls.__dict__:
+				cls._event_listeners_ = {}
+			handlers = cls._event_listeners_.setdefault(event, [])
+			handlers.append(func)
+
+	@classmethod
+	def _trigger_event(cls, event, *args):
+		if handlers := cls._event_listeners_.get(event):
+			for handler in handlers:
+				handler(*args)
 
 	def __init__(self, _is_create_new_=True, **kwargs):
 		object.__setattr__(self, '_is_create_new_', _is_create_new_)
@@ -577,18 +595,26 @@ class Model:
 
 	# ── CRUD ─────────────────────────────────────────────────────────────────
 
-	def commit(self):
-		"""Persist this object: INSERT if new, UPDATE otherwise."""
+	def commit(self, conditions=None, force=False):
+		"""
+		Persist this object: INSERT if new, UPDATE otherwise.
+
+		conditions: passed to update() for conditional commits (see update()).
+		force:      on INSERT duplicate-key conflict, load the existing row and
+		            apply the new fields on top of it instead of raising.
+		"""
 		if object.__getattribute__(self, '_is_create_new_'):
-			self._insert()
+			self._insert(force=force)
 		else:
-			self.update()
+			self.update(conditions=conditions)
 		return self
 
-	def _insert(self):
+	def _insert(self, force=False):
+		cls = self.__class__
+		cls._trigger_event(EVENT_BEFORE_CREATE, self)
+
 		doc = self._to_doc()
 		new_ts = cur_ms()
-		cls = self.__class__
 		pk_attrs = cls._pk_attrs_
 		col_attrs = cls._col_attrs_
 
@@ -608,13 +634,37 @@ class Model:
 			f"RETURNING {returning}"
 		)
 
-		with cls._db_node_.use_conn() as conn:
-			with conn.cursor() as cur:
-				cur.execute(sql, pk_values + col_values + [new_ts, json.dumps(doc, default=_json_default)])
-				row = cur.fetchone()
-			conn.commit()
+		try:
+			with cls._db_node_.use_conn() as conn:
+				with conn.cursor() as cur:
+					cur.execute(sql, pk_values + col_values + [new_ts, json.dumps(doc, default=_json_default)])
+					row = cur.fetchone()
+				conn.commit()
+		except psycopg2.errors.UniqueViolation:
+			if not force:
+				raise
+			# Load the conflicting row, then apply whatever fields this object had set
+			existing = cls.get(**{pk: inst.get(pk) for pk in pk_attrs})
+			if existing is None:
+				raise  # row vanished between INSERT and GET — re-raise original
+			self._from_doc(existing._row_)
+			# Build $set from the fields that were explicitly provided on this new object
+			set_payload = {}
+			for name, attr in cls._attrs_.items():
+				if name in pk_attrs:
+					continue
+				v = inst.get(name)
+				if v is None:
+					continue
+				if isinstance(v, (dict, list)) and not v:
+					continue
+				set_payload[name] = v
+			if set_payload:
+				self.update({"$set": set_payload})
+			return
 
 		self._from_doc(row)  # update local state with any DB defaults, coerced types, etc.
+		cls._trigger_event(EVENT_AFTER_CREATE, self)
 
 	@classmethod
 	def _split_updates(cls, updates):
@@ -662,7 +712,7 @@ class Model:
 
 		return col_set, col_inc, col_unset, json_updates
 
-	def update(self, updates=None, conditions=None):
+	def update(self, updates=None, conditions=None, callback=None):
 		"""
 		Apply updates to this record with optimistic locking on _.
 
@@ -673,6 +723,9 @@ class Model:
 		}
 		conditions: extra WHERE filters beyond pk + _ (same syntax as query())
 		    e.g. {"status": "active", "score": {"$lt": 100}}
+		callback:   called with (self, result_row) after the UPDATE succeeds but
+		            before COMMIT. If it raises, the transaction is rolled back
+		            and the exception is re-raised.
 
 		When updates is None, tracked changes from attribute mutations are used.
 		column=True fields are updated via direct SQL columns; others via JSONB.
@@ -693,6 +746,7 @@ class Model:
 			return
 
 		cls = self.__class__
+		cls._trigger_event(EVENT_BEFORE_UPDATE, self)
 		col_attrs = cls._col_attrs_
 		col_set, col_inc, col_unset, json_updates = cls._split_updates(updates)
 
@@ -743,26 +797,48 @@ class Model:
 			f"SET {', '.join(set_clauses)} "
 			f"WHERE {where} {returning}"
 		)
-		all_params = all_params + pk_values + [original_ts] + extra_params
+		base_params = all_params + pk_values
+		fixed_extra = extra_params
 
-		with cls._db_node_.use_conn() as conn:
-			with conn.cursor() as cur:
-				cur.execute(sql, all_params)
-				result = cur.fetchone()
-			if result is None:
-				if(not conditions):
+		_MAX_RETRIES = 3
+		for attempt in range(_MAX_RETRIES):
+			with cls._db_node_.use_conn() as conn:
+				with conn.cursor() as cur:
+					cur.execute(sql, base_params + [original_ts] + fixed_extra)
+					result = cur.fetchone()
+				if result is None:
+					if conditions:
+						return False
+					# optimistic lock conflict — refetch and retry
+					if attempt < _MAX_RETRIES - 1:
+						fresh = cls.get(**{pk: getattr(self, pk) for pk in cls._pk_attrs_})
+						if fresh is None:
+							raise OptimisticLockError(
+								f"{cls._table_name_}: record deleted during retry "
+								f"(pk={self._pk_values()})"
+							)
+						original_ts = fresh._original_
+						continue
 					raise OptimisticLockError(
-						f"{cls._table_name_}: update conflict or record not found "
-						f"(pk={self._pk_values()}, _={original_ts})"
+						f"{cls._table_name_}: update conflict after {_MAX_RETRIES} retries "
+						f"(pk={self._pk_values()}, _={self._original_})"
 					)
-				else:
-					return False
-			conn.commit()
-			self._from_doc(result, partial=True)  # update local state with new values and timestamp
-		return True
+				if callback:
+					try:
+						callback(self, result)
+					except Exception as ex:
+						conn.rollback()
+						raise ex
+				conn.commit()
+			original_row = dict(self._row_) if hasattr(self, '_row_') else None
+			self._from_doc(result, partial=True)
+			cls._trigger_event(EVENT_ROW_AFTER_UPDATE, self, original_row, result)
+			cls._trigger_event(EVENT_AFTER_UPDATE, self)
+			return True
 
 	def delete(self):
 		cls = self.__class__
+		cls._trigger_event(EVENT_BEFORE_DELETE, self)
 		pk_conditions = cls._pk_conditions()
 		pk_values = self._pk_values()
 		sql = f"DELETE FROM {cls._table_name_} WHERE {pk_conditions}"
@@ -770,6 +846,7 @@ class Model:
 			with conn.cursor() as cur:
 				cur.execute(sql, pk_values)
 			conn.commit()
+		cls._trigger_event(EVENT_AFTER_DELETE, self)
 
 	@classmethod
 	def get(cls: Type[T], _replica: bool = False, **pk_kwargs) -> Optional[T]:
@@ -975,6 +1052,8 @@ def _fetch_existing_indexes(db_node, table_name):
 		return None
 
 
+_loading_errors = []
+
 def initialize_model(model_cls):
 	"""
 	Scan the class MRO for Attribute definitions, parse INDEX() declarations,
@@ -999,7 +1078,6 @@ def initialize_model(model_cls):
 
 	    initialize_model(User)
 	"""
-	errors = []
 
 	# ── 0. Resolve _db_node_ (string name lookup + default fallback) ─────────
 	db_node = model_cls._db_node_
@@ -1130,7 +1208,7 @@ def initialize_model(model_cls):
 		else:
 			create_sql = model_cls._build_create_table_sql()
 			index_sqls = "\n".join(spec['sql'] + ";" for spec in indexes)
-			errors.append(MissingTableError(
+			_loading_errors.append(MissingTableError(
 				f"Table '{table}' does not exist. Create it with:\n\n"
 				f"{create_sql};\n\n{index_sqls}"
 			))
@@ -1185,7 +1263,25 @@ def initialize_model(model_cls):
 						)
 					)
 
-	if errors:
-		for e in errors:
-			print(str(e))
-		raise errors[0]
+
+def initialize_postgres(db_nodes):
+
+	# initialize control db
+	if(isinstance(db_nodes, dict)):
+		db_nodes = [DatabaseNode(**db_nodes)]
+	elif(isinstance(db_nodes, list)):
+		db_nodes = [DatabaseNode(**db_node) for db_node in db_nodes]
+	else:
+		raise Exception(
+			f"argument must be a list of dicts, or a single dict, not {type(db_nodes)}"
+		)
+	# set default db node for each class; skip mongo-only models (no _table_name_)
+	for cls in all_subclasses(Model):
+		if not getattr(cls, "_table_name_", None):
+			continue
+		if not getattr(cls, "_db_node_", None):
+			cls._db_node_ = db_nodes[0]
+		initialize_model(cls)
+
+	if(_loading_errors):
+		raise Exception("initialize_postgres has errors: Check error logs: " + str(_loading_errors))

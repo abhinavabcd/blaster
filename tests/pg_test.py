@@ -6,26 +6,16 @@ import time
 from blaster.pg_orm import (
 	Model, Attribute, INDEX,
 	ASCENDING, DESCENDING,
-	DatabaseNode, initialize_model,
-	OptimisticLockError,
+	DatabaseNode, initialize_postgres,
 )
 from blaster.tools import get_random_id
 
 # ── DB connection ─────────────────────────────────────────────────────────────
 
-_db = DatabaseNode(
-	host="localhost",
-	port=5499,
-	user="postgres",
-	password="postgres",
-	db_name="postgres",
-)
-
 # ── Models ────────────────────────────────────────────────────────────────────
 
 class User(Model):
 	_table_name_ = "pg_test_users"
-	_db_node_ = _db
 
 	id    = Attribute(str, column=True)
 	name  = Attribute(str, column=True)
@@ -39,7 +29,15 @@ class User(Model):
 	INDEX((age, DESCENDING), {"unique": False})
 
 
-initialize_model(User)
+initialize_postgres(
+	dict(
+		host="localhost",
+		port=5499,
+		user="postgres",
+		password="postgres",
+		db_name="postgres"
+	)
+)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -57,7 +55,7 @@ class TestSetup(unittest.TestCase):
 
 	@classmethod
 	def tearDownClass(cls):
-		with _db.use_conn() as conn:
+		with User._db_node_.use_conn() as conn:
 			with conn.cursor() as cur:
 				cur.execute("DROP TABLE IF EXISTS pg_test_users")
 			conn.commit()
@@ -263,7 +261,8 @@ class TestListTracking(TestSetup):
 
 
 class TestOptimisticLocking(TestSetup):
-	def test_concurrent_update_raises(self):
+	def test_concurrent_update_retries_and_succeeds(self):
+		"""Stale copy retries after lock conflict and succeeds (last-write-wins)."""
 		u = User(id=uid(), name="Locked", age=1)
 		u.commit()
 
@@ -273,9 +272,12 @@ class TestOptimisticLocking(TestSetup):
 		copy1.name = "Winner"
 		copy1.commit()
 
+		# copy2 is stale but the retry should fetch the fresh _ and succeed
 		copy2.name = "Loser"
-		with self.assertRaises(OptimisticLockError):
-			copy2.commit()
+		copy2.commit()  # should not raise
+
+		fetched = User.get(id=u.id)
+		self.assertEqual(fetched.name, "Loser")
 
 	def test_successful_sequential_updates(self):
 		u = User(id=uid(), name="Seq", age=0)
