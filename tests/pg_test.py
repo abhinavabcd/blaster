@@ -24,7 +24,7 @@ _db = DatabaseNode(
 # ── Models ────────────────────────────────────────────────────────────────────
 
 class User(Model):
-	_collection_name_ = "pg_test_users"
+	_table_name_ = "pg_test_users"
 	_db_node_ = _db
 
 	id    = Attribute(str)
@@ -277,7 +277,7 @@ class TestOptimisticLocking(TestSetup):
 class TestExplicitUpdate(TestSetup):
 	def test_set_operator(self):
 		u = make_user(name="Before", age=10)
-		u._update({"$set": {"name": "After", "age": 99}})
+		u.update({"$set": {"name": "After", "age": 99}})
 
 		fetched = User.get(id=u.id)
 		self.assertEqual(fetched.name, "After")
@@ -285,7 +285,7 @@ class TestExplicitUpdate(TestSetup):
 
 	def test_unset_operator(self):
 		u = make_user(meta={"keep": 1, "drop": 2})
-		u._update({"$unset": {"meta.drop": 1}})
+		u.update({"$unset": {"meta.drop": 1}})
 
 		fetched = User.get(id=u.id)
 		self.assertIn("keep", fetched.meta)
@@ -293,7 +293,7 @@ class TestExplicitUpdate(TestSetup):
 
 	def test_inc_operator(self):
 		u = make_user(score=10.0)
-		u._update({"$inc": {"score": 5}})
+		u.update({"$inc": {"score": 5}})
 
 		# Local state refreshed automatically after $inc
 		self.assertAlmostEqual(u.score, 15.0, places=1)
@@ -306,14 +306,14 @@ class TestExplicitUpdate(TestSetup):
 		_id = uid()
 		User(id=_id, name="IncZero").commit()
 		u = User.get(id=_id)
-		u._update({"$inc": {"age": 7}})
+		u.update({"$inc": {"age": 7}})
 
 		fetched = User.get(id=u.id)
 		self.assertEqual(fetched.age, 7)
 
 	def test_set_and_inc_combined(self):
 		u = make_user(name="Old", score=5.0)
-		u._update({"$set": {"name": "New"}, "$inc": {"score": 10}})
+		u.update({"$set": {"name": "New"}, "$inc": {"score": 10}})
 
 		fetched = User.get(id=u.id)
 		self.assertEqual(fetched.name, "New")
@@ -321,7 +321,7 @@ class TestExplicitUpdate(TestSetup):
 
 	def test_nested_set(self):
 		u = make_user(meta={"a": 1, "b": 2})
-		u._update({"$set": {"meta.b": 99}})
+		u.update({"$set": {"meta.b": 99}})
 
 		fetched = User.get(id=u.id)
 		self.assertEqual(fetched.meta["a"], 1)
@@ -330,7 +330,7 @@ class TestExplicitUpdate(TestSetup):
 	def test_extra_conditions_match(self):
 		"""Update succeeds when extra condition matches."""
 		u = make_user(name="CondOK", age=10)
-		u._update({"$set": {"name": "Updated"}}, conditions={"age": "10"})
+		u.update({"$set": {"name": "Updated"}}, conditions={"age": "10"})
 
 		fetched = User.get(id=u.id)
 		self.assertEqual(fetched.name, "Updated")
@@ -339,13 +339,13 @@ class TestExplicitUpdate(TestSetup):
 		"""Update raises when extra condition doesn't match (treated as lock conflict)."""
 		u = make_user(name="CondFail", age=10)
 		with self.assertRaises(OptimisticLockError):
-			u._update({"$set": {"name": "ShouldNotUpdate"}}, conditions={"age": "999"})
+			u.update({"$set": {"name": "ShouldNotUpdate"}}, conditions={"age": "999"})
 
 	def test_no_op_when_empty(self):
 		"""_update with empty updates dict does nothing."""
 		u = make_user(name="NoOp")
 		original_ts = u._
-		u._update({})
+		u.update({})
 		self.assertEqual(u._, original_ts)
 
 

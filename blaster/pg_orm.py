@@ -9,6 +9,7 @@ import psycopg2.extras
 
 from .tools import cur_ms
 from .logging import LOG_WARN, LOG_ERROR
+from .config import IS_TEST
 
 T = TypeVar("T", bound="Model")
 
@@ -34,14 +35,29 @@ _MONGO_TO_PG_OP = {
 	"$ne": "!=",
 }
 
-# Declared indexes, keyed by _collection_name_. Populated by INDEX() calls.
+# Declared indexes, keyed by _table_name_. Populated by INDEX() calls.
 IndexesToCreate = {}
+
+# Registry of named DatabaseNode instances.  Populated by DatabaseNode(name=...) or register_db_node().
+_DB_NODES_: dict = {}
+_default_db_node_: "DatabaseNode" = None
+
+
+def register_db_node(name: str, node: "DatabaseNode"):
+	"""Register a DatabaseNode under a name so models can reference it as a string."""
+	_DB_NODES_[name] = node
+
+
+def set_default_db_node(node: "DatabaseNode"):
+	"""Set the fallback DatabaseNode used when a model has no _db_node_ set."""
+	global _default_db_node_
+	_default_db_node_ = node
 
 
 def INDEX(*indexes):
 	"""
 	Declare indexes for the enclosing Model class.
-	Must be called inside the class body, after _collection_name_ is set.
+	Must be called inside the class body, after _table_name_ is set.
 
 	Each positional arg is either:
 	  - A (field_or_attr, direction) tuple   e.g. (user_id, ASCENDING)
@@ -49,16 +65,16 @@ def INDEX(*indexes):
 
 	Example:
 	    class User(Model):
-	        _collection_name_ = "users"
+	        _table_name_ = "users"
 	        id   = Attribute(str)
 	        name = Attribute(str)
 
 	        INDEX((id, ASCENDING), {'unique': True})
 	        INDEX((name, ASCENDING))
 	"""
-	collection_name = inspect.currentframe().f_back.f_locals["_collection_name_"]
-	IndexesToCreate.setdefault(collection_name, [])
-	IndexesToCreate[collection_name].append(indexes)
+	table_name = inspect.currentframe().f_back.f_locals["_table_name_"]
+	IndexesToCreate.setdefault(table_name, [])
+	IndexesToCreate[table_name].append(indexes)
 
 
 def _json_default(obj):
@@ -241,9 +257,18 @@ class Attribute:
 # ──────────────────────────────────────────────────────────────────────────────
 
 class DatabaseNode:
-	"""Manages a psycopg2 ThreadedConnectionPool for one PostgreSQL database."""
+	"""
+	Manages a psycopg2 ThreadedConnectionPool for one PostgreSQL database.
 
-	def __init__(self, host, port, user, password, db_name, min_conn=1, max_conn=20):
+	Args:
+	    name:    Optional name to register this node in the global _DB_NODES_ registry
+	             so models can reference it as a string: _db_node_ = "my_db"
+	    replica: Optional DatabaseNode (or registered name) to use for read-only queries
+	             when _replica=True is passed to query() / get().
+	"""
+
+	def __init__(self, host, port, user, password, db_name, min_conn=1, max_conn=20,
+				 name: str = None, replica: "DatabaseNode | str" = None):
 		self.host = host
 		self.port = port
 		self.user = user
@@ -252,6 +277,18 @@ class DatabaseNode:
 		self._min_conn = min_conn
 		self._max_conn = max_conn
 		self._pool: Optional[psycopg2.pool.ThreadedConnectionPool] = None
+		self.replica = replica  # resolved lazily in _get_replica()
+		if name:
+			register_db_node(name, self)
+
+	def _get_replica(self) -> "DatabaseNode":
+		"""Return the replica node, resolving a string name if needed."""
+		r = self.replica
+		if r is None:
+			return self
+		if isinstance(r, str):
+			r = _DB_NODES_.get(r, self)
+		return r
 
 	def _get_pool(self):
 		if self._pool is None:
@@ -287,7 +324,7 @@ class DatabaseNode:
 # ──────────────────────────────────────────────────────────────────────────────
 
 class Model:
-	_collection_name_: str = None
+	_table_name_: str = None
 	_db_node_: DatabaseNode = None
 	_attrs_: dict = {}
 	_pk_attrs_: list = []   # set by initialize_model from first unique INDEX
@@ -384,21 +421,24 @@ class Model:
 		object.__setattr__(obj, '_unset_updates', set())
 
 		for name, attr in cls._attrs_.items():
-			value = doc.get(name)
-			if value is not None:
+			value = doc.get(name, _NOT_SET)
+			if value is not _NOT_SET:
 				value = attr.coerce(value)
 			elif attr.default is not _NOT_SET:
 				value = attr.get_default()
 
-			if value is not None:
+			if value is not _NOT_SET:
 				path = [name]
 				if isinstance(value, dict) and not isinstance(value, PgDict):
 					value = PgDict(value, _parent=obj, _path=path)
 				elif isinstance(value, list) and not isinstance(value, PgList):
 					value = PgList(value, _parent=obj, _path=path)
 				object.__setattr__(obj, name, value)
+			else:
+				if(attr.type in (list, dict)):
+					object.__setattr__(obj, name, attr.type())
 
-		for name in cls._attrs_:
+		for name, attr in cls._attrs_.items():
 			val = getattr(obj, name, None)
 			if isinstance(val, (PgDict, PgList)):
 				val._is_local = False
@@ -525,7 +565,7 @@ class Model:
 		pk_values = [getattr(self, pk) for pk in pk_attrs]
 
 		sql = (
-			f"INSERT INTO {cls._collection_name_} "
+			f"INSERT INTO {cls._table_name_} "
 			f"({pk_cols}, _, __) "
 			f"VALUES ({pk_placeholders}, %s, %s::jsonb)"
 		)
@@ -584,7 +624,7 @@ class Model:
 
 		# Return __ too when $inc is used so we can refresh local state
 		returning = "RETURNING __, _" if has_inc else "RETURNING _"
-		sql = f"UPDATE {cls._collection_name_} SET __ = {expr}, _ = %s WHERE {where} {returning}"
+		sql = f"UPDATE {cls._table_name_} SET __ = {expr}, _ = %s WHERE {where} {returning}"
 		all_params = update_params + [new_ts] + pk_values + [original_ts] + extra_params
 
 		with cls._db_node_.use_conn() as conn:
@@ -593,7 +633,7 @@ class Model:
 				result = cur.fetchone()
 			if result is None:
 				raise OptimisticLockError(
-					f"{cls._collection_name_}: update conflict or record not found "
+					f"{cls._table_name_}: update conflict or record not found "
 					f"(pk={self._pk_values()}, _={original_ts})"
 				)
 			conn.commit()
@@ -618,19 +658,24 @@ class Model:
 		cls = self.__class__
 		pk_conditions = cls._pk_conditions()
 		pk_values = self._pk_values()
-		sql = f"DELETE FROM {cls._collection_name_} WHERE {pk_conditions}"
+		sql = f"DELETE FROM {cls._table_name_} WHERE {pk_conditions}"
 		with cls._db_node_.use_conn() as conn:
 			with conn.cursor() as cur:
 				cur.execute(sql, pk_values)
 			conn.commit()
 
 	@classmethod
-	def get(cls: Type[T], **pk_kwargs) -> Optional[T]:
-		"""Fetch a single record by primary key fields."""
+	def get(cls: Type[T], _replica: bool = False, **pk_kwargs) -> Optional[T]:
+		"""
+		Fetch a single record by primary key fields.
+
+		_replica=True routes the read to the replica node (if configured on _db_node_).
+		"""
+		node = cls._db_node_._get_replica() if _replica else cls._db_node_
 		pk_values = [pk_kwargs[pk] for pk in cls._pk_attrs_]
 		pk_conditions = cls._pk_conditions()
-		sql = f"SELECT _, __ FROM {cls._collection_name_} WHERE {pk_conditions} LIMIT 1"
-		with cls._db_node_.use_conn() as conn:
+		sql = f"SELECT _, __ FROM {cls._table_name_} WHERE {pk_conditions} LIMIT 1"
+		with node.use_conn() as conn:
 			with conn.cursor() as cur:
 				cur.execute(sql, pk_values)
 				row = cur.fetchone()
@@ -645,6 +690,7 @@ class Model:
 		sort=None,
 		limit: int = None,
 		offset: int = None,
+		_replica: bool = False,
 	) -> Iterator[T]:
 		"""
 		Query records with MongoDB-style filter syntax.
@@ -652,9 +698,12 @@ class Model:
 		Supported operators: $gt, $lt, $gte, $lte, $ne, $in
 		PK fields are compared against real columns; all others via JSONB.
 
+		_replica=True routes the read to the replica node (if configured on _db_node_).
+
 		Example:
-		    User.query({'age': {'$gte': 18}, 'active': True}, sort=[('name', 1)], limit=10)
+		    User.query({'age': {'$gte': 18}}, sort=[('name', 1)], limit=10, _replica=True)
 		"""
+		node = cls._db_node_._get_replica() if _replica else cls._db_node_
 		conditions, params = cls._build_conditions_sql(_query)
 		where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
@@ -671,9 +720,9 @@ class Model:
 		limit_clause = f"LIMIT {int(limit)}" if limit is not None else ""
 		offset_clause = f"OFFSET {int(offset)}" if offset is not None else ""
 
-		sql = f"SELECT _, __ FROM {cls._collection_name_} {where} {order} {limit_clause} {offset_clause}".strip()
+		sql = f"SELECT _, __ FROM {cls._table_name_} {where} {order} {limit_clause} {offset_clause}".strip()
 
-		with cls._db_node_.use_conn() as conn:
+		with node.use_conn() as conn:
 			with conn.cursor() as cur:
 				cur.execute(sql, params)
 				rows = cur.fetchall()
@@ -682,11 +731,8 @@ class Model:
 			yield cls._from_doc(row['__'], row['_'])
 
 	@classmethod
-	def create_table(cls):
-		"""
-		Create the table if it doesn't exist.
-		initialize_model() must be called first so _pk_attrs_ is populated.
-		"""
+	def _build_create_table_sql(cls):
+		"""Return the CREATE TABLE SQL string (does not execute it)."""
 		pk_attrs = cls._pk_attrs_
 		col_defs = []
 		for pk in pk_attrs:
@@ -696,17 +742,22 @@ class Model:
 		col_defs.append("    _ BIGINT NOT NULL DEFAULT 0")
 		col_defs.append("    __ JSONB NOT NULL DEFAULT '{}'")
 		col_defs.append(f"    PRIMARY KEY ({', '.join(pk_attrs)})")
-
-		table_sql = (
-			f"CREATE TABLE IF NOT EXISTS {cls._collection_name_} (\n"
+		return (
+			f"CREATE TABLE IF NOT EXISTS {cls._table_name_} (\n"
 			+ ",\n".join(col_defs)
 			+ "\n)"
 		)
 
+	@classmethod
+	def create_table(cls):
+		"""
+		Create the table and all declared indexes if they don't already exist.
+		initialize_model() must be called first so _pk_attrs_ is populated.
+		"""
+		table_sql = cls._build_create_table_sql()
 		with cls._db_node_.use_conn() as conn:
 			with conn.cursor() as cur:
 				cur.execute(table_sql)
-				# Create all declared indexes
 				for index_spec in cls._indexes_:
 					cur.execute(index_spec['sql'])
 			conn.commit()
@@ -717,6 +768,10 @@ class Model:
 # ──────────────────────────────────────────────────────────────────────────────
 
 class OptimisticLockError(Exception):
+	pass
+
+
+class MissingTableError(Exception):
 	pass
 
 
@@ -766,6 +821,20 @@ def _parse_index_declaration(raw_index, attrs_to_name):
 	return fields, props
 
 
+def _table_exists(db_node, table_name):
+	"""Return True/False if the table exists, or None if the DB is unreachable."""
+	try:
+		with db_node.use_conn() as conn:
+			with conn.cursor() as cur:
+				cur.execute(
+					"SELECT 1 FROM pg_class WHERE relname = %s AND relkind = 'r'",
+					[table_name],
+				)
+				return cur.fetchone() is not None
+	except Exception:
+		return None
+
+
 def _fetch_existing_indexes(db_node, table_name):
 	"""
 	Return a dict {indexname: is_unique} for all non-primary indexes on the table.
@@ -800,7 +869,7 @@ def initialize_model(model_cls):
 
 	Example:
 	    class User(Model):
-	        _collection_name_ = "users"
+	        _table_name_ = "users"
 	        _db_node_ = my_db_node
 
 	        id         = Attribute(str)
@@ -814,6 +883,19 @@ def initialize_model(model_cls):
 
 	    initialize_model(User)
 	"""
+	# ── 0. Resolve _db_node_ (string name lookup + default fallback) ─────────
+	db_node = model_cls._db_node_
+	if isinstance(db_node, str):
+		db_node = _DB_NODES_.get(db_node)
+		if db_node is None:
+			raise KeyError(
+				f"initialize_model: _db_node_ '{model_cls._db_node_}' not found in registry. "
+				f"Available: {list(_DB_NODES_.keys())}"
+			)
+		model_cls._db_node_ = db_node
+	elif db_node is None and _default_db_node_ is not None:
+		model_cls._db_node_ = _default_db_node_
+
 	# ── 1. Collect Attribute definitions ────────────────────────────────────
 	attrs = {}
 	for klass in reversed(model_cls.__mro__):
@@ -826,8 +908,8 @@ def initialize_model(model_cls):
 	attrs_to_name = {id(attr): name for name, attr in attrs.items()}
 
 	# ── 2. Parse declared indexes ────────────────────────────────────────────
-	raw_indexes = IndexesToCreate.get(model_cls._collection_name_, [])
-	table = model_cls._collection_name_
+	raw_indexes = IndexesToCreate.get(model_cls._table_name_, [])
+	table = model_cls._table_name_
 
 	parsed_indexes = []   # list of {'fields', 'unique', 'name', 'sql'}
 	pk_attrs = None
@@ -900,13 +982,28 @@ def initialize_model(model_cls):
 
 	model_cls._indexes_ = indexes
 
-	# ── 5. Compare against existing DB indexes ───────────────────────────────
+	# ── 5. Ensure table exists; compare indexes ──────────────────────────────
 	if not model_cls._db_node_:
 		return
 
+	exists = _table_exists(model_cls._db_node_, table)
+	if exists is None:
+		return  # DB unreachable — skip checks silently
+
+	if not exists:
+		if IS_TEST:
+			model_cls.create_table()
+		else:
+			create_sql = model_cls._build_create_table_sql()
+			index_sqls = "\n".join(spec['sql'] + ";" for spec in indexes)
+			raise MissingTableError(
+				f"Table '{table}' does not exist. Create it with:\n\n"
+				f"{create_sql};\n\n{index_sqls}"
+			)
+		return  # indexes were just created; nothing left to compare
+
 	existing = _fetch_existing_indexes(model_cls._db_node_, table)
 	if existing is None:
-		# Table doesn't exist yet — nothing to compare
 		return
 
 	declared_names = {spec['name'] for spec in indexes}
