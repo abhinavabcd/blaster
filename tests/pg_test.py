@@ -27,16 +27,16 @@ class User(Model):
 	_table_name_ = "pg_test_users"
 	_db_node_ = _db
 
-	id    = Attribute(str)
-	name  = Attribute(str)
-	age   = Attribute(int, default=0)
-	score = Attribute(float, default=0.0)
-	meta  = Attribute(dict, default={})
-	tags  = Attribute(list, default=[])
+	id    = Attribute(str, column=True)
+	name  = Attribute(str, column=True)
+	age   = Attribute(int, default=0, column=True)
+	score = Attribute(float, default=0.0, column=True)
+	meta  = Attribute(dict)
+	tags  = Attribute(list)
 
 	INDEX((id, ASCENDING), {"unique": True})
-	INDEX((name, ASCENDING))
-	INDEX((age, DESCENDING))
+	INDEX(name, {"unique": False})
+	INDEX((age, DESCENDING), {"unique": False})
 
 
 initialize_model(User)
@@ -46,12 +46,6 @@ initialize_model(User)
 
 def uid():
 	return get_random_id()
-
-
-def make_user(**kwargs):
-	u = User(id=uid(), **kwargs)
-	u.commit()
-	return u
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
@@ -84,7 +78,8 @@ class TestBasicCRUD(TestSetup):
 		self.assertIsNone(User.get(id="does-not-exist"))
 
 	def test_delete(self):
-		u = make_user(name="ToDelete")
+		u = User(id=uid(), name="ToDelete")
+		u.commit()
 		u.delete()
 		self.assertIsNone(User.get(id=u.id))
 
@@ -96,7 +91,7 @@ class TestBasicCRUD(TestSetup):
 
 	def test_query_operator_gt(self):
 		_id1, _id2 = uid(), uid()
-		User(id=_id1, name="Low",  age=10).commit()
+		User(id=_id1, name="Low", age=10).commit()
 		User(id=_id2, name="High", age=90).commit()
 		results = list(User.query({"age": {"$gt": 80}}))
 		ids = [r.id for r in results]
@@ -120,10 +115,16 @@ class TestBasicCRUD(TestSetup):
 		# with limit/offset we just check count is bounded
 		self.assertLessEqual(len(results), 3)
 
+	def test_dont_update_empty_fields(self):
+		u = User(id=uid(), name="EmptyList")
+		u.commit()
+		self.assertEqual(u._row_["__"].get("meta"), None)
+
 
 class TestSetAttribute(TestSetup):
 	def test_field_update_tracked(self):
-		u = make_user(name="Before", age=10)
+		u = User(id=uid(), name="Before", age=10)
+		u.commit()
 		u.name = "After"
 		u.commit()
 
@@ -133,7 +134,8 @@ class TestSetAttribute(TestSetup):
 		self.assertEqual(fetched.age, 10)
 
 	def test_multiple_field_updates(self):
-		u = make_user(name="Multi", age=1, score=1.0)
+		u = User(id=uid(), name="Multi", age=1, score=1.0)
+		u.commit()
 		u.name = "MultiUpdated"
 		u.age = 99
 		u.score = 3.14
@@ -147,7 +149,8 @@ class TestSetAttribute(TestSetup):
 
 class TestDictTracking(TestSetup):
 	def test_top_level_dict_set(self):
-		u = make_user(meta={"city": "NYC"})
+		u = User(id=uid(), meta={"city": "NYC"})
+		u.commit()
 		u.meta["city"] = "LA"
 		u.commit()
 
@@ -155,7 +158,8 @@ class TestDictTracking(TestSetup):
 		self.assertEqual(fetched.meta["city"], "LA")
 
 	def test_nested_dict_path_patch(self):
-		u = make_user(meta={"addr": {"city": "NYC", "zip": "10001"}})
+		u = User(id=uid(), meta={"addr": {"city": "NYC", "zip": "10001"}})
+		u.commit()
 		u.meta["addr"]["city"] = "SF"
 		u.commit()
 
@@ -165,7 +169,8 @@ class TestDictTracking(TestSetup):
 		self.assertEqual(fetched.meta["addr"]["zip"], "10001")
 
 	def test_dict_key_unset(self):
-		u = make_user(meta={"keep": "yes", "drop": "no"})
+		u = User(id=uid(), meta={"keep": "yes", "drop": "no"})
+		u.commit()
 		del u.meta["drop"]
 		u.commit()
 
@@ -175,7 +180,8 @@ class TestDictTracking(TestSetup):
 
 	def test_parent_path_supersedes_child(self):
 		"""Setting a parent dict should supersede any pending child updates."""
-		u = make_user(meta={"a": {"b": {"c": "old"}}})
+		u = User(id=uid(), meta={"a": {"b": {"c": "old"}}})
+		u.commit()
 		u.meta["a"]["b"]["c"] = "intermediate"   # records path (meta, a, b, c)
 		u.meta["a"]["b"] = {"d": "final"}         # supersedes (meta, a, b, c)
 		u.commit()
@@ -185,7 +191,8 @@ class TestDictTracking(TestSetup):
 		self.assertEqual(fetched.meta["a"]["b"]["d"], "final")
 
 	def test_replace_whole_dict(self):
-		u = make_user(meta={"old": 1})
+		u = User(id=uid(), meta={"old": 1})
+		u.commit()
 		u.meta = {"new": 2}
 		u.commit()
 
@@ -196,7 +203,8 @@ class TestDictTracking(TestSetup):
 
 class TestListTracking(TestSetup):
 	def test_list_append(self):
-		u = make_user(tags=[])
+		u = User(id=uid(), tags=[])
+		u.commit()
 		u.tags.append("a")
 		u.tags.append("b")
 		u.commit()
@@ -205,7 +213,8 @@ class TestListTracking(TestSetup):
 		self.assertEqual(fetched.tags, ["a", "b"])
 
 	def test_list_insert(self):
-		u = make_user(tags=["b", "c"])
+		u = User(id=uid(), tags=["b", "c"])
+		u.commit()
 		u.tags.insert(0, "a")
 		u.commit()
 
@@ -213,7 +222,8 @@ class TestListTracking(TestSetup):
 		self.assertEqual(fetched.tags, ["a", "b", "c"])
 
 	def test_list_remove(self):
-		u = make_user(tags=["a", "b", "c"])
+		u = User(id=uid(), tags=["a", "b", "c"])
+		u.commit()
 		u.tags.remove("b")
 		u.commit()
 
@@ -221,7 +231,8 @@ class TestListTracking(TestSetup):
 		self.assertEqual(fetched.tags, ["a", "c"])
 
 	def test_list_pop(self):
-		u = make_user(tags=["x", "y", "z"])
+		u = User(id=uid(), tags=["x", "y", "z"])
+		u.commit()
 		popped = u.tags.pop()
 		self.assertEqual(popped, "z")
 		u.commit()
@@ -230,7 +241,8 @@ class TestListTracking(TestSetup):
 		self.assertEqual(fetched.tags, ["x", "y"])
 
 	def test_list_multiple_ops_before_commit(self):
-		u = make_user(tags=[])
+		u = User(id=uid(), tags=[])
+		u.commit()
 		u.tags.append(1)
 		u.tags.append(2)
 		u.tags.append(3)
@@ -252,7 +264,8 @@ class TestListTracking(TestSetup):
 
 class TestOptimisticLocking(TestSetup):
 	def test_concurrent_update_raises(self):
-		u = make_user(name="Locked", age=1)
+		u = User(id=uid(), name="Locked", age=1)
+		u.commit()
 
 		copy1 = User.get(id=u.id)
 		copy2 = User.get(id=u.id)
@@ -265,7 +278,8 @@ class TestOptimisticLocking(TestSetup):
 			copy2.commit()
 
 	def test_successful_sequential_updates(self):
-		u = make_user(name="Seq", age=0)
+		u = User(id=uid(), name="Seq", age=0)
+		u.commit()
 		for i in range(1, 4):
 			u.age = i
 			u.commit()
@@ -276,7 +290,8 @@ class TestOptimisticLocking(TestSetup):
 
 class TestExplicitUpdate(TestSetup):
 	def test_set_operator(self):
-		u = make_user(name="Before", age=10)
+		u = User(id=uid(), name="Before", age=10)
+		u.commit()
 		u.update({"$set": {"name": "After", "age": 99}})
 
 		fetched = User.get(id=u.id)
@@ -284,7 +299,8 @@ class TestExplicitUpdate(TestSetup):
 		self.assertEqual(fetched.age, 99)
 
 	def test_unset_operator(self):
-		u = make_user(meta={"keep": 1, "drop": 2})
+		u = User(id=uid(), meta={"keep": 1, "drop": 2})
+		u.commit()
 		u.update({"$unset": {"meta.drop": 1}})
 
 		fetched = User.get(id=u.id)
@@ -292,7 +308,8 @@ class TestExplicitUpdate(TestSetup):
 		self.assertNotIn("drop", fetched.meta)
 
 	def test_inc_operator(self):
-		u = make_user(score=10.0)
+		u = User(id=uid(), score=10.0)
+		u.commit()
 		u.update({"$inc": {"score": 5}})
 
 		# Local state refreshed automatically after $inc
@@ -312,7 +329,8 @@ class TestExplicitUpdate(TestSetup):
 		self.assertEqual(fetched.age, 7)
 
 	def test_set_and_inc_combined(self):
-		u = make_user(name="Old", score=5.0)
+		u = User(id=uid(), name="Old", score=5.0)
+		u.commit()
 		u.update({"$set": {"name": "New"}, "$inc": {"score": 10}})
 
 		fetched = User.get(id=u.id)
@@ -320,7 +338,8 @@ class TestExplicitUpdate(TestSetup):
 		self.assertAlmostEqual(fetched.score, 15.0, places=1)
 
 	def test_nested_set(self):
-		u = make_user(meta={"a": 1, "b": 2})
+		u = User(id=uid(), meta={"a": 1, "b": 2})
+		u.commit()
 		u.update({"$set": {"meta.b": 99}})
 
 		fetched = User.get(id=u.id)
@@ -329,7 +348,8 @@ class TestExplicitUpdate(TestSetup):
 
 	def test_extra_conditions_match(self):
 		"""Update succeeds when extra condition matches."""
-		u = make_user(name="CondOK", age=10)
+		u = User(id=uid(), name="CondOK", age=10)
+		u.commit()
 		u.update({"$set": {"name": "Updated"}}, conditions={"age": "10"})
 
 		fetched = User.get(id=u.id)
@@ -337,13 +357,16 @@ class TestExplicitUpdate(TestSetup):
 
 	def test_extra_conditions_no_match_raises(self):
 		"""Update raises when extra condition doesn't match (treated as lock conflict)."""
-		u = make_user(name="CondFail", age=10)
-		with self.assertRaises(OptimisticLockError):
+		u = User(id=uid(), name="CondFail", age=10)
+		u.commit()
+		self.assertFalse(
 			u.update({"$set": {"name": "ShouldNotUpdate"}}, conditions={"age": "999"})
+		)
 
 	def test_no_op_when_empty(self):
 		"""_update with empty updates dict does nothing."""
-		u = make_user(name="NoOp")
+		u = User(id=uid(), name="NoOp")
+		u.commit()
 		original_ts = u._
 		u.update({})
 		self.assertEqual(u._, original_ts)

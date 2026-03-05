@@ -90,42 +90,59 @@ def _json_default(obj):
 # ──────────────────────────────────────────────────────────────────────────────
 
 class PgDict(dict):
-	"""A dict that tracks mutations for diff-patching the __ JSONB column."""
+	"""
+	A dict that tracks mutations for diff-patching the __ JSONB column.
 
-	def __init__(self, data=None, *, _parent=None, _path=None):
+	_is_local = True  → new object: mutations are NOT sent to DB (whole doc sent on INSERT)
+	_is_local = False → loaded object: each mutation notifies the parent model
+	Mirrors MongoDict's _is_local / _model_obj / path pattern.
+	"""
+	_is_local = True
+
+	def __init__(self, _parent, _path, initial_value=None):
 		super().__init__()
 		self._parent = _parent
-		self._path = _path or []
-		self._is_local = True
-		if data:
-			for key, value in (data.items() if isinstance(data, dict) else data):
-				super().__setitem__(key, self._wrap(key, value))
+		self._path = _path  # list of strings from root, e.g. ["meta", "addr"]
+		self._is_local = True  # suppress notifications while processing initial_value
+		if initial_value:
+			for key, value in (initial_value.items() if isinstance(initial_value, dict) else initial_value):
+				dict.__setitem__(self, key, self._wrap(key, value))
+		# Mirror the model's create/load state:
+		# new objects stay local (whole doc sent on insert); loaded objects are not local
+		self._is_local = getattr(_parent, '_is_create_new_', True)
 
 	def _wrap(self, key, value):
-		path = self._path + [str(key)]
+		"""Wrap nested dicts/lists so sub-mutations at any depth are tracked."""
+		child_path = self._path + [str(key)]
 		if isinstance(value, dict) and not isinstance(value, PgDict):
-			return PgDict(value, _parent=self._parent, _path=path)
+			return PgDict(self._parent, child_path, value)
 		if isinstance(value, list) and not isinstance(value, PgList):
-			return PgList(value, _parent=self._parent, _path=path)
+			return PgList(self._parent, child_path, value)
 		return value
 
-	def _notify_set(self, key):
-		parent = self._parent
-		if parent is not None and not getattr(parent, '_initializing_', True):
-			parent._add_set_update(self._path + [str(key)], self[key])
-
-	def _notify_del(self, key):
-		parent = self._parent
-		if parent is not None and not getattr(parent, '_initializing_', True):
-			parent._add_unset_update(self._path + [str(key)])
-
 	def __setitem__(self, key, value):
-		super().__setitem__(key, self._wrap(key, value))
-		self._notify_set(key)
+		value = self._wrap(key, value)
+		dict.__setitem__(self, key, value)
+		if not self._is_local:
+			self._parent._add_set_update(self._path + [str(key)], value)
 
 	def __delitem__(self, key):
-		super().__delitem__(key)
-		self._notify_del(key)
+		self.pop(key)
+
+	def pop(self, key, *args):
+		popped = dict.pop(self, key, _NOT_SET)
+		if popped is _NOT_SET:
+			if args:
+				return args[0]
+			raise KeyError(key)
+		if not self._is_local:
+			self._parent._add_unset_update(self._path + [str(key)])
+		# Return plain copies so callers get plain Python objects
+		if isinstance(popped, PgDict):
+			return dict(popped)
+		if isinstance(popped, PgList):
+			return list(popped)
+		return popped
 
 	def update(self, other=(), **kwargs):
 		for key, value in (other.items() if isinstance(other, dict) else other):
@@ -133,17 +150,22 @@ class PgDict(dict):
 		for key, value in kwargs.items():
 			self[key] = value
 
-	def pop(self, key, *args):
-		existed = key in self
-		result = super().pop(key, *args)
-		if existed:
-			self._notify_del(key)
-		return result
-
 	def setdefault(self, key, default=None):
 		if key not in self:
 			self[key] = default
 		return self[key]
+
+	def clear(self):
+		dict.clear(self)
+		if not self._is_local:
+			self._parent._add_set_update(self._path, {})
+		self._is_local = True  # treat as local after clear (like Mongo)
+
+	def copy(self):
+		return json.loads(json.dumps(dict(self), default=_json_default))
+
+	def __reduce__(self):
+		return (dict, (self.copy(),))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -151,18 +173,24 @@ class PgDict(dict):
 # ──────────────────────────────────────────────────────────────────────────────
 
 class PgList(list):
-	"""A list that tracks any mutation by replacing the whole value at its path."""
+	"""
+	A list that tracks any mutation by replacing the whole value at its path.
 
-	def __init__(self, data=None, *, _parent=None, _path=None):
-		super().__init__(data or [])
+	_is_local = True  → new object: mutations are NOT sent to DB
+	_is_local = False → loaded object: any mutation notifies parent via _add_set_update
+	Mirrors MongoList's _is_local / _model_obj / path pattern.
+	"""
+	_is_local = True
+
+	def __init__(self, _parent, _path, initial_value=None):
+		super().__init__(initial_value or [])
 		self._parent = _parent
-		self._path = _path or []
-		self._is_local = True
+		self._path = _path  # list of strings from root, e.g. ["tags"]
+		self._is_local = getattr(_parent, '_is_create_new_', True)
 
 	def _notify(self):
-		parent = self._parent
-		if parent is not None and not getattr(parent, '_initializing_', True):
-			parent._add_set_update(self._path, list(self))
+		if not self._is_local:
+			self._parent._add_set_update(self._path, list(self))
 
 	def append(self, value):
 		super().append(value)
@@ -205,6 +233,12 @@ class PgList(list):
 		super().reverse()
 		self._notify()
 
+	def copy(self):
+		return json.loads(json.dumps(list(self), default=_json_default))
+
+	def __reduce__(self):
+		return (list, (self.copy(),))
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Attribute
@@ -218,9 +252,10 @@ class Attribute:
 	from the first unique INDEX() declaration on the model.
 	"""
 
-	def __init__(self, _type, default=_NOT_SET, **kwargs):
+	def __init__(self, _type, default=_NOT_SET, column=False, **kwargs):
 		self.type = _type
 		self.default = default
+		self.column = column  # True → stored as a real DB column instead of inside __
 		self.kwargs = kwargs
 		# Set by __set_name__ when assigned inside a class body
 		self.attr_name = None
@@ -328,54 +363,40 @@ class Model:
 	_db_node_: DatabaseNode = None
 	_attrs_: dict = {}
 	_pk_attrs_: list = []   # set by initialize_model from first unique INDEX
+	_col_attrs_: dict = {}  # {name: Attribute} for column=True non-pk fields
 	_indexes_: list = []    # parsed index specs, set by initialize_model
 
 	def __init__(self, _is_create_new_=True, **kwargs):
-		object.__setattr__(self, '_initializing_', True)
 		object.__setattr__(self, '_is_create_new_', _is_create_new_)
+		object.__setattr__(self, '_initializing_', True)  # not initializing from db
 		object.__setattr__(self, '_', 0)
 		object.__setattr__(self, '_original_', 0)
 		object.__setattr__(self, '_set_updates', {})
 		object.__setattr__(self, '_unset_updates', set())
 
 		for name, attr in self.__class__._attrs_.items():
-			default = attr.get_default()
-			if default is not None:
-				self._init_attr(name, default)
+			if(name in kwargs):
+				val = kwargs[name]
+			else:
+				val = attr.get_default()
+			setattr(self, name, val)
 
-		for name, value in kwargs.items():
-			if name in self.__class__._attrs_:
-				self._init_attr(name, value)
-
-		object.__setattr__(self, '_initializing_', False)
-
-	def _init_attr(self, name, value):
-		attr = self.__class__._attrs_.get(name)
-		if attr is not None:
-			value = attr.coerce(value)
-		value = self._wrap_value(name, value)
-		object.__setattr__(self, name, value)
-
-	def _wrap_value(self, name, value):
-		path = [name]
-		if isinstance(value, dict) and not isinstance(value, PgDict):
-			return PgDict(value, _parent=self, _path=path)
-		if isinstance(value, list) and not isinstance(value, PgList):
-			return PgList(value, _parent=self, _path=path)
-		return value
+		object.__setattr__(self, '_initializing_', False)  # not initializing from db
 
 	def __setattr__(self, name, value):
-		if name.startswith('_') or name not in self.__class__._attrs_:
-			object.__setattr__(self, name, value)
-			return
-
-		attr = self.__class__._attrs_[name]
-		value = attr.coerce(value)
-		value = self._wrap_value(name, value)
-		object.__setattr__(self, name, value)
-
-		if not self._initializing_:
-			self._add_set_update([name], value)
+		_attr_obj = self.__class__._attrs_.get(name)
+		if _attr_obj:
+			_attr_obj_type = _attr_obj.type
+			# Always wrap dict/list so sub-mutations at any depth are tracked.
+			# _is_local on the wrapper mirrors _is_create_new_, so new-object
+			# mutations are suppressed while loaded-object mutations notify.
+			if _attr_obj_type is dict and not isinstance(value, PgDict):
+				value = PgDict(self, [name], value or {})
+			elif _attr_obj_type is list and not isinstance(value, PgList):
+				value = PgList(self, [name], value or [])
+			if object.__getattribute__(self, '_initializing_') is False:
+				self._add_set_update([name], value)
+		self.__dict__[name] = value
 
 	# ── Change tracking ──────────────────────────────────────────────────────
 
@@ -404,15 +425,23 @@ class Model:
 	def _to_doc(self):
 		doc = {}
 		inst = vars(self)  # instance __dict__ only; avoids picking up class-level Attribute objects
+		col_attrs = self.__class__._col_attrs_
 		for name in self.__class__._attrs_:
+			if name in col_attrs:
+				continue  # stored as a real column, not in __
 			value = inst.get(name)
-			if value is not None:
-				doc[name] = json.loads(json.dumps(value, default=_json_default))
+			if value is None:
+				continue
+			if isinstance(value, (dict, list)) and not value:
+				continue  # skip empty containers (default {} / [])
+			doc[name] = json.loads(json.dumps(value, default=_json_default))
 		return doc
 
-	@classmethod
-	def _from_doc(cls: Type[T], doc: dict, _val: int) -> T:
-		obj = cls.__new__(cls)
+	def _from_doc(obj, row, partial=False) -> T:
+		# LOADING FROM DB
+		cls = obj.__class__
+		_val = row["_"]
+		object.__setattr__(obj, '_row_', row)
 		object.__setattr__(obj, '_initializing_', True)
 		object.__setattr__(obj, '_is_create_new_', False)
 		object.__setattr__(obj, '_', _val)
@@ -420,28 +449,29 @@ class Model:
 		object.__setattr__(obj, '_set_updates', {})
 		object.__setattr__(obj, '_unset_updates', set())
 
+		col_attrs = cls._col_attrs_
 		for name, attr in cls._attrs_.items():
-			value = doc.get(name, _NOT_SET)
-			if value is not _NOT_SET:
+			# column=True fields are read directly from the row, not from __
+			if(partial and name not in row): continue
+			source = row if name in col_attrs else row["__"]
+			value = source.get(name, _NOT_SET)
+			if value is not _NOT_SET:  # exists
 				value = attr.coerce(value)
-			elif attr.default is not _NOT_SET:
+			elif attr.default is not _NOT_SET:  # has default
 				value = attr.get_default()
 
-			if value is not _NOT_SET:
+			if value is not _NOT_SET:  # exists
 				path = [name]
 				if isinstance(value, dict) and not isinstance(value, PgDict):
-					value = PgDict(value, _parent=obj, _path=path)
+					value = PgDict(obj, path, value)
 				elif isinstance(value, list) and not isinstance(value, PgList):
-					value = PgList(value, _parent=obj, _path=path)
+					value = PgList(obj, path, value)
 				object.__setattr__(obj, name, value)
-			else:
-				if(attr.type in (list, dict)):
-					object.__setattr__(obj, name, attr.type())
-
-		for name, attr in cls._attrs_.items():
-			val = getattr(obj, name, None)
-			if isinstance(val, (PgDict, PgList)):
-				val._is_local = False
+			else:  # does not exist in DB
+				if attr.type is dict:
+					object.__setattr__(obj, name, PgDict(obj, [name]))
+				elif attr.type is list:
+					object.__setattr__(obj, name, PgList(obj, [name]))
 
 		object.__setattr__(obj, '_initializing_', False)
 		return obj
@@ -470,8 +500,8 @@ class Model:
 			return conditions, params
 
 		for field, value in _query.items():
-			is_pk = field in cls._pk_attrs_
-			col_expr = field if is_pk else f"(__->>'{field}')"
+			is_real_col = field in cls._pk_attrs_ or field in cls._col_attrs_
+			col_expr = field if is_real_col else f"(__->>'{field}')"
 			attr = cls._attrs_.get(field)
 			pg_type = _PY_TO_PG_TYPE.get(attr.type, "TEXT") if attr else "TEXT"
 
@@ -480,13 +510,13 @@ class Model:
 					if op == "$in":
 						placeholders = ", ".join(["%s"] * len(op_val))
 						conditions.append(f"{col_expr} IN ({placeholders})")
-						if is_pk:
+						if is_real_col:
 							params.extend(op_val)
 						else:
 							params.extend(str(v) for v in op_val)
 					elif op in _MONGO_TO_PG_OP:
 						pg_op = _MONGO_TO_PG_OP[op]
-						if is_pk:
+						if is_real_col:
 							conditions.append(f"{col_expr} {pg_op} %s")
 							params.append(op_val)
 						else:
@@ -496,7 +526,7 @@ class Model:
 						LOG_WARN("pg_orm_unknown_op", op=op, field=field)
 			else:
 				conditions.append(f"{col_expr} = %s")
-				if is_pk:
+				if is_real_col:
 					params.append(value)
 				else:
 					params.append(str(value) if not isinstance(value, bool) else str(value).lower())
@@ -549,37 +579,88 @@ class Model:
 
 	def commit(self):
 		"""Persist this object: INSERT if new, UPDATE otherwise."""
-		if self._is_create_new_:
-			self.insert()
+		if object.__getattribute__(self, '_is_create_new_'):
+			self._insert()
 		else:
 			self.update()
+		return self
 
-	def insert(self):
+	def _insert(self):
 		doc = self._to_doc()
 		new_ts = cur_ms()
 		cls = self.__class__
 		pk_attrs = cls._pk_attrs_
+		col_attrs = cls._col_attrs_
 
-		pk_cols = ", ".join(pk_attrs)
-		pk_placeholders = ", ".join(["%s"] * len(pk_attrs))
-		pk_values = [getattr(self, pk) for pk in pk_attrs]
+		inst = vars(self)
+		pk_values = [inst.get(pk) for pk in pk_attrs]
+		col_names = list(col_attrs.keys())
+		col_values = [inst.get(n) for n in col_names]
+
+		all_cols = ", ".join(pk_attrs + col_names + ["_", "__"])
+		all_placeholders = ", ".join(["%s"] * (len(pk_attrs) + len(col_names)) + ["%s", "%s::jsonb"])
+		returning = "_, __" + (", " + ", ".join(col_names) if col_names else "")
 
 		sql = (
 			f"INSERT INTO {cls._table_name_} "
-			f"({pk_cols}, _, __) "
-			f"VALUES ({pk_placeholders}, %s, %s::jsonb)"
+			f"({all_cols}) "
+			f"VALUES ({all_placeholders}) "
+			f"RETURNING {returning}"
 		)
 
 		with cls._db_node_.use_conn() as conn:
 			with conn.cursor() as cur:
-				cur.execute(sql, pk_values + [new_ts, json.dumps(doc, default=_json_default)])
+				cur.execute(sql, pk_values + col_values + [new_ts, json.dumps(doc, default=_json_default)])
+				row = cur.fetchone()
 			conn.commit()
 
-		object.__setattr__(self, '_', new_ts)
-		object.__setattr__(self, '_original_', new_ts)
-		object.__setattr__(self, '_is_create_new_', False)
-		object.__setattr__(self, '_set_updates', {})
-		object.__setattr__(self, '_unset_updates', set())
+		self._from_doc(row)  # update local state with any DB defaults, coerced types, etc.
+
+	@classmethod
+	def _split_updates(cls, updates):
+		"""
+		Partition updates into column-level (real DB column) and JSONB-level parts.
+		column=True fields and top-level-only paths route to column-level.
+		"""
+		col_attrs = cls._col_attrs_
+
+		def _top(field):
+			"""Return (top_field_name, is_top_level_only)."""
+			if isinstance(field, tuple):
+				return field[0], len(field) == 1
+			parts = field.split(".")
+			return parts[0], len(parts) == 1
+
+		col_set, col_inc, col_unset = {}, {}, set()
+		json_set, json_inc, json_unset = {}, {}, {}
+
+		for field, value in updates.get("$set", {}).items():
+			top, is_top = _top(field)
+			if top in col_attrs and is_top:
+				col_set[top] = value
+			else:
+				json_set[field] = value
+
+		for field in updates.get("$unset", {}):
+			top, is_top = _top(field)
+			if top in col_attrs and is_top:
+				col_unset.add(top)
+			else:
+				json_unset[field] = 1
+
+		for field, delta in updates.get("$inc", {}).items():
+			top, is_top = _top(field)
+			if top in col_attrs and is_top:
+				col_inc[top] = delta
+			else:
+				json_inc[field] = delta
+
+		json_updates = {}
+		if json_set:   json_updates["$set"]   = json_set
+		if json_unset: json_updates["$unset"] = json_unset
+		if json_inc:   json_updates["$inc"]   = json_inc
+
+		return col_set, col_inc, col_unset, json_updates
 
 	def update(self, updates=None, conditions=None):
 		"""
@@ -594,6 +675,7 @@ class Model:
 		    e.g. {"status": "active", "score": {"$lt": 100}}
 
 		When updates is None, tracked changes from attribute mutations are used.
+		column=True fields are updated via direct SQL columns; others via JSONB.
 		"""
 		# Build updates from tracked changes if not provided explicitly
 		if updates is None:
@@ -610,49 +692,74 @@ class Model:
 		if not any(updates.get(op) for op in ("$set", "$unset", "$inc")):
 			return
 
+		cls = self.__class__
+		col_attrs = cls._col_attrs_
+		col_set, col_inc, col_unset, json_updates = cls._split_updates(updates)
+
 		new_ts = cur_ms()
 		original_ts = self._original_
-		cls = self.__class__
 
-		expr, update_params, has_inc = cls._build_update_expr(updates)
+		set_clauses = []
+		all_params = []
+
+		# JSONB expression (only when there are non-column updates)
+		has_jsonb_inc = bool(json_updates.get("$inc"))
+		if any(json_updates.get(op) for op in ("$set", "$unset", "$inc")):
+			expr, jparams, _ = cls._build_update_expr(json_updates)
+			set_clauses.append(f"__ = {expr}")
+			all_params.extend(jparams)
+
+		# Direct column SET / NULL / INC
+		for field, value in col_set.items():
+			set_clauses.append(f"{field} = %s")
+			all_params.append(col_attrs[field].coerce(value))
+		for field in col_unset:
+			set_clauses.append(f"{field} = NULL")
+		for field, delta in col_inc.items():
+			set_clauses.append(f"{field} = COALESCE({field}, 0) + %s")
+			all_params.append(delta)
+
+		if not set_clauses:
+			return
+
+		set_clauses.append("_ = %s")
+		all_params.append(new_ts)
+
 		pk_conditions = cls._pk_conditions()
 		pk_values = self._pk_values()
-
 		extra_conds, extra_params = cls._build_conditions_sql(conditions or {})
 		where_parts = [pk_conditions, "_ = %s"] + extra_conds
 		where = " AND ".join(where_parts)
 
-		# Return __ too when $inc is used so we can refresh local state
-		returning = "RETURNING __, _" if has_inc else "RETURNING _"
-		sql = f"UPDATE {cls._table_name_} SET __ = {expr}, _ = %s WHERE {where} {returning}"
-		all_params = update_params + [new_ts] + pk_values + [original_ts] + extra_params
+		# Always RETURNING col attrs so local state stays in sync after column INC
+		returning_cols = ["_"]
+		if has_jsonb_inc:
+			returning_cols.append("__")
+		returning_cols.extend(col_attrs.keys())
+		returning = "RETURNING " + ", ".join(returning_cols)
+
+		sql = (
+			f"UPDATE {cls._table_name_} "
+			f"SET {', '.join(set_clauses)} "
+			f"WHERE {where} {returning}"
+		)
+		all_params = all_params + pk_values + [original_ts] + extra_params
 
 		with cls._db_node_.use_conn() as conn:
 			with conn.cursor() as cur:
 				cur.execute(sql, all_params)
 				result = cur.fetchone()
 			if result is None:
-				raise OptimisticLockError(
-					f"{cls._table_name_}: update conflict or record not found "
-					f"(pk={self._pk_values()}, _={original_ts})"
-				)
+				if(not conditions):
+					raise OptimisticLockError(
+						f"{cls._table_name_}: update conflict or record not found "
+						f"(pk={self._pk_values()}, _={original_ts})"
+					)
+				else:
+					return False
 			conn.commit()
-
-		object.__setattr__(self, '_', new_ts)
-		object.__setattr__(self, '_original_', new_ts)
-		object.__setattr__(self, '_set_updates', {})
-		object.__setattr__(self, '_unset_updates', set())
-
-		# Refresh local state for $inc fields from the returned doc
-		if has_inc and result.get('__'):
-			object.__setattr__(self, '_initializing_', True)
-			for name in updates.get("$inc", {}):
-				top_field = name.split(".")[0] if isinstance(name, str) else name[0]
-				if top_field in cls._attrs_:
-					value = result['__'].get(top_field)
-					if value is not None:
-						self._init_attr(top_field, value)
-			object.__setattr__(self, '_initializing_', False)
+			self._from_doc(result, partial=True)  # update local state with new values and timestamp
+		return True
 
 	def delete(self):
 		cls = self.__class__
@@ -674,14 +781,16 @@ class Model:
 		node = cls._db_node_._get_replica() if _replica else cls._db_node_
 		pk_values = [pk_kwargs[pk] for pk in cls._pk_attrs_]
 		pk_conditions = cls._pk_conditions()
-		sql = f"SELECT _, __ FROM {cls._table_name_} WHERE {pk_conditions} LIMIT 1"
+		col_names = list(cls._col_attrs_.keys())
+		select_cols = "_, __" + (", " + ", ".join(col_names) if col_names else "")
+		sql = f"SELECT {select_cols} FROM {cls._table_name_} WHERE {pk_conditions} LIMIT 1"
 		with node.use_conn() as conn:
 			with conn.cursor() as cur:
 				cur.execute(sql, pk_values)
 				row = cur.fetchone()
 		if row is None:
 			return None
-		return cls._from_doc(row['__'], row['_'])
+		return cls.__new__(cls)._from_doc(row)
 
 	@classmethod
 	def query(
@@ -711,7 +820,7 @@ class Model:
 		if sort:
 			for field, direction in sort:
 				dir_str = "ASC" if direction >= 0 else "DESC"
-				if field in cls._pk_attrs_ or field == '_':
+				if field in cls._pk_attrs_ or field in cls._col_attrs_ or field == '_':
 					order_parts.append(f"{field} {dir_str}")
 				else:
 					order_parts.append(f"(__->>'{field}') {dir_str}")
@@ -720,7 +829,9 @@ class Model:
 		limit_clause = f"LIMIT {int(limit)}" if limit is not None else ""
 		offset_clause = f"OFFSET {int(offset)}" if offset is not None else ""
 
-		sql = f"SELECT _, __ FROM {cls._table_name_} {where} {order} {limit_clause} {offset_clause}".strip()
+		col_names = list(cls._col_attrs_.keys())
+		select_cols = "_, __" + (", " + ", ".join(col_names) if col_names else "")
+		sql = f"SELECT {select_cols} FROM {cls._table_name_} {where} {order} {limit_clause} {offset_clause}".strip()
 
 		with node.use_conn() as conn:
 			with conn.cursor() as cur:
@@ -728,7 +839,7 @@ class Model:
 				rows = cur.fetchall()
 
 		for row in rows:
-			yield cls._from_doc(row['__'], row['_'])
+			yield cls.__new__(cls)._from_doc(row)
 
 	@classmethod
 	def _build_create_table_sql(cls):
@@ -739,6 +850,9 @@ class Model:
 			attr = cls._attrs_[pk]
 			pg_type = _PY_TO_PG_TYPE.get(attr.type, "TEXT")
 			col_defs.append(f"    {pk} {pg_type}")
+		for name, attr in cls._col_attrs_.items():
+			pg_type = _PY_TO_PG_TYPE.get(attr.type, "TEXT")
+			col_defs.append(f"    {name} {pg_type}")
 		col_defs.append("    _ BIGINT NOT NULL DEFAULT 0")
 		col_defs.append("    __ JSONB NOT NULL DEFAULT '{}'")
 		col_defs.append(f"    PRIMARY KEY ({', '.join(pk_attrs)})")
@@ -780,9 +894,11 @@ class MissingTableError(Exception):
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _make_index_name(table, fields, unique):
-	"""Deterministic index name: {table}_{f1}_{f2}[_uniq]."""
-	suffix = "_uniq" if unique else ""
+def _make_index_name(table, fields, explicit_unique):
+	"""Deterministic index name: {table}_{f1}_{f2}[_uniq].
+	_uniq suffix is only added when unique=True is explicitly declared in props.
+	"""
+	suffix = "_uniq" if explicit_unique else ""
 	return table + "_" + "_".join(f for f, _ in fields) + suffix
 
 
@@ -883,6 +999,8 @@ def initialize_model(model_cls):
 
 	    initialize_model(User)
 	"""
+	errors = []
+
 	# ── 0. Resolve _db_node_ (string name lookup + default fallback) ─────────
 	db_node = model_cls._db_node_
 	if isinstance(db_node, str):
@@ -907,6 +1025,9 @@ def initialize_model(model_cls):
 	# Build a lookup from Attribute object id → field name (for INDEX resolution)
 	attrs_to_name = {id(attr): name for name, attr in attrs.items()}
 
+	# _col_attrs_ is populated after pk_attrs is known (step 3); placeholder here
+	model_cls._col_attrs_ = {}
+
 	# ── 2. Parse declared indexes ────────────────────────────────────────────
 	raw_indexes = IndexesToCreate.get(model_cls._table_name_, [])
 	table = model_cls._table_name_
@@ -919,8 +1040,12 @@ def initialize_model(model_cls):
 		if not fields:
 			continue
 
-		is_unique = props.get('unique', False)
-		index_name = _make_index_name(table, fields, is_unique)
+		# Unique by default; only non-unique when explicitly {"unique": False}
+		is_unique = props.get('unique', True)
+		# _uniq suffix only when unique=True is explicitly declared
+		explicit_unique = props.get('unique') is True
+		condition = props.get('condition')  # optional WHERE clause for partial index
+		index_name = _make_index_name(table, fields, explicit_unique)
 
 		# Build SQL column expressions
 		# pk_attrs is not resolved yet here; we use a placeholder set and fix after
@@ -931,8 +1056,6 @@ def initialize_model(model_cls):
 			# After pk_attrs is set we regenerate if needed (below).
 			col_exprs.append((field, direction, dir_str))
 
-		unique_clause = "UNIQUE " if is_unique else ""
-
 		# First unique index → pk_attrs
 		if is_unique and pk_attrs is None:
 			pk_attrs = [f for f, _ in fields]
@@ -940,6 +1063,7 @@ def initialize_model(model_cls):
 		parsed_indexes.append({
 			'fields': fields,
 			'unique': is_unique,
+			'condition': condition,
 			'name': index_name,
 			'col_exprs': col_exprs,     # resolved to SQL below
 		})
@@ -958,6 +1082,13 @@ def initialize_model(model_cls):
 
 	model_cls._pk_attrs_ = pk_attrs
 
+	# ── 3b. Collect column=True attrs (non-pk real columns) ──────────────────
+	model_cls._col_attrs_ = {
+		name: attr
+		for name, attr in attrs.items()
+		if attr.column and name not in pk_attrs
+	}
+
 	# ── 4. Build final index SQL now that pk_attrs is known ──────────────────
 	indexes = []
 	for spec in parsed_indexes:
@@ -969,13 +1100,15 @@ def initialize_model(model_cls):
 				col_parts.append(f"(__->>'{field}') {dir_str}")
 
 		unique_clause = "UNIQUE " if spec['unique'] else ""
+		where_clause = f" WHERE {spec['condition']}" if spec.get('condition') else ""
 		index_sql = (
 			f"CREATE {unique_clause}INDEX IF NOT EXISTS {spec['name']} "
-			f"ON {table} ({', '.join(col_parts)})"
+			f"ON {table} ({', '.join(col_parts)}){where_clause}"
 		)
 		indexes.append({
 			'fields': spec['fields'],
 			'unique': spec['unique'],
+			'condition': spec.get('condition'),
 			'name': spec['name'],
 			'sql': index_sql,
 		})
@@ -993,63 +1126,66 @@ def initialize_model(model_cls):
 	if not exists:
 		if IS_TEST:
 			model_cls.create_table()
+			# indexes were just created; nothing left to compare
 		else:
 			create_sql = model_cls._build_create_table_sql()
 			index_sqls = "\n".join(spec['sql'] + ";" for spec in indexes)
-			raise MissingTableError(
+			errors.append(MissingTableError(
 				f"Table '{table}' does not exist. Create it with:\n\n"
 				f"{create_sql};\n\n{index_sqls}"
-			)
-		return  # indexes were just created; nothing left to compare
+			))
+	else:
+		existing = _fetch_existing_indexes(model_cls._db_node_, table)
+		if existing is not None:
+			declared_names = {spec['name'] for spec in indexes}
+			existing_names = set(existing.keys())
 
-	existing = _fetch_existing_indexes(model_cls._db_node_, table)
-	if existing is None:
-		return
-
-	declared_names = {spec['name'] for spec in indexes}
-	existing_names = set(existing.keys())
-
-	# Indexes in DB but not declared → probably stale, warn
-	for name in existing_names - declared_names:
-		LOG_WARN(
-			"pg_orm_extra_index",
-			model=model_cls.__name__,
-			table=table,
-			index=name,
-			desc=(
-				f"Index '{name}' exists in DB but is not declared in the ORM. "
-				f"Drop it? DROP INDEX {name};"
-			)
-		)
-
-	# Declared but not in DB → missing, warn
-	for spec in indexes:
-		if spec['name'] not in existing_names:
-			LOG_WARN(
-				"pg_orm_missing_index",
-				model=model_cls.__name__,
-				table=table,
-				index=spec['name'],
-				desc=(
-					f"Index '{spec['name']}' is declared but missing in DB. "
-					f"Create it? {spec['sql']}"
+			# Indexes in DB but not declared → probably stale, warn
+			for name in existing_names - declared_names:
+				LOG_WARN(
+					"pg_orm_extra_index",
+					model=model_cls.__name__,
+					table=table,
+					index=name,
+					desc=(
+						f"Index '{name}' exists in DB but is not declared in the ORM. "
+						f"Drop it? DROP INDEX {name};"
+					)
 				)
-			)
-			continue
 
-		# Check if unique flag drifted
-		db_is_unique = existing[spec['name']]
-		if bool(db_is_unique) != spec['unique']:
-			LOG_WARN(
-				"pg_orm_index_changed",
-				model=model_cls.__name__,
-				table=table,
-				index=spec['name'],
-				declared_unique=spec['unique'],
-				db_unique=db_is_unique,
-				desc=(
-					f"Index '{spec['name']}' unique flag differs "
-					f"(declared={spec['unique']}, db={db_is_unique}). "
-					f"Recreate: DROP INDEX {spec['name']}; {spec['sql']}"
-				)
-			)
+			# Declared but not in DB → missing, warn
+			for spec in indexes:
+				if spec['name'] not in existing_names:
+					LOG_WARN(
+						"pg_orm_missing_index",
+						model=model_cls.__name__,
+						table=table,
+						index=spec['name'],
+						desc=(
+							f"Index '{spec['name']}' is declared but missing in DB. "
+							f"Create it? {spec['sql']}"
+						)
+					)
+					continue
+
+				# Check if unique flag drifted
+				db_is_unique = existing[spec['name']]
+				if bool(db_is_unique) != spec['unique']:
+					LOG_WARN(
+						"pg_orm_index_changed",
+						model=model_cls.__name__,
+						table=table,
+						index=spec['name'],
+						declared_unique=spec['unique'],
+						db_unique=db_is_unique,
+						desc=(
+							f"Index '{spec['name']}' unique flag differs "
+							f"(declared={spec['unique']}, db={db_is_unique}). "
+							f"Recreate: DROP INDEX {spec['name']}; {spec['sql']}"
+						)
+					)
+
+	if errors:
+		for e in errors:
+			print(str(e))
+		raise errors[0]
