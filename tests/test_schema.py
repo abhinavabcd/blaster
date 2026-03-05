@@ -106,7 +106,7 @@ class TestTools(unittest.TestCase):
 		print(context.exception)
 
 		self.assertDictEqual(
-			schema.defs["test.test_schema.Test6"],
+			schema.defs["tests.test_schema.Test6"],
 			{
 				'type': 'object', 'title': 'test6', 'description': 'test6 description', 'properties': {'a': {'anyOf': [{'type': 'array', 'items': {'type': 'integer'}}, {'type': 'array', 'items': {'minLength': 1, 'type': 'string'}}], 'title': 'hello', 'description': 'a description'}}, 'required': ['a']
 			}
