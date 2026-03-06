@@ -1,5 +1,6 @@
 import inspect
 import json
+import time
 from contextlib import contextmanager
 from typing import TypeVar, Type, Iterator, Optional
 
@@ -388,8 +389,7 @@ class Model:
 	def __init__(self, _is_create_new_=True, **kwargs):
 		object.__setattr__(self, '_is_create_new_', _is_create_new_)
 		object.__setattr__(self, '_initializing_', True)  # not initializing from db
-		object.__setattr__(self, '_', 0)
-		object.__setattr__(self, '_original_', 0)
+		object.__setattr__(self, '_', 0)  # this field is for optimistic locking; _update() checks that it matches the DB value before applying updates, and increments it on each update to cur_ms() for the next check
 		object.__setattr__(self, '_set_updates', {})
 		object.__setattr__(self, '_unset_updates', set())
 
@@ -464,7 +464,6 @@ class Model:
 		object.__setattr__(obj, '_initializing_', True)
 		object.__setattr__(obj, '_is_create_new_', False)
 		object.__setattr__(obj, '_', _val)
-		object.__setattr__(obj, '_original_', _val)
 		object.__setattr__(obj, '_set_updates', {})
 		object.__setattr__(obj, '_unset_updates', set())
 
@@ -519,12 +518,25 @@ class Model:
 			return conditions, params
 
 		for field, value in _query.items():
+			if field == "$or":
+				or_parts = []
+				for sub_query in value:
+					sub_conds, sub_params = cls._build_conditions_sql(sub_query)
+					if sub_conds:
+						or_parts.append("(" + " AND ".join(sub_conds) + ")")
+						params.extend(sub_params)
+				if or_parts:
+					conditions.append("(" + " OR ".join(or_parts) + ")")
+				continue
+
 			is_real_col = field in cls._pk_attrs_ or field in cls._col_attrs_
 			col_expr = field if is_real_col else f"(__->>'{field}')"
 			attr = cls._attrs_.get(field)
 			pg_type = _PY_TO_PG_TYPE.get(attr.type, "TEXT") if attr else "TEXT"
 
-			if isinstance(value, dict):
+			if value is None:
+				conditions.append(f"{col_expr} IS NULL")
+			elif isinstance(value, dict):
 				for op, op_val in value.items():
 					if op == "$in":
 						placeholders = ", ".join(["%s"] * len(op_val))
@@ -539,7 +551,14 @@ class Model:
 							conditions.append(f"{col_expr} {pg_op} %s")
 							params.append(op_val)
 						else:
-							conditions.append(f"({col_expr})::{pg_type} {pg_op} %s")
+							# infer numeric cast from value type when attr is unknown
+							if attr is None and isinstance(op_val, int):
+								cast = "BIGINT"
+							elif attr is None and isinstance(op_val, float):
+								cast = "DOUBLE PRECISION"
+							else:
+								cast = pg_type
+							conditions.append(f"({col_expr})::{cast} {pg_op} %s")
 							params.append(op_val)
 					else:
 						LOG_WARN("pg_orm_unknown_op", op=op, field=field)
@@ -752,7 +771,7 @@ class Model:
 		col_set, col_inc, col_unset, json_updates = cls._split_updates(updates)
 
 		new_ts = cur_ms()
-		original_ts = self._original_
+		original_ts = self._
 
 		set_clauses = []
 		all_params = []
@@ -818,11 +837,11 @@ class Model:
 								f"{cls._table_name_}: record deleted during retry "
 								f"(pk={self._pk_values()})"
 							)
-						original_ts = fresh._original_
+						original_ts = fresh._
 						continue
 					raise OptimisticLockError(
 						f"{cls._table_name_}: update conflict after {_MAX_RETRIES} retries "
-						f"(pk={self._pk_values()}, _={self._original_})"
+						f"(pk={self._pk_values()}, _={self._})"
 					)
 				if callback:
 					try:
@@ -836,6 +855,123 @@ class Model:
 			cls._trigger_event(EVENT_ROW_AFTER_UPDATE, self, original_row, result)
 			cls._trigger_event(EVENT_AFTER_UPDATE, self)
 			return True
+
+	# ── Locking ──────────────────────────────────────────────────────────────
+
+	__locks = None
+
+	class _LockHandle:
+		def __init__(self, model_obj, name, acquired):
+			self._model_obj = model_obj
+			self._name = name
+			self._acquired = acquired
+			self._released = False
+
+		def __bool__(self):
+			return self._acquired
+
+		def __enter__(self):
+			if not self._acquired:
+				raise TimeoutError("Lock not acquired")
+			return self._model_obj
+
+		def __exit__(self, exc_type, exc, tb):
+			if self._acquired and not self._released:
+				self._model_obj.unlock(name=self._name)
+				self._released = True
+			return False
+
+		def unlock(self, force=False):
+			if self._acquired and not self._released:
+				self._model_obj.unlock(name=self._name, force=force)
+				self._released = True
+
+	def lock(self, name="", timeout=5000, silent=False, can_hold_until=2 * 60 * 1000):
+		"""
+		Acquire a named lock on this record.
+
+		For new (not-yet-persisted) objects, uses an in-memory lock.
+		For DB-backed objects, atomically sets a _lock_<name> field in the __
+		JSONB column only if it is NULL or expired, with optimistic retries.
+
+		timeout:       max ms to wait before giving up (raises TimeoutError unless silent=True)
+		can_hold_until: how long (ms) from now the lock is considered valid by other callers
+		"""
+		lock_name = f"_lock_{name}"
+		lock_handle = self._LockHandle(self, name, False)
+		start_timestamp = cur_ms()
+
+		if self.__locks is None:
+			self.__locks = {}
+
+		# in-memory lock for new (not-yet-persisted) objects
+		if object.__getattribute__(self, '_is_create_new_'):
+			while (
+				lock_name in self.__locks
+				and (cur_ms()) - start_timestamp < timeout
+			):
+				time.sleep(0.001)
+			if lock_name in self.__locks:
+				if not silent:
+					raise TimeoutError(
+						"locking timedout on non-db new object {}:{}".format(
+							self.__class__,
+							self._pk_values()
+						)
+					)
+				return lock_handle
+			self.__locks[lock_name] = None
+			lock_handle._acquired = True
+			return lock_handle
+
+		# DB lock: atomically claim the lock field if absent or expired
+		count = 0
+		cls = self.__class__
+		while cur_ms() - start_timestamp < timeout:
+			count += 1
+			cur_timestamp = cur_ms()
+			locked_until = cur_timestamp + can_hold_until
+			if self.update(
+				{"$set": {lock_name: locked_until}},
+				conditions={
+					"$or": [
+						{lock_name: None},
+						{lock_name: {"$lt": cur_timestamp}},
+					]
+				},
+			):
+				self.__locks[lock_name] = locked_until
+				lock_handle._acquired = True
+				return lock_handle
+			# The optimistic _ check may have failed because another writer
+			# changed the row; refresh _ so the next attempt matches.
+			fresh = cls.get(**{pk: getattr(self, pk) for pk in cls._pk_attrs_})
+			if fresh is None:
+				break
+			object.__setattr__(self, '_', fresh._)
+			time.sleep(0.2 * count)
+
+		if not silent:
+			raise TimeoutError(
+				"locking timedout {}:{}".format(
+					self.__class__,
+					self._pk_values()
+				)
+			)
+		return lock_handle
+
+	def unlock(self, name="", force=False):
+		if self.__locks is None:
+			self.__locks = {}
+		lock_name = f"_lock_{name}"
+		if not force and lock_name not in self.__locks:
+			return
+		if not object.__getattribute__(self, '_is_create_new_'):
+			self.update(
+				{"$unset": {lock_name: 1}},
+				conditions=None if force else {lock_name: str(self.__locks[lock_name])},
+			)
+		self.__locks.pop(lock_name, None)
 
 	def delete(self):
 		cls = self.__class__
@@ -956,6 +1092,23 @@ class Model:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# with_lock decorator
+# ──────────────────────────────────────────────────────────────────────────────
+
+def with_lock(func):
+	"""Decorator that acquires a lock on self before calling func and releases it after."""
+	def wrapper(self, *args, **kwargs):
+		try:
+			self.lock()
+			return func(self, *args, **kwargs)
+		except TimeoutError:
+			return None
+		finally:
+			self.unlock()
+	return wrapper
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Exceptions
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -970,14 +1123,6 @@ class MissingTableError(Exception):
 # ──────────────────────────────────────────────────────────────────────────────
 # initialize_model
 # ──────────────────────────────────────────────────────────────────────────────
-
-
-def _make_index_name(table, fields, explicit_unique):
-	"""Deterministic index name: {table}_{f1}_{f2}[_uniq].
-	_uniq suffix is only added when unique=True is explicitly declared in props.
-	"""
-	suffix = "_uniq" if explicit_unique else ""
-	return table + "_" + "_".join(f for f, _ in fields) + suffix
 
 
 def _parse_index_declaration(raw_index, attrs_to_name):
@@ -1113,9 +1258,7 @@ def initialize_model(model_cls):
 		# Unique by default; only non-unique when explicitly {"unique": False}
 		is_unique = props.get('unique', True)
 		# _uniq suffix only when unique=True is explicitly declared
-		explicit_unique = props.get('unique') is True
 		condition = props.get('condition')  # optional WHERE clause for partial index
-		index_name = _make_index_name(table, fields, explicit_unique)
 
 		# Build SQL column expressions
 		# pk_attrs is not resolved yet here; we use a placeholder set and fix after
@@ -1126,8 +1269,10 @@ def initialize_model(model_cls):
 			# After pk_attrs is set we regenerate if needed (below).
 			col_exprs.append((field, direction, dir_str))
 
+		index_name = table + "_" + "_".join(f"{f}_{d}".lower() for f, _, d in col_exprs)
+
 		# First unique index → pk_attrs
-		if is_unique and pk_attrs is None:
+		if is_unique and (pk_attrs is None or len(fields) < len(pk_attrs)):
 			pk_attrs = [f for f, _ in fields]
 
 		parsed_indexes.append({

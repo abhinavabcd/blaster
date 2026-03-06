@@ -415,9 +415,9 @@ class TestPkFromIndex(TestSetup):
 
 	def test_indexes_populated(self):
 		index_names = {spec["name"] for spec in User._indexes_}
-		self.assertIn("pg_test_users_id_uniq", index_names)
-		self.assertIn("pg_test_users_name", index_names)
-		self.assertIn("pg_test_users_age", index_names)
+		self.assertIn("pg_test_users_id_asc", index_names)
+		self.assertIn("pg_test_users_name_asc", index_names)
+		self.assertIn("pg_test_users_age_desc", index_names)
 
 
 class TestCallbackSetup(unittest.TestCase):
@@ -465,6 +465,49 @@ class TestUpdateCallback(TestCallbackSetup):
 		self.assertEqual(UserAddress.get(id=addr.id).city, "Boston")
 		# user was never touched
 		self.assertEqual(User.get(id=user.id).name, "Bob")
+
+
+class TestLock(TestSetup):
+	def test_two_threads_lock_sequentially(self):
+		"""Two threads acquiring a lock on the same DB record process one after the other."""
+		import threading
+
+		u = User(id=uid(), name="Lockable", age=0)
+		u.commit()
+
+		order = []
+		errors = []
+
+		def worker(thread_id):
+			try:
+				obj = User.get(id=u.id)
+				with obj.lock(timeout=10000):
+					order.append(f"t{thread_id}_start")
+					time.sleep(1)  # hold the lock briefly
+					order.append(f"t{thread_id}_end")
+			except Exception as e:
+				errors.append(e)
+
+		t1 = threading.Thread(target=worker, args=(1,))
+		t2 = threading.Thread(target=worker, args=(2,))
+		t1.start()
+		time.sleep(0.01)  # give t1 a head start so it acquires the lock first
+		t2.start()
+		t1.join(timeout=15)
+		t2.join(timeout=15)
+
+		self.assertFalse(errors, errors)
+		self.assertEqual(len(order), 4)
+
+		# Whichever thread went first, its _end must come before the other's _start
+		first_thread = order[0][1]  # '1' or '2'
+		second_thread = '2' if first_thread == '1' else '1'
+		self.assertEqual(order, [
+			f"t{first_thread}_start",
+			f"t{first_thread}_end",
+			f"t{second_thread}_start",
+			f"t{second_thread}_end",
+		])
 
 
 if __name__ == "__main__":
