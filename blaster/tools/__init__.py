@@ -1189,6 +1189,14 @@ def first(arr, default=None):
 	return arr[0] if arr is not None and len(arr) > 0 else default
 
 
+def first_defined(*args):
+	'''returns true if any args are not None'''
+	for arg in args:
+		if(arg is not None):
+			return arg
+	return None
+
+
 # a dummy object with given keys,values
 class DummyObject:
 	entries = None
