@@ -340,6 +340,15 @@ class DatabaseNode:
 			)
 		return self._pool
 
+	def fetch_rows(self, sql, params=None, use_replica=False) -> Optional[Iterator[dict]]:
+		node = self._get_replica() if use_replica else self
+		with node.use_conn() as conn:
+			with conn.cursor() as cur:
+				cur.execute(sql, params)
+				if cur.description:  # if the query returns rows
+					for row in cur:
+						yield row
+
 	def get_conn(self):
 		return self._get_pool().getconn()
 
@@ -470,7 +479,11 @@ class Model:
 		col_attrs = cls._col_attrs_
 		for name, attr in cls._attrs_.items():
 			# column=True fields are read directly from the row, not from __
-			if(partial and name not in row): continue
+			if partial:
+				if name in col_attrs:
+					if name not in row: continue
+				else:
+					if "__" not in row: continue
 			source = row if name in col_attrs else row["__"]
 			value = source.get(name, _NOT_SET)
 			if value is not _NOT_SET:  # exists
@@ -574,16 +587,20 @@ class Model:
 	@classmethod
 	def _build_update_expr(cls, updates):
 		"""
-		Build chained jsonb_set / #- / $inc expression for patching the __ column.
+		Build chained jsonb_set / #- / $inc / $push expression for patching the __ column.
 
 		updates: {
 		    "$set":   {path_or_dotpath: value, ...},   e.g. {"name": "x", "addr.city": "LA"}
 		    "$unset": {path_or_dotpath: 1, ...},
 		    "$inc":   {path_or_dotpath: delta, ...},
+		    "$push":  {path_or_dotpath: value, ...},   append value to a JSONB array
 		}
 
 		For $inc, the current value is always read from the original __ column so that
 		$set and $inc on different fields in the same call compose correctly.
+
+		For $push, the current array is always read from the original __ column and the
+		new element is appended via jsonb_insert / ||.
 
 		Returns (expr, params, has_inc).
 		"""
@@ -610,6 +627,15 @@ class Model:
 				f"(COALESCE((__ #>> %s::text[])::numeric, 0) + %s)::text::jsonb, true)"
 			)
 			params.extend([path, path, delta])
+
+		for field, value in updates.get("$push", {}).items():
+			path = list(field) if isinstance(field, (list, tuple)) else field.split(".")
+			# Read from original __ so concurrent $set/$push on different fields compose cleanly
+			expr = (
+				f"jsonb_set({expr}, %s::text[], "
+				f"COALESCE(__ #> %s::text[], '[]'::jsonb) || %s::jsonb, true)"
+			)
+			params.extend([path, path, json.dumps([value], default=_json_default)])
 
 		return expr, params, has_inc
 
@@ -702,7 +728,7 @@ class Model:
 			return parts[0], len(parts) == 1
 
 		col_set, col_inc, col_unset = {}, {}, set()
-		json_set, json_inc, json_unset = {}, {}, {}
+		json_set, json_inc, json_unset, json_push = {}, {}, {}, {}
 
 		for field, value in updates.get("$set", {}).items():
 			top, is_top = _top(field)
@@ -725,10 +751,15 @@ class Model:
 			else:
 				json_inc[field] = delta
 
+		# $push always routes to JSONB (arrays live in the __ column)
+		for field, value in updates.get("$push", {}).items():
+			json_push[field] = value
+
 		json_updates = {}
 		if json_set:   json_updates["$set"]   = json_set
 		if json_unset: json_updates["$unset"] = json_unset
 		if json_inc:   json_updates["$inc"]   = json_inc
+		if json_push:  json_updates["$push"]  = json_push
 
 		return col_set, col_inc, col_unset, json_updates
 
@@ -740,6 +771,7 @@ class Model:
 		    "$set":   {"field": value, "nested.field": value, ...},
 		    "$unset": {"field": 1, ...},
 		    "$inc":   {"field": delta, ...},
+		    "$push":  {"field": value, ...},   # append value to a JSONB array
 		}
 		conditions: extra WHERE filters beyond pk + _ (same syntax as query())
 		    e.g. {"status": "active", "score": {"$lt": 100}}
@@ -762,7 +794,7 @@ class Model:
 			if unset_updates:
 				updates["$unset"] = {path: 1 for path in unset_updates}
 
-		if not any(updates.get(op) for op in ("$set", "$unset", "$inc")):
+		if not any(updates.get(op) for op in ("$set", "$unset", "$inc", "$push")):
 			return
 
 		cls = self.__class__
@@ -777,8 +809,8 @@ class Model:
 		all_params = []
 
 		# JSONB expression (only when there are non-column updates)
-		has_jsonb_inc = bool(json_updates.get("$inc"))
-		if any(json_updates.get(op) for op in ("$set", "$unset", "$inc")):
+		has_jsonb_inc = bool(json_updates.get("$inc") or json_updates.get("$push"))
+		if any(json_updates.get(op) for op in ("$set", "$unset", "$inc", "$push")):
 			expr, jparams, _ = cls._build_update_expr(json_updates)
 			set_clauses.append(f"__ = {expr}")
 			all_params.extend(jparams)

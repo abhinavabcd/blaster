@@ -408,6 +408,62 @@ class TestExplicitUpdate(TestSetup):
 		u.update({})
 		self.assertEqual(u._, original_ts)
 
+	def test_push_to_existing_array(self):
+		"""$push appends an element to an existing JSONB array."""
+		u = User(id=uid(), tags=["a", "b"])
+		u.commit()
+		u.update({"$push": {"tags": "c"}})
+
+		fetched = User.get(id=u.id)
+		self.assertEqual(fetched.tags, ["a", "b", "c"])
+
+	def test_push_to_missing_array_defaults_to_empty(self):
+		"""$push on a field that doesn't exist yet creates a one-element array."""
+		u = User(id=uid(), name="PushNew")
+		u.commit()
+		u.update({"$push": {"tags": "first"}})
+
+		fetched = User.get(id=u.id)
+		self.assertEqual(fetched.tags, ["first"])
+
+	def test_push_multiple_times(self):
+		"""Multiple $push calls accumulate elements in order."""
+		u = User(id=uid(), tags=[])
+		u.commit()
+		u.update({"$push": {"tags": 1}})
+		u.update({"$push": {"tags": 2}})
+		u.update({"$push": {"tags": 3}})
+
+		fetched = User.get(id=u.id)
+		self.assertEqual(fetched.tags, [1, 2, 3])
+
+	def test_push_dict_element(self):
+		"""$push works with dict values (complex JSONB elements)."""
+		u = User(id=uid(), meta={"events": []})
+		u.commit()
+		u.update({"$push": {"meta.events": {"type": "login", "ts": 123}}})
+
+		fetched = User.get(id=u.id)
+		self.assertEqual(fetched.meta["events"], [{"type": "login", "ts": 123}])
+
+	def test_push_combined_with_set(self):
+		"""$push and $set in the same call both take effect."""
+		u = User(id=uid(), name="Before", tags=["x"])
+		u.commit()
+		u.update({"$set": {"name": "After"}, "$push": {"tags": "y"}})
+
+		fetched = User.get(id=u.id)
+		self.assertEqual(fetched.name, "After")
+		self.assertEqual(fetched.tags, ["x", "y"])
+
+	def test_push_local_state_refreshed(self):
+		"""Local object state is refreshed after $push."""
+		u = User(id=uid(), tags=["a"])
+		u.commit()
+		u.update({"$push": {"tags": "b"}})
+
+		self.assertEqual(u.tags, ["a", "b"])
+
 
 class TestPkFromIndex(TestSetup):
 	def test_pk_derived_from_unique_index(self):

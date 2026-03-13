@@ -16,14 +16,15 @@ class Config:
     frozen_keys = None
 
     def __init__(self):
-        self.frozen_keys = {k: v for k, v in vars(env).items() if not k.startswith("_")}
+        frozen_keys = {k: v for k, v in vars(env).items() if not k.startswith("_")}
         _config = {}
         for k, v in os.environ.items():
             if(v.startswith("{") or v.startswith("[")):
                 v = json.loads(v)
             _config[k] = v
-        _config.update(self.frozen_keys)  # these cannot be overridden
-        self._config = _config
+        _config.update(frozen_keys)  # these cannot be overridden
+        object.__setattr__(self, "_config", _config)
+        object.__setattr__(self, "frozen_keys", frozen_keys)
 
     def load(self, *paths):
         import yaml
@@ -72,15 +73,16 @@ class Config:
         self._config[key] = val
 
     def __getattr__(self, key):
-        if(key not in self._config):
+        _config = object.__getattribute__(self, "_config")
+        if(key not in _config):
             if(key.startswith("__")):
                 return getattr(_this_, key, None)  # for internal attributes
-            elif(not self._config.get("BLASTER_FORK_ID")):  # PRINT THESE ONLY ONCE
-                caller_frame = inspect.stack()[1]
-                if(not caller_frame[1].startswith("<frozen")):  # <frozen importlib._bootstrap>
-                    print("MISSING CONFIG Key#: {} {}:{}".format(key, caller_frame[1], caller_frame[2]))
+            elif(not _config.get("BLASTER_FORK_ID")):  # PRINT THESE ONLY ONCE
+                caller_frame = sys._getframe(1)
+                if(not caller_frame.f_code.co_filename.startswith("<frozen")):  # <frozen importlib._bootstrap>
+                    print("MISSING CONFIG Key#: {} {}:{}".format(key, caller_frame.f_code.co_filename, caller_frame.f_lineno))
             return None
-        return self._config[key]
+        return _config[key]
 
 
 # hack: customized config module,
