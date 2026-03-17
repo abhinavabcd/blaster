@@ -20,7 +20,7 @@ import struct
 import fcntl
 import heapq
 import types
-from gevent import sleep
+from gevent import sleep, spawn
 from functools import reduce as _reduce
 from gevent.lock import BoundedSemaphore
 from datetime import timezone, timedelta, datetime
@@ -42,11 +42,11 @@ except Exception:
 	pass
 
 
-from ..websocket._core import WebSocket
+from ..websocket._core import WebSocket, WebSocketTimeoutException
 from ..env import DEBUG_PRINT_LEVEL
 from ..utils.xss_html import XssHtml
 from ..utils import events
-from ..logging import LOG_WARN, LOG_ERROR, LOG_DEBUG, log_ctx
+from ..logging import LOG_WARN, LOG_ERROR, LOG_DEBUG, LOG_APP_INFO, log_ctx
 # CUSTOM IMPORTS
 try:
 	import openpyxl
@@ -2405,3 +2405,156 @@ class NoDuplicateValuesMeta(type):
 					f"Value {value!r} already exists as a class attribute with name {key!r}"
 				)
 		super().__setattr__(name, value)
+
+
+browser_url_queue = Queue(1000)      # main -> chrome greenlet (gevent Queue, cooperative)
+browser_results = ExpiringCache(1000)
+
+CHROME_DEBUG_PORT = 9222
+
+
+def run_chrome_in_separate_cpu_process():
+	"""
+	Long-running OS process: starts a single headless Chrome instance with remote
+	debugging enabled, then drains url_queue sequentially — each URL is loaded in
+	a fresh tab (opened/closed via CDP), and (url, html|None) is put into results_queue.
+
+	Dependencies: requests, websocket-client  (pip install requests websocket-client)
+	"""
+	chrome_proc = subprocess.Popen(
+		[
+			"google-chrome",
+			"--headless=new",
+			"--no-sandbox",
+			"--disable-gpu",
+			"--disable-dev-shm-usage",
+			"--disable-extensions",
+			"--disable-software-rasterizer",
+			"--no-first-run",
+			"--no-default-browser-check",
+			f"--remote-debugging-port={CHROME_DEBUG_PORT}",
+			"--remote-allow-origins=*",
+		],
+		stdout=subprocess.DEVNULL,
+		stderr=subprocess.DEVNULL,
+	)
+
+	# Wait for Chrome's HTTP debug endpoint to be ready
+	for _ in range(20):
+		try:
+			requests.get(f"http://localhost:{CHROME_DEBUG_PORT}/json/version", timeout=1)
+			break
+		except Exception:
+			sleep(0.5)
+
+	def load_url(url):
+		tab_id = None
+		try:
+			# Open a new blank tab (Chrome 72+ requires PUT)
+			resp = requests.put(
+				f"http://localhost:{CHROME_DEBUG_PORT}/json/new",
+				timeout=5,
+			)
+			tab = resp.json()
+			tab_id = tab["id"]
+
+			ws = WebSocket()
+			ws.connect(tab["webSocketDebuggerUrl"], timeout=30)
+
+			cmd_id = 0
+
+			def send(method, params=None):
+				nonlocal cmd_id
+				cmd_id += 1
+				ws.send(json.dumps({"id": cmd_id, "method": method, "params": params or {}}))
+				return cmd_id
+
+			def recv_until(predicate, deadline):
+				while time.time() < deadline:
+					try:
+						ws.settimeout(max(0.1, deadline - time.time()))
+						msg = json.loads(ws.recv())
+					except WebSocketTimeoutException:
+						break
+					if predicate(msg):
+						return msg
+				return None
+
+			# Enable Page events so loadEventFired is delivered
+			eid = send("Page.enable")
+			recv_until(lambda m: m.get("id") == eid, time.time() + 5)
+
+			nav_id = send("Page.navigate", {"url": url})
+			deadline = time.time() + 30
+
+			# Wait for navigation ack + loadEventFired
+			recv_until(lambda m: m.get("id") == nav_id, deadline)
+			recv_until(lambda m: m.get("method") == "Page.loadEventFired", deadline)
+
+			# Fetch the full rendered DOM
+			eval_id = send(
+				"Runtime.evaluate",
+				{"expression": "document.documentElement.outerHTML", "returnByValue": True},
+			)
+			msg = recv_until(lambda m: m.get("id") == eval_id, time.time() + 10)
+			html = (msg or {}).get("result", {}).get("result", {}).get("value")
+
+			ws.close()
+			return html
+		except Exception:
+			return None
+		finally:
+			if tab_id:
+				try:
+					requests.get(
+						f"http://localhost:{CHROME_DEBUG_PORT}/json/close/{tab_id}",
+						timeout=5,
+					)
+				except Exception:
+					pass
+
+	try:
+		while True:
+			url = browser_url_queue.get()   # blocks until a URL is submitted
+			if url is None:         # sentinel: shut down
+				break
+			browser_results[url] = load_url(url)
+	finally:
+		chrome_proc.terminate()
+		chrome_proc.wait()
+
+
+chrome_browser_processes_started = 0
+
+
+def load_page_with_chrome(url, timeout=60):
+	global chrome_browser_processes_started
+
+	browser_url_queue.put(url)
+
+	if(
+		not chrome_browser_processes_started
+		or (
+			len(browser_url_queue) / chrome_browser_processes_started > 10  # if each process has more than 10 urls to process, start another process
+			and chrome_browser_processes_started < 5  # limit to 5 processes, we can increase if needed
+		)
+	):
+		spawn(run_chrome_in_separate_cpu_process)
+		chrome_browser_processes_started += 1
+		LOG_APP_INFO(
+			"started_chrome_process", total_processes=chrome_browser_processes_started
+		)
+
+	while(
+		(resp := browser_results.get(url)) is None
+		and timeout > 0
+	):
+		sleep(1)
+		timeout -= 1
+	return resp
+
+
+@events.register_listener(["blaster_exit5"])
+def shutdown_chrome_process():
+	for _ in range(chrome_browser_processes_started):
+		browser_url_queue.put(None)  # send sentinel to shut down the chrome process

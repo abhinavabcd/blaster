@@ -562,5 +562,19 @@ class TestBackgroundTasks(unittest.TestCase):
 		self.assertEqual(abt.a, 200)
 
 
+class TestBrowserLoad(unittest.TestCase):
+	def test_browser_load(self):
+		from blaster.tools import load_page_with_chrome
+
+		def _load_page(i):
+			html = load_page_with_chrome(f"https://google.com/{i}")
+			self.assertIsNotNone(html, "Expected HTML content but got None")
+			self.assertIn("<html", html.lower(), "Response does not look like HTML")
+			print("Page loaded, length:", len(html))
+
+		l = [gevent.spawn(_load_page, i) for i in range(50)]
+		gevent.joinall(l)
+
+
 if __name__ == "__main__":
 	unittest.main()

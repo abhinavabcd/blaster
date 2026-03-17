@@ -1098,12 +1098,10 @@ class Model(object):
 				for x in cls.get_collection_on_all_db_nodes()
 			}
 
-		def count_documents(_collection, _query, offset, limit):
+		def count_documents(_collection, _query, offset):
 			kwargs = {}
 			if(offset):
 				kwargs["skip"] = offset
-			if(limit):
-				kwargs["limit"] = limit
 			return _collection.count_documents(_query, **kwargs)
 
 		class SortKey(object):
@@ -1275,7 +1273,7 @@ class Model(object):
 			multi_collection_query_result_iterator.add(
 				ret,
 				_cursor,
-				lambda: count_documents(_collection, _query, offset, limit)  # query count func
+				lambda: count_documents(_collection, _query, offset)  # query count func
 			)
 
 		threads = []
