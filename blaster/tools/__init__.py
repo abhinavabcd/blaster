@@ -4,6 +4,7 @@ Created on 04-Nov-2017
 @author: abhinav
 '''
 
+import gevent
 from gevent.threading import Thread
 from gevent.queue import Queue, Empty as QueueEmptyException
 import os
@@ -1909,9 +1910,15 @@ class PartitionedTasksRunner:
 		if(partition_key is None):
 			partition_key = str(now_millis % 100)  # 50 parallel partitions
 
-		pt_queue = self.partitioned_task_queues.get(partition_key)  # partitioned task queue
-		# reuse from idle_pt_queues if possible
-		if(not pt_queue):
+		pt_queue = self.partitioned_task_queues.get(partition_key, _OBJ_END_)  # partitioned task queue
+
+		# pt_queue is None mean it's in progress of being created by some other thread, wait until it's created and put in the map, or marked as None if it failed to create
+		while(pt_queue is None):
+			pt_queue = self.partitioned_task_queues.get(partition_key)
+			gevent.sleep(0.1)  # wait for some time and check again if some other thread created the queue for this partition key
+
+		if(pt_queue is _OBJ_END_):
+			self.partitioned_task_queues[partition_key] = pt_queue = None
 			try:
 				if(timeout and len(self.pt_runners_to_join) >= self.max_parallel):
 					pt_queue = self.idle_pt_queues.get(timeout=timeout)  # wait for some timeout if given
