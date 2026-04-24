@@ -2044,7 +2044,7 @@ def read_rows_from_url(url, csv_delimiter=",") -> iter:
 		with requests.get(url, stream=True) as resp:
 			if(url.endswith(".xlsx")):
 				xls_file = BytesIO()
-				for chunk in resp.iter_content(chunk_size=_16KB_):
+				for chunk in resp.iter_content(chunk_size=_1MB_):
 					xls_file.write(chunk)  # unfortunately we read the whole file, may be we can cut off at 10MB or something
 				xls_file.seek(0)
 				excel_sheet = openpyxl.load_workbook(xls_file, read_only=True, data_only=True).active
@@ -2055,7 +2055,12 @@ def read_rows_from_url(url, csv_delimiter=",") -> iter:
 				for cells in sheet.get_rows():
 					yield [repr(c.value) for c in cells]
 			else:
-				for row in csv.reader(resp.iter_lines(decode_unicode=True), delimiter=csv_delimiter):
+				for row in csv.reader(
+					resp.iter_lines(
+						chunk_size=_1MB_, decode_unicode=True
+					),
+					delimiter=csv_delimiter
+				):
 					yield row
 	else:
 		with open(url, "rb") as file:
@@ -2064,7 +2069,7 @@ def read_rows_from_url(url, csv_delimiter=",") -> iter:
 				for row in excel_sheet.iter_rows(values_only=True):
 					yield row
 			elif(url.endswith(".xls")):
-				sheet = xlrd.open_workbook(file_contents=resp.content).sheet_by_index(0)
+				sheet = xlrd.open_workbook(file_contents=file.read()).sheet_by_index(0)
 				for cells in sheet.get_rows():
 					yield [repr(c.value) for c in cells]
 			else:
