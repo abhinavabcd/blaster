@@ -180,7 +180,7 @@ class ExpiringCache:
 			keys_to_remove.append(_key)
 
 		for _key in keys_to_remove:
-			removed_entries.append((key, self.cache.pop(_key)))
+			removed_entries.append((_key, self.cache.pop(_key)))
 
 		self.cache[key] = (cur_timestamp + self.ttl, value)
 		return removed_entries
