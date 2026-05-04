@@ -41,8 +41,8 @@ class Test5(Object):
 
 
 class Test6(Object):
-	_title_ = "test6"
-	_description_ = "test6 description"
+	__title__ = "test6"
+	__description__ = "test6 description"
 	a = Field(list[int] | list[str], "hello", "a description")
 
 
@@ -111,3 +111,62 @@ class TestTools(unittest.TestCase):
 				'type': 'object', 'title': 'test6', 'description': 'test6 description', 'properties': {'a': {'anyOf': [{'type': 'array', 'items': {'type': 'integer'}}, {'type': 'array', 'items': {'minLength': 1, 'type': 'string'}}], 'title': 'hello', 'description': 'a description'}}, 'required': ['a']
 			}
 		)
+
+	def test_function_schema(self):
+		def sample(a: int, b: str = "x"):
+			return a, b
+
+		_schema, validate = schema(sample)
+
+		self.assertDictEqual(
+			_schema,
+			{
+				"type": "function",
+				"parameters": {
+					"type": "object",
+					"properties": {
+						"a": {"type": "integer"},
+						"b": {"type": "string", "minLength": 1, "default": "x"}
+					},
+					"required": ["a"]
+				}
+			}
+		)
+		validated = validate({"a": "2"})
+		self.assertEqual(validated["args"], [2, "x"])
+		self.assertDictEqual(validated["kwargs"], {"a": 2, "b": "x"})
+		self.assertEqual(validated["_call_"](sample), (2, "x"))
+
+	def test_function_schema_json_validation(self):
+		def sample(a: int, b: Str(minlen=2)):
+			return a, b
+
+		_schema, validate = schema(sample)
+		validated = validate(json.dumps({"a": "3", "b": "ok"}))
+		self.assertEqual(validated["args"], [3, "ok"])
+		self.assertDictEqual(validated["kwargs"], {"a": 3, "b": "ok"})
+		self.assertEqual(validated["_call_"](sample), (3, "ok"))
+
+		with self.assertRaises(Exception):
+			validate({"a": "3", "b": "x"})
+
+		with self.assertRaises(Exception):
+			validate({"b": "ok"})
+
+	def test_function_schema_object_validation(self):
+		class FunctionArg(Object):
+			name: str
+			count: int
+
+		def sample(arg: FunctionArg):
+			return arg
+
+		_schema, validate = schema(sample)
+		validated = validate({"arg": {"name": "items", "count": "4"}})
+
+		self.assertEqual(_schema["parameters"]["properties"]["arg"]["type"], "object")
+		self.assertIsInstance(validated["args"][0], FunctionArg)
+		self.assertIs(validated["args"][0], validated["kwargs"]["arg"])
+		self.assertEqual(validated["args"][0].name, "items")
+		self.assertEqual(validated["args"][0].count, 4)
+		self.assertIs(validated["_call_"](sample), validated["args"][0])

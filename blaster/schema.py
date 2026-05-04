@@ -1,4 +1,6 @@
 import re
+import inspect
+from types import FunctionType
 from pybase64 import b64decode
 from datetime import datetime
 import ujson as json
@@ -665,6 +667,107 @@ def schema(x, default=_OBJ_END_):
 		if(default is not _OBJ_END_):
 			x._default = default
 		return x._schema_, x.validate
+
+	elif(isinstance(x, FunctionType)):
+		_properties = {}
+		_required = []
+		_validators = []
+		_var_kwargs_validator = None
+
+		for _name, _param in inspect.signature(x).parameters.items():
+			_default = _param.default
+			_has_default = _default is not inspect._empty
+			_annotation = _param.annotation if _param.annotation is not inspect._empty else None
+			_kind = _param.kind
+
+			if(_kind is inspect.Parameter.VAR_KEYWORD):
+				if(_annotation):
+					_var_kwargs_validator = schema(_annotation)[1]
+				continue
+
+			if(_kind is inspect.Parameter.VAR_POSITIONAL):
+				_item_schema, _validator = schema(_annotation)
+				_properties[_name] = {"type": "array", "items": _item_schema}
+			else:
+				_param_schema, _validator = schema(
+					_annotation,
+					default=_default if _has_default else _OBJ_END_
+				)
+				_properties[_name] = _param_schema
+				if(not _has_default):
+					_required.append(_name)
+
+			_validators.append((
+				_name, _kind, _validator, _default, _has_default,
+				_param.annotation is not inspect._empty
+			))
+
+		_parameters_schema = {"type": "object", "properties": _properties}
+		if(_required):
+			_parameters_schema["required"] = _required
+
+		def _validate_function_args(_json_args):
+			if(_json_args is None):
+				_json_args = {}
+			elif(isinstance(_json_args, str)):
+				_json_args = json.loads(_json_args)
+			if(not isinstance(_json_args, dict)):
+				raise TypeError("function arguments should be an object")
+
+			_args = []
+			_kwargs = {}
+			_call_args = []
+			_call_kwargs = {}
+			_used = set()
+
+			for _name, _kind, _validator, _default, _has_default, _has_annotation in _validators:
+				if(_name in _json_args):
+					_value = _json_args[_name]
+					_used.add(_name)
+				elif(_has_default):
+					_value = _validator(None) if _has_annotation else _default
+				else:
+					raise TypeError(f"{_name} is required")
+
+				if(_kind is inspect.Parameter.VAR_POSITIONAL):
+					if(_value is None):
+						_value = ()
+					elif(not isinstance(_value, (list, tuple))):
+						raise TypeError(f"{_name} should be an array")
+					for _item in _value:
+						_item = _validator(_item)
+						_args.append(_item)
+						_call_args.append(_item)
+					continue
+
+				_value = _validator(_value)
+				_args.append(_value)
+				_kwargs[_name] = _value
+				if(_kind is inspect.Parameter.KEYWORD_ONLY):
+					_call_kwargs[_name] = _value
+				else:
+					_call_args.append(_value)
+
+			if(_var_kwargs_validator):
+				for _name, _value in _json_args.items():
+					if(_name not in _used):
+						_value = _var_kwargs_validator(_value)
+						_kwargs[_name] = _value
+						_call_kwargs[_name] = _value
+
+			return {
+				"args": _args, "kwargs": _kwargs,
+				"_call_": lambda: x(*_call_args, **_call_kwargs)
+			}
+
+		return {
+			"type": "function",
+			"function": {
+				"name": x.__name__, 
+				"description": x.__doc__,
+				"parameters": _parameters_schema
+			}
+		}, _validate_function_args
 
 	elif(x == int or x == Int):
 		x = Int(default=default)
