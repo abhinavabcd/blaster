@@ -7,7 +7,8 @@ from blaster.tools import get_time_overlaps, retry, \
 	ExpiringCache, create_signed_value, decode_signed_value, dangerously_peek_signed_value, \
 	submit_background_task, background_task, ignore_exceptions, \
 	ASSERT_RATE_PER_MINUTE, RateLimitingException, get_by_key_path, \
-	xmltodict, sanitize_to_underscore_id, nsplit, get_by_key_list, create_operator_tree
+	xmltodict, sanitize_to_underscore_id, nsplit, get_by_key_list, create_operator_tree, \
+	DummyObject
 from blaster.tools.sanitize_html import HtmlSanitizedDict, HtmlSanitizedList
 from datetime import datetime, timedelta
 from blaster.utils.data_utils import parse_string_to_units, parse_string_to_int, \
@@ -96,6 +97,28 @@ class TestAuth(unittest.TestCase):
 
 
 class TestTools(unittest.TestCase):
+	def test_dummy_object_to_dict_recursively_parses_dummy_objects(self):
+		item = DummyObject({
+			"name": "root",
+			"child": DummyObject(value=1),
+			"items": [
+				DummyObject(value=2),
+				{"nested": DummyObject(value=3)}
+			]
+		})
+
+		self.assertDictEqual(
+			item.to_dict(),
+			{
+				"name": "root",
+				"child": {"value": 1},
+				"items": [
+					{"value": 2},
+					{"nested": {"value": 3}}
+				]
+			}
+		)
+
 	def test_overlaps(self):
 		self.assertEqual(
 			get_time_overlaps(

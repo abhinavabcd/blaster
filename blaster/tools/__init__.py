@@ -1235,7 +1235,16 @@ class DummyObject:
 		return str(self.entries)
 
 	def to_dict(self):
-		return self.entries
+		def __to_dict(obj):
+			if(isinstance(obj, DummyObject)):
+				return {k: __to_dict(v) for k, v in obj.entries.items()}
+			if(isinstance(obj, dict)):
+				return {k: __to_dict(v) for k, v in obj.items()}
+			if(isinstance(obj, list)):
+				return [__to_dict(v) for v in obj]
+			return obj
+
+		return __to_dict(self)
 
 
 # fully qualified name of the object

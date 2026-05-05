@@ -275,7 +275,7 @@ class _Dict:
 		self._default = default
 		self._schema_ = {
 			"type": "object",
-			"additionalProperties": schema(val_type)[0]
+			"additionalProperties": True if val_type is None else schema(val_type)[0]
 		}
 
 	def validate(self, e):

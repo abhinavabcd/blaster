@@ -122,20 +122,24 @@ class TestTools(unittest.TestCase):
 			_schema,
 			{
 				"type": "function",
-				"parameters": {
-					"type": "object",
-					"properties": {
-						"a": {"type": "integer"},
-						"b": {"type": "string", "minLength": 1, "default": "x"}
-					},
-					"required": ["a"]
+				"function": {
+					"name": "sample",
+					"description": None,
+					"parameters": {
+						"type": "object",
+						"properties": {
+							"a": {"type": "integer"},
+							"b": {"type": "string", "default": "x", "minLength": 1}
+						},
+						"required": ["a"]
+					}
 				}
 			}
 		)
 		validated = validate({"a": "2"})
 		self.assertEqual(validated["args"], [2, "x"])
 		self.assertDictEqual(validated["kwargs"], {"a": 2, "b": "x"})
-		self.assertEqual(validated["_call_"](sample), (2, "x"))
+		self.assertEqual(validated["_call_"](), (2, "x"))
 
 	def test_function_schema_json_validation(self):
 		def sample(a: int, b: Str(minlen=2)):
@@ -145,7 +149,7 @@ class TestTools(unittest.TestCase):
 		validated = validate(json.dumps({"a": "3", "b": "ok"}))
 		self.assertEqual(validated["args"], [3, "ok"])
 		self.assertDictEqual(validated["kwargs"], {"a": 3, "b": "ok"})
-		self.assertEqual(validated["_call_"](sample), (3, "ok"))
+		self.assertEqual(validated["_call_"](), (3, "ok"))
 
 		with self.assertRaises(Exception):
 			validate({"a": "3", "b": "x"})
@@ -164,9 +168,76 @@ class TestTools(unittest.TestCase):
 		_schema, validate = schema(sample)
 		validated = validate({"arg": {"name": "items", "count": "4"}})
 
-		self.assertEqual(_schema["parameters"]["properties"]["arg"]["type"], "object")
+		self.assertEqual(_schema["function"]["parameters"]["properties"]["arg"]["type"], "object")
 		self.assertIsInstance(validated["args"][0], FunctionArg)
 		self.assertIs(validated["args"][0], validated["kwargs"]["arg"])
 		self.assertEqual(validated["args"][0].name, "items")
 		self.assertEqual(validated["args"][0].count, 4)
-		self.assertIs(validated["_call_"](sample), validated["args"][0])
+		self.assertIs(validated["_call_"](), validated["args"][0])
+
+	def test_function_schema_call_api(self):
+		def call_api(url: str, method: str = "GET", headers: dict[str, str] = None, body: dict = None):
+			return url, method, headers, body
+
+		_schema, validate = schema(call_api)
+
+		self.assertDictEqual(
+			_schema,
+			{
+				"type": "function",
+				"function": {
+					"name": "call_api",
+					"description": None,
+					"parameters": {
+						"type": "object",
+						"properties": {
+							"url": {"type": "string", "minLength": 1},
+							"method": {"type": "string", "default": "GET", "minLength": 1},
+							"headers": {
+								"type": "object",
+								"additionalProperties": {"type": "string", "minLength": 1}
+							},
+							"body": {
+								"type": "object",
+								"additionalProperties": True
+							}
+						},
+						"required": ["url"]
+					}
+				}
+			}
+		)
+
+		validated = validate({
+			"url": "https://example.com",
+			"headers": {"Accept": "application/json"},
+			"body": {"limit": 10}
+		})
+
+		self.assertEqual(
+			validated["args"],
+			[
+				"https://example.com",
+				"GET",
+				{"Accept": "application/json"},
+				{"limit": 10}
+			]
+		)
+		self.assertDictEqual(
+			validated["kwargs"],
+			{
+				"url": "https://example.com",
+				"method": "GET",
+				"headers": {"Accept": "application/json"},
+				"body": {"limit": 10}
+			}
+		)
+		self.assertEqual(
+			validated["_call_"](),
+			(
+				"https://example.com",
+				"GET",
+				{"Accept": "application/json"},
+				{"limit": 10}
+			)
+		)
