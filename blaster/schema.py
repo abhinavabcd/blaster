@@ -270,7 +270,7 @@ class _Set(_List):
 
 class _Dict:
 	def __init__(self, k_type, val_type, default=_OBJ_END_):
-		self.key_ype_validator = schema(k_type)[1]
+		self.key_type_validator = schema(k_type)[1]
 		self.val_type_validator = schema(val_type)[1]
 		self._default = default
 		self._schema_ = {
@@ -285,7 +285,7 @@ class _Dict:
 			raise TypeError("should be a dict")
 
 		for k in list(e.keys()):
-			if(self.key_ype_validator(k) is None):
+			if(self.key_type_validator(k) is None):
 				e.pop(k)
 				continue
 			e[k] = self.val_type_validator(e[k])
