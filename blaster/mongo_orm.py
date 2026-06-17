@@ -273,6 +273,11 @@ class MongoDict(dict):
 		# allow chaining
 		return self
 
+	def setdefault(self, k, default=None):
+		if((val := self.get(k, _OBJ_END_)) is _OBJ_END_):
+			self[k] = val = default
+		return val
+
 	def clear(self):
 		super().clear()
 		self._model_obj._set_query_updates_with_no_conflicts(self.path, self)  # self as it's already a mongo dict
