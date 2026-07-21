@@ -175,6 +175,41 @@ class TestTools(unittest.TestCase):
 		self.assertEqual(validated["args"][0].count, 4)
 		self.assertIs(validated["_call_"](), validated["args"][0])
 
+	def test_object_schema_inheritance_and_field_metadata(self):
+		class Base(Object):
+			identifier: int
+			label = Field(str, title="Label", description="Visible label", json_name="displayLabel")
+
+		class Child(Base):
+			active: bool = True
+			identifier: str
+
+		_schema, _ = schema(Child)
+
+		self.assertEqual(_schema["properties"]["identifier"], {"type": "string", "minLength": 1})
+		self.assertEqual(_schema["properties"]["label"]["title"], "Label")
+		self.assertEqual(_schema["properties"]["label"]["description"], "Visible label")
+		self.assertEqual(_schema["properties"]["active"], {"type": "boolean", "default": True})
+		self.assertEqual(set(_schema["required"]), {"identifier", "label"})
+
+		child = Child.from_dict({"identifier": "id", "displayLabel": "name"})
+		self.assertEqual(child.identifier, "id")
+		self.assertEqual(child.label, "name")
+		self.assertTrue(child.active)
+
+		class Root(Object):
+			root: int
+
+		class Middle(Root):
+			middle: int
+
+		class Leaf(Middle):
+			leaf: int
+
+		schema(Root)
+		leaf_schema, _ = schema(Leaf)
+		self.assertEqual(set(leaf_schema["properties"]), {"root", "middle", "leaf"})
+
 	def test_function_schema_call_api(self):
 		def call_api(url: str, method: str = "GET", headers: dict[str, str] = None, body: dict = None):
 			return url, method, headers, body

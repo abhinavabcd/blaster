@@ -508,63 +508,51 @@ def schema(x, default=_OBJ_END_):
 
 		x._validations = _validations = {}
 		x._schema_properties = _schema_properties = {}
-		x._fields_ = _fields_ = {}  # key: [type, default, {title, description, json_name}]
 		x._property_types = {}
 		x._required = _required = set()
-		x._remap_dict_key_to_object_key = {}  # used when converting json/dict to object
+		x._remap_dict_key_to_object_key = {}  # json/dict key -> object attribute
+		x._fields_ = _fields_ = {}
 
-		__x_mro = x.__mro__
-		for cls_x in reversed(__x_mro[1:__x_mro.index(Object)]):
-			_fields_.update(cls_x._fields_)
-		for k, _type in x.__annotations__.items():
-			_fields_[k] = {"type": _type, "default": x.__dict__.get(k, _OBJ_END_)}
-
-		# capture the fields
-		# val = Field(_type, title, description, default, json_name)
-		for k, val in x.__dict__.items():
-			if(isinstance(val, Field)):
-				_default_value = val.default
-				_fields_[k] = {
-					"type": val._type,
-					"default": _default_value,
-					"json_name": val.json_name,
-					"title": val.title,
-					"description": val.description
+		# Inherit base fields first, then let this class's declarations override them.
+		for _base in reversed(x.__mro__[1:x.__mro__.index(Object)]):
+			if("_fields_" not in _base.__dict__):
+				schema(_base)
+			_fields_.update(_base._fields_)
+		for _name, _type in getattr(x, "__annotations__", {}).items():
+			_fields_[_name] = {"type": _type, "default": x.__dict__.get(_name, _OBJ_END_)}
+		for _name, _field in x.__dict__.items():
+			if(isinstance(_field, Field)):
+				_fields_[_name] = {
+					"type": _field._type, "default": _field.default,
+					"json_name": _field.json_name, "title": _field.title,
+					"description": _field.description
 				}
-				setattr(x, k, _default_value)  # so when instance is created, it has default value copied
+				setattr(x, _name, _field.default)
 
-		for k, _field_data in _fields_.items():
-			# pure type to instance of schema types
-			_default_value = _field_data["default"]
+		for _name, _field_data in _fields_.items():
 			_type = _field_data["type"]
+			_default = _field_data["default"]
+			_schema_and_validation = schema(_type, default=_default)
+			if(not _schema_and_validation):
+				continue
 
-			_schema_and_validation = schema(_type, default=_default_value)
-			if(_schema_and_validation):
-				_schema_properties[k], _validations[k] = _schema_and_validation
-				if(
-					(_default_value is _OBJ_END_)
-					and _schema_properties[k]
-					and not _schema_properties[k].get("nullable")
-				):
-					_required.add(k)  # required if no default value
+			_field_schema, _validations[_name] = _schema_and_validation
+			if(_default is _OBJ_END_ and _field_schema and not _field_schema.get("nullable")):
+				_required.add(_name)
+			_field_title = _field_data.get("title")
+			_field_description = _field_data.get("description")
+			if(_field_title or _field_description):
+				_field_schema = {
+					**_field_schema,
+					"title": _field_title,
+					"description": _field_description
+				}
+			_schema_properties[_name] = _field_schema
+			if(_json_name := _field_data.get("json_name")):
+				x._remap_dict_key_to_object_key[_json_name] = _name
+			x._property_types[_name] = _type
 
-				_field_title = _field_data.get("title")
-				_field_description = _field_data.get("description")
-				if(_field_title or _field_description):
-					_schema_properties[k] = {
-						**_schema_properties[k],
-						"title": _field_title,
-						"description": _field_description
-					}
-				if(dict_key := _field_data.get("json_name")):
-					x._remap_dict_key_to_object_key[dict_key] = k
-
-				# keep track of propeties
-				x._property_types[k] = _type
-		# create schema
-		x._schema_ = _schema = schema.defs[_schema_def_name_] = {
-			"type": "object",
-		}
+		x._schema_ = _schema = schema.defs[_schema_def_name_] = {"type": "object"}
 
 		if(_schema_properties):
 			_schema["properties"] = _schema_properties
