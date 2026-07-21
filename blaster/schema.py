@@ -580,6 +580,16 @@ def schema(x, default=_OBJ_END_):
 
 		return x._schema_, x.validate
 
+	elif(isinstance(x, Field)):
+		_s, _v = schema(x._type, default=x.default)
+		if(x.title):
+			_s["title"] = x.title
+		if(x.description):
+			_s["description"] = x.description
+		if(default is not _OBJ_END_):
+			x._default = default
+			_s["default"] = default
+		return _s, _v
 	# special for tuples and list
 	elif(isinstance(x, (list, tuple))):  # x = [int, str]->oneof, (int, str) or int|str ->anyof/mixed
 		simple_types = []  # str, int, etc
@@ -763,7 +773,7 @@ def schema(x, default=_OBJ_END_):
 		return {
 			"type": "function",
 			"function": {
-				"name": x.__name__, 
+				"name": x.__name__,
 				"description": x.__doc__,
 				"parameters": _parameters_schema
 			}
