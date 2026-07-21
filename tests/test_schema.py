@@ -157,6 +157,38 @@ class TestTools(unittest.TestCase):
 		with self.assertRaises(Exception):
 			validate({"b": "ok"})
 
+	def test_function_schema_tool_call_with_field(self):
+		def fetch(
+			url: str, method: str = "GET", headers: dict = None, body: str | dict = None,
+			search: Field(
+				Str,
+				description="(Optional) If the response is a text/html document, search would be a grep like tool 100 lines around. If it's a json, it will return json with matching keys even if nested."
+			) = None
+		):
+			'''Fetch a URL with optional method, headers, and body.'''
+			return url, method, headers, body, search
+
+		_schema, validate = schema(fetch)
+		parameters = _schema["function"]["parameters"]
+		self.assertEqual(_schema["function"]["description"], "Fetch a URL with optional method, headers, and body.")
+		self.assertEqual(parameters["required"], ["url"])
+		self.assertEqual(parameters["properties"]["search"]["default"], None)
+		self.assertIn("grep like tool", parameters["properties"]["search"]["description"])
+
+		validated = validate('{"url": "https://example.com/collections/all/products.json?limit=250"}')
+		self.assertEqual(
+			validated["args"],
+			["https://example.com/collections/all/products.json?limit=250", "GET", None, None, None]
+		)
+		self.assertDictEqual(
+			validated["kwargs"],
+			{
+				"url": "https://example.com/collections/all/products.json?limit=250",
+				"method": "GET", "headers": None, "body": None, "search": None
+			}
+		)
+		self.assertEqual(validated["_call_"](), tuple(validated["args"]))
+
 	def test_function_schema_object_validation(self):
 		class FunctionArg(Object):
 			name: str

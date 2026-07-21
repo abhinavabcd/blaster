@@ -569,14 +569,12 @@ def schema(x, default=_OBJ_END_):
 		return x._schema_, x.validate
 
 	elif(isinstance(x, Field)):
-		_s, _v = schema(x._type, default=x.default)
+		_field_default = default if default is not _OBJ_END_ else x.default
+		_s, _v = schema(x._type, default=_field_default)
 		if(x.title):
 			_s["title"] = x.title
 		if(x.description):
 			_s["description"] = x.description
-		if(default is not _OBJ_END_):
-			x._default = default
-			_s["default"] = default
 		return _s, _v
 	# special for tuples and list
 	elif(isinstance(x, (list, tuple))):  # x = [int, str]->oneof, (int, str) or int|str ->anyof/mixed
