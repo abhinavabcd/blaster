@@ -17,7 +17,7 @@ docker run --name $PG_CONTAINER \
 	-e POSTGRES_PASSWORD=$PG_PASS \
 	-e POSTGRES_DB=$PG_DB \
 	-p $PG_PORT:5432 \
-	-d postgres:latest
+	-d pgvector/pgvector:latest
 
 # Wait until PostgreSQL is accepting connections
 echo "Waiting for PostgreSQL to be ready..."

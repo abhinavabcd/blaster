@@ -51,6 +51,10 @@ IndexesToCreate = {}
 _DB_NODES_: dict = {}
 
 
+def SHARD_BY(*args, **kwargs):  # NO-OP
+	pass
+
+
 def INDEX(*indexes):
 	"""
 	Declare indexes for the enclosing Model class.
@@ -252,9 +256,11 @@ class Attribute:
 	from the first unique INDEX() declaration on the model.
 	"""
 
-	def __init__(self, _type, default=_NOT_SET, column=False, auto_increment=False, **kwargs):
+	def __init__(self, _type, default=_NOT_SET, column=_NOT_SET, auto_increment=False, **kwargs):
 		self.type = _type
 		self.default = default
+		if(column is _NOT_SET):
+			column = True if _type in (int, float, str, bool) else False
 		self.column = column or auto_increment  # True → stored as a real DB column instead of inside __
 		self.auto_increment = auto_increment  # True → BIGSERIAL; DB generates value on INSERT
 		self.kwargs = kwargs

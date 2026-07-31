@@ -139,11 +139,11 @@ class TestBasics(unittest.TestCase):
         a.f = "100"
         a.c = "32"
 
-        def after_mongo_update(self, old_doc, new_doc, _transaction=None):
+        def callback(self, old_doc, new_doc, _transaction=None):
             BModel(a=new_doc["a"], b="0", c="0").commit(_transaction=_transaction)
             raise Exception(f"some ex with {_transaction}")  # fail
         try:
-            a.update({}, after_mongo_update=after_mongo_update)
+            a.update({}, callback=callback)
         except Exception as ex:
             print(str(ex))
 

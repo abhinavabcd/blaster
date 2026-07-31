@@ -748,7 +748,7 @@ class Model(object):
 
 	def update(
 		self, _update_query, conditions=None,
-		after_mongo_update=None, _transaction=None,
+		callback=None, _transaction=None,
 		include_pending_updates=True,
 		**kwargs
 	):
@@ -786,7 +786,7 @@ class Model(object):
 			return True  # nothing to update, hence true
 		if(
 			_transaction is True
-			or (after_mongo_update and _transaction is None)
+			or (callback and _transaction is None)
 		):
 			_transaction = {}
 
@@ -961,7 +961,7 @@ class Model(object):
 								)
 
 					# call any explicit callback
-					after_mongo_update and after_mongo_update(
+					callback and callback(
 						self, original_doc, updated_doc,
 						_transaction=_transaction
 					)
