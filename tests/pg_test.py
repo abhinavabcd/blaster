@@ -63,6 +63,34 @@ class Post(Model):
 	INDEX(user_id, {"unique": False})
 
 
+class DefaultIdModel(Model):
+	"""A Mongo-compatible model that relies on its declared _id index."""
+	_table_name_ = "pg_test_default_ids"
+
+	_id = Attribute(str)
+	name = Attribute(str, column=True)
+
+
+class MongoStyleModel(Model):
+	"""
+	A model written against mongo_orm: names its table `_collection_name_`, and
+	declares several indexes in a single INDEX() call. Its only declared index
+	is non-unique, so the primary key falls back to the declared `_id`.
+	"""
+	_collection_name_ = "pg_test_mongo_style"
+
+	_id = Attribute(str)
+	session_id = Attribute(str)
+	user_id = Attribute(str)
+	created_at = Attribute(int)
+	data = Attribute(dict)
+
+	INDEX(
+		(session_id, user_id, {"unique": False}),
+		((created_at, -1), {"unique": False}),
+	)
+
+
 
 initialize_postgres(
 	dict(
@@ -106,6 +134,7 @@ class TestBasicCRUD(TestSetup):
 		self.assertIsNotNone(fetched)
 		self.assertEqual(fetched.name, "Alice")
 		self.assertEqual(fetched.age, 30)
+		self.assertEqual(User.get(_id, use_cache=False).id, _id)
 
 	def test_get_missing_returns_none(self):
 		self.assertIsNone(User.get(id="does-not-exist"))
@@ -476,6 +505,28 @@ class TestPkFromIndex(TestSetup):
 		self.assertIn("pg_test_users_age_desc", index_names)
 
 
+class TestDefaultIdIndex(unittest.TestCase):
+	@classmethod
+	def setUpClass(cls):
+		DefaultIdModel.create_table()
+
+	@classmethod
+	def tearDownClass(cls):
+		with DefaultIdModel._db_node_.use_conn() as conn:
+			with conn.cursor() as cur:
+				cur.execute("DROP TABLE IF EXISTS pg_test_default_ids")
+			conn.commit()
+
+	def test_declared_id_gets_unique_index_and_supports_positional_get(self):
+		self.assertEqual(DefaultIdModel._pk_attrs_, ["_id"])
+		self.assertEqual(len(DefaultIdModel._indexes_), 1)
+		self.assertTrue(DefaultIdModel._indexes_[0]["unique"])
+
+		item = DefaultIdModel(_id=uid(), name="Mongo-compatible")
+		item.commit()
+		self.assertEqual(DefaultIdModel.get(item._id).name, "Mongo-compatible")
+
+
 class TestCallbackSetup(unittest.TestCase):
 	@classmethod
 	def setUpClass(cls):
@@ -564,6 +615,85 @@ class TestLock(TestSetup):
 			f"t{second_thread}_start",
 			f"t{second_thread}_end",
 		])
+
+
+class TestMongoStyleDeclarations(unittest.TestCase):
+	"""Models shared with mongo_orm must work unchanged against pg_orm."""
+
+	@classmethod
+	def setUpClass(cls):
+		MongoStyleModel.create_table()
+
+	@classmethod
+	def tearDownClass(cls):
+		with MongoStyleModel._db_node_.use_conn() as conn:
+			with conn.cursor() as cur:
+				cur.execute("DROP TABLE IF EXISTS pg_test_mongo_style")
+			conn.commit()
+
+	def test_collection_name_is_used_as_table_name(self):
+		self.assertEqual(MongoStyleModel._table_name_, "pg_test_mongo_style")
+
+	def test_one_index_call_declares_several_indexes(self):
+		names = {spec["name"] for spec in MongoStyleModel._indexes_}
+		# the two declared indexes, plus the unique one on the fallback pk
+		self.assertIn("pg_test_mongo_style_session_id_asc_user_id_asc", names)
+		self.assertIn("pg_test_mongo_style_created_at_desc", names)
+		self.assertIn("pg_test_mongo_style__id_asc", names)
+
+	def test_pk_falls_back_to_declared_id_when_no_unique_index(self):
+		self.assertEqual(MongoStyleModel._pk_attrs_, ["_id"])
+		# the declared Attribute is kept — not replaced by a BIGSERIAL
+		self.assertIs(MongoStyleModel._attrs_["_id"].type, str)
+
+	def test_index_names_are_truncated_to_postgres_limit(self):
+		for spec in MongoStyleModel._indexes_:
+			self.assertLessEqual(len(spec["name"]), 63)
+
+	def test_get_many_by_list(self):
+		items = [MongoStyleModel(_id=uid(), session_id="s1").commit() for _ in range(3)]
+		ids = [i._id for i in items]
+		fetched = MongoStyleModel.get(ids + ["missing-id"])
+		self.assertEqual(sorted(i._id for i in fetched), sorted(ids))
+		self.assertEqual(MongoStyleModel.get([]), [])
+
+	def test_set_creates_missing_parent_objects(self):
+		item = MongoStyleModel(_id=uid(), session_id="s2").commit()
+		# `data` holds no `agent` key yet — mongo would create the intermediate doc
+		item.update({"$set": {"data.agent.disabled_until": 42}})
+		self.assertEqual(
+			MongoStyleModel.get(item._id).data, {"agent": {"disabled_until": 42}}
+		)
+
+	def test_inc_creates_missing_parent_objects(self):
+		item = MongoStyleModel(_id=uid(), session_id="s3").commit()
+		item.update({"$inc": {"data.retries": 1}})
+		item.update({"$inc": {"data.retries": 1}})
+		self.assertEqual(MongoStyleModel.get(item._id).data, {"retries": 2})
+
+	def test_push_creates_missing_parent_objects(self):
+		item = MongoStyleModel(_id=uid(), session_id="s4").commit()
+		item.update({"$push": {"data.events": "a"}})
+		item.update({"$push": {"data.events": "b"}})
+		self.assertEqual(MongoStyleModel.get(item._id).data, {"events": ["a", "b"]})
+
+	def test_query_by_dotted_jsonb_path(self):
+		a = MongoStyleModel(_id=uid(), session_id="s6", data={"valid_until": 100}).commit()
+		MongoStyleModel(_id=uid(), session_id="s6", data={"valid_until": 900}).commit()
+		found = list(MongoStyleModel.query({
+			"session_id": "s6", "data.valid_until": {"$lt": 500},
+		}))
+		self.assertEqual([i._id for i in found], [a._id])
+
+		found = list(MongoStyleModel.query({"data.valid_until": 900}))
+		self.assertEqual([i.data["valid_until"] for i in found], [900])
+
+	def test_set_preserves_existing_siblings(self):
+		item = MongoStyleModel(_id=uid(), session_id="s5", data={"keep": 1}).commit()
+		item.update({"$set": {"data.added": 2}})
+		self.assertEqual(
+			MongoStyleModel.get(item._id).data, {"keep": 1, "added": 2}
+		)
 
 
 if __name__ == "__main__":

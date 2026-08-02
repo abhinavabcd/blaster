@@ -1,3 +1,4 @@
+import hashlib
 import inspect
 import json
 import time
@@ -27,6 +28,9 @@ EVENT_ROW_AFTER_UPDATE = 5
 
 _NOT_SET = object()
 
+# Postgres truncates any identifier longer than this (NAMEDATALEN - 1)
+_MAX_IDENTIFIER_LEN = 63
+
 # pg type map for create_table
 _PY_TO_PG_TYPE = {
 	str: "TEXT",
@@ -55,30 +59,67 @@ def SHARD_BY(*args, **kwargs):  # NO-OP
 	pass
 
 
+def _is_field_spec(item):
+	"""
+	True when `item` names a single indexed field, i.e. one of:
+	    name_or_attr                      e.g. user_id
+	    (name_or_attr, direction)         e.g. (user_id, ASCENDING)
+
+	False when it is a nested index declaration (mongo_orm style), i.e. a tuple
+	holding several fields and/or its own options dict:
+	    (session_id, user_id)
+	    ((created_at, -1), {"unique": False})
+	"""
+	if not isinstance(item, tuple):
+		return True  # a bare field reference
+	if len(item) > 2 or not item:
+		return False  # more than (field, direction) => a nested declaration
+	if not isinstance(item[0], (Attribute, str)):
+		return False  # e.g. ((created_at, -1), ...) — first element is a field spec
+	# (field,) or (field, direction); anything else in slot 1 (an Attribute,
+	# a nested tuple, an options dict) means this is a nested declaration.
+	return len(item) == 1 or isinstance(item[1], int)
+
+
 def INDEX(*indexes):
 	"""
 	Declare indexes for the enclosing Model class.
-	Must be called inside the class body, after _table_name_ is set.
+	Must be called inside the class body, after _table_name_/_collection_name_ is set.
 
-	Each positional arg is either:
-	  - A (field_or_attr, direction) tuple   e.g. (user_id, ASCENDING)
-	  - A dict of index options              e.g. {'unique': True}
+	Two declaration styles are accepted, and may be mixed in one call.
 
-	Example:
-	    class User(Model):
-	        _table_name_ = "users"
-	        id   = Attribute(str)
-	        name = Attribute(str)
+	pg_orm style — the whole call declares ONE (possibly compound) index, where
+	each positional arg is either a field spec or an options dict:
 
-	        INDEX((id, ASCENDING), {'unique': True})
-	        INDEX((name, ASCENDING))
+	    INDEX((id, ASCENDING), {'unique': True})
+	    INDEX((city, ASCENDING), (sort_order, DESCENDING), {'unique': False})
+
+	mongo_orm style — each positional arg is itself a complete index, so one
+	call declares SEVERAL indexes. This keeps models written against
+	mongo_orm.INDEX working unchanged:
+
+	    INDEX(
+	        (session_id, user_id),
+	        (user_id, _type, (updated_at, -1), {"unique": False}),
+	    )
 	"""
 	locals_ = inspect.currentframe().f_back.f_locals
 	table_name = locals_.get("_table_name_") or locals_.get("_collection_name_")
 	if not table_name:
 		return  # not a pg model — silently ignore (e.g. mongo-only models)
+
+	declarations = []
+	own_index = []  # field specs/options belonging to this call itself (pg style)
+	for item in indexes:
+		if isinstance(item, dict) or _is_field_spec(item):
+			own_index.append(item)
+		else:
+			declarations.append(item)  # a complete nested index (mongo style)
+	if any(not isinstance(item, dict) for item in own_index):
+		declarations.insert(0, tuple(own_index))
+
 	IndexesToCreate.setdefault(table_name, [])
-	IndexesToCreate[table_name].append(indexes)
+	IndexesToCreate[table_name].extend(declarations)
 
 
 def _json_default(obj):
@@ -549,7 +590,15 @@ class Model:
 				continue
 
 			is_real_col = field in cls._pk_attrs_ or field in cls._col_attrs_
-			col_expr = field if is_real_col else f"(__->>'{field}')"
+			if is_real_col:
+				col_expr = field
+			elif "." in field:
+				# dotted path into the JSONB doc, as mongo spells it:
+				# "data.is_verified" → (__ #>> '{data,is_verified}')
+				path = ",".join(field.split("."))
+				col_expr = "(__ #>> '{%s}')" % path
+			else:
+				col_expr = f"(__->>'{field}')"
 			attr = cls._attrs_.get(field)
 			pg_type = _PY_TO_PG_TYPE.get(attr.type, "TEXT") if attr else "TEXT"
 
@@ -613,6 +662,27 @@ class Model:
 		expr = "__"
 		params = []
 		has_inc = bool(updates.get("$inc"))
+
+		# jsonb_set(..., create_missing => true) only creates the LAST key of a
+		# path: when an ancestor is absent the call silently returns the document
+		# unchanged. Mongo instead creates the intermediate documents, and models
+		# rely on that — e.g. update({"$inc": {"data1.retries": 1}}) against a row
+		# that has no `data1` yet. So materialize every missing ancestor as {}
+		# first, shallowest first. Each step reads the ORIGINAL __ (never the
+		# running expr) so an existing ancestor is written back untouched and the
+		# expression stays linear in size.
+		ancestors = set()
+		for op in ("$set", "$inc", "$push"):
+			for field in updates.get(op, {}):
+				path = list(field) if isinstance(field, (list, tuple)) else field.split(".")
+				for depth in range(1, len(path)):
+					ancestors.add(tuple(path[:depth]))
+		for prefix in sorted(ancestors, key=len):
+			expr = (
+				f"jsonb_set({expr}, %s::text[], "
+				f"COALESCE(__ #> %s::text[], '{{}}'::jsonb), true)"
+			)
+			params.extend([list(prefix), list(prefix)])
 
 		for field, value in updates.get("$set", {}).items():
 			path = list(field) if isinstance(field, (list, tuple)) else field.split(".")
@@ -1024,25 +1094,71 @@ class Model:
 		cls._trigger_event(EVENT_AFTER_DELETE, self)
 
 	@classmethod
-	def get(cls: Type[T], _replica: bool = False, **pk_kwargs) -> Optional[T]:
+	def get(cls: Type[T], *pk_args, _replica: bool = False, **pk_kwargs) -> Optional[T]:
 		"""
 		Fetch a single record by primary key fields.
 
+		Primary-key values may be passed positionally in primary-key order, which
+		matches ``mongo_orm.Model.get`` for single-key models. When positional
+		values are provided, keyword arguments are ignored so Mongo-compatible
+		calls such as ``Model.get(id, use_cache=False)`` work. Keyword arguments
+		remain supported when no positional values are provided.
+
+		A single positional list/set fetches many records at once and returns a
+		list (again matching ``mongo_orm.Model.get``). Each element is either a
+		primary-key value (single-key models) or a dict of primary-key fields.
+		Missing rows are simply absent from the result, so the result is NOT
+		positionally aligned with the input.
+
 		_replica=True routes the read to the replica node (if configured on _db_node_).
 		"""
+		pk_attrs = cls._pk_attrs_
+		many = len(pk_args) == 1 and isinstance(pk_args[0], (list, set))
+
+		if many:
+			params = []
+			if len(pk_attrs) == 1:
+				pk = pk_attrs[0]
+				values = [p[pk] if isinstance(p, dict) else p for p in pk_args[0] if p]
+				if not values:
+					return []
+				where = f"{pk} = ANY(%s)"
+				params.append(list(values))
+			else:
+				# composite key: OR together one (a = %s AND b = %s) group per entry
+				groups = []
+				for p in pk_args[0]:
+					if not p:
+						continue
+					groups.append("(" + " AND ".join(f"{a} = %s" for a in pk_attrs) + ")")
+					params.extend(p[a] for a in pk_attrs)
+				if not groups:
+					return []
+				where = " OR ".join(groups)
+			limit = ""
+		else:
+			if pk_args:
+				if len(pk_args) != len(pk_attrs):
+					raise TypeError(
+						f"{cls.__name__}.get() expected {len(pk_attrs)} primary-key value(s), "
+						f"got {len(pk_args)}"
+					)
+				params = list(pk_args)
+			else:
+				params = [pk_kwargs[pk] for pk in pk_attrs]
+			where, limit = cls._pk_conditions(), " LIMIT 1"
+
 		node = cls._db_node_._get_replica() if _replica else cls._db_node_
-		pk_values = [pk_kwargs[pk] for pk in cls._pk_attrs_]
-		pk_conditions = cls._pk_conditions()
 		col_names = list(cls._col_attrs_.keys())
 		select_cols = "_, __" + (", " + ", ".join(col_names) if col_names else "")
-		sql = f"SELECT {select_cols} FROM {cls._table_name_} WHERE {pk_conditions} LIMIT 1"
+		sql = f"SELECT {select_cols} FROM {cls._table_name_} WHERE {where}{limit}"
 		with node.use_conn() as conn:
 			with conn.cursor() as cur:
-				cur.execute(sql, pk_values)
-				row = cur.fetchone()
-		if row is None:
-			return None
-		return cls.__new__(cls)._from_doc(row)
+				cur.execute(sql, params)
+				rows = cur.fetchall() if many else cur.fetchone()
+		if many:
+			return [cls.__new__(cls)._from_doc(row) for row in rows]
+		return cls.__new__(cls)._from_doc(rows) if rows else None
 
 	@classmethod
 	def query(
@@ -1264,7 +1380,12 @@ def initialize_model(model_cls):
 	    initialize_model(User)
 	"""
 
-	# ── 0. Resolve _db_node_ (string name lookup + default fallback) ─────────
+	# ── 0. Resolve the table name and _db_node_ ──────────────────────────────
+	# Models shared with mongo_orm name their table `_collection_name_`; accept
+	# either spelling so one model definition works against both ORMs.
+	if not model_cls._table_name_:
+		model_cls._table_name_ = getattr(model_cls, "_collection_name_", None)
+
 	db_node = model_cls._db_node_
 	if isinstance(db_node, str):
 		db_node = _DB_NODES_.get(db_node)
@@ -1282,8 +1403,8 @@ def initialize_model(model_cls):
 	attrs_to_name = {id(attr): name for name, attr in attrs.items()}
 
 	# ── 2. Parse declared indexes ────────────────────────────────────────────
-	raw_indexes = IndexesToCreate.get(model_cls._table_name_, [])
 	table = model_cls._table_name_
+	raw_indexes = IndexesToCreate.get(table, [])
 
 	parsed_indexes = []   # list of {'fields', 'unique', 'name', 'sql'}
 	pk_attrs = None
@@ -1308,6 +1429,12 @@ def initialize_model(model_cls):
 			col_exprs.append((field, direction, dir_str))
 
 		index_name = table + "_" + "_".join(f"{f}_{d}".lower() for f, _, d in col_exprs)
+		if len(index_name) > _MAX_IDENTIFIER_LEN:
+			# Postgres silently truncates identifiers to 63 bytes, which would make
+			# the declared name never match the stored one — reported as index
+			# drift on every boot. Truncate ourselves, keeping it unique.
+			digest = hashlib.md5(index_name.encode()).hexdigest()[:8]
+			index_name = index_name[:_MAX_IDENTIFIER_LEN - 9] + "_" + digest
 
 		# First unique index → pk_attrs
 		if is_unique and (pk_attrs is None or len(fields) < len(pk_attrs)):
@@ -1322,12 +1449,25 @@ def initialize_model(model_cls):
 		})
 
 	# ── 3. Derive pk_attrs ───────────────────────────────────────────────────
-
-	# ── 3. Derive pk_attrs ───────────────────────────────────────────────────
 	if not pk_attrs:
-		_id_attr = model_cls._attrs_["_id"] = Attribute(int, auto_increment=True)
-		attrs_to_name[id(_id_attr)] = "_id"
-		pk_attrs = ["_id"]
+		if "_id" in attrs:
+			# mongo_orm falls back to the always-unique `_id` when no declared
+			# index qualifies as the primary key — which includes models whose
+			# only declarations are non-unique. Mirror that, keeping the
+			# Attribute the model declared rather than replacing it with a
+			# BIGSERIAL of our own.
+			pk_attrs = ["_id"]
+			parsed_indexes.insert(0, {
+				'fields': [("_id", ASCENDING)],
+				'unique': True,
+				'condition': None,
+				'name': table + "__id_asc",
+				'col_exprs': [("_id", ASCENDING, "ASC")],
+			})
+		else:
+			_id_attr = model_cls._attrs_["_id"] = Attribute(int, auto_increment=True)
+			attrs_to_name[id(_id_attr)] = "_id"
+			pk_attrs = ["_id"]
 
 	model_cls._pk_attrs_ = pk_attrs
 
@@ -1446,10 +1586,8 @@ def initialize_postgres(db_nodes):
 		raise Exception(
 			f"argument must be a list of dicts, or a single dict, not {type(db_nodes)}"
 		)
-	# set default db node for each class; skip mongo-only models (no _table_name_)
+	# set default db node for each class;
 	for cls in all_subclasses(Model):
-		if not getattr(cls, "_table_name_", None):
-			continue
 		if not getattr(cls, "_db_node_", None):
 			cls._db_node_ = db_nodes[0]
 		initialize_model(cls)

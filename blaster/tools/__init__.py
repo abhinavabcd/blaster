@@ -2318,7 +2318,11 @@ def xmltodict(xml_node, attributes=False):
 
 def mask_strings(val, mask_char="*"):
 	if(isinstance(val, str)):
-		val = (val[:2] + mask_char * (len(val) - 2)) if val else val
+		if(" " in val):
+			# mask each word separately
+			val = " ".join(mask_strings(v, mask_char) for v in val.split(" "))
+		else:
+			val = (val[:2] + mask_char * (len(val) - 2)) if val else val
 	elif(isinstance(val, (list, tuple))):
 		val = [mask_strings(v, mask_char) for v in val]
 	elif(isinstance(val, dict)):
