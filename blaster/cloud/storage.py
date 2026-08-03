@@ -146,3 +146,14 @@ elif(UPLOADS_S3_CLIENT_POOL_NAME and UPLOADS_S3_BUCKET):
             Params={'Bucket': UPLOADS_S3_BUCKET, 'Key': file_path},
             ExpiresIn=expires_in  # Expires in 1 hour
         )
+
+else:
+    # DUMMY FUNCTIONS THAT THROW EXCEPTION IF CALLED
+    def generate_upload_url(*args, **kwargs):
+        raise Exception("No cloud storage configured")
+
+    def upload_file_obj(*args, **kwargs):
+        raise Exception("No cloud storage configured")
+
+    def upload_file_obj_private(*args, **kwargs):
+        raise Exception("No cloud storage configured")

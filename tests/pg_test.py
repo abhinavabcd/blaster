@@ -677,6 +677,60 @@ class TestMongoStyleDeclarations(unittest.TestCase):
 		item.update({"$push": {"data.events": "b"}})
 		self.assertEqual(MongoStyleModel.get(item._id).data, {"events": ["a", "b"]})
 
+	def test_update_reflects_into_the_object_without_refetching(self):
+		'''update() must leave the object reporting what actually landed.'''
+		item = MongoStyleModel(_id=uid(), session_id="s7", data={"keep": 1}).commit()
+
+		item.update({"$set": {"data.verified": True, "session_id": "s7-renamed"}})
+		# no re-read here — the object itself has to be current
+		self.assertEqual(item.data, {"keep": 1, "verified": True})
+		self.assertEqual(item.session_id, "s7-renamed")
+
+		item.update({"$inc": {"data.hits": 2}})
+		self.assertEqual(item.data["hits"], 2)
+
+		item.update({"$push": {"data.events": "a"}})
+		self.assertEqual(item.data["events"], ["a"])
+
+		item.update({"$unset": {"data.keep": 1}})
+		self.assertNotIn("keep", item.data)
+
+		# and it matches what another reader sees
+		self.assertEqual(MongoStyleModel.get(item._id).data, item.data)
+
+	def test_update_reflects_a_concurrent_inc(self):
+		'''$inc is computed by the DB, so the object takes the DB's answer.'''
+		item = MongoStyleModel(_id=uid(), session_id="s8").commit()
+		MongoStyleModel.get(item._id).update({"$inc": {"data.hits": 5}})
+
+		item.update({"$inc": {"data.hits": 1}})
+		self.assertEqual(item.data["hits"], 6)
+
+	def test_commit_of_tracked_changes_reflects(self):
+		item = MongoStyleModel(_id=uid(), session_id="s9").commit()
+		loaded = MongoStyleModel.get(item._id)
+		loaded.data["via"] = "attribute"
+		loaded.commit()
+		self.assertEqual(loaded.data, {"via": "attribute"})
+		self.assertEqual(MongoStyleModel.get(item._id).data, {"via": "attribute"})
+
+	def test_create_table_adds_a_column_the_table_is_missing(self):
+		'''
+		Adding a column=True attribute to a model that already has a table must
+		reach the table — CREATE TABLE IF NOT EXISTS alone would leave it out and
+		every later SELECT would fail on the missing column.
+		'''
+		table = MongoStyleModel._table_name_
+		with MongoStyleModel._db_node_.use_conn() as conn:
+			with conn.cursor() as cur:
+				cur.execute(f"ALTER TABLE {table} DROP COLUMN IF EXISTS session_id")
+			conn.commit()
+
+		MongoStyleModel.create_table()
+
+		item = MongoStyleModel(_id=uid(), session_id="restored").commit()
+		self.assertEqual(MongoStyleModel.get(item._id).session_id, "restored")
+
 	def test_query_by_dotted_jsonb_path(self):
 		a = MongoStyleModel(_id=uid(), session_id="s6", data={"valid_until": 100}).commit()
 		MongoStyleModel(_id=uid(), session_id="s6", data={"valid_until": 900}).commit()

@@ -497,6 +497,28 @@ class Model:
 
 	# ── Serialization ────────────────────────────────────────────────────────
 
+	def to_dict(self):
+		"""
+		The record as a plain dict: every attribute that has a value, with
+		dicts/lists unwrapped from their change-tracking wrappers.
+
+		Mirrors mongo_orm.Model.to_dict so models shared between the two ORMs
+		can call it (and super() into it) either way.
+		"""
+		_json = {}
+		for name in self.__class__._attrs_:
+			value = getattr(self, name, None)
+			if value is None:
+				continue
+			if isinstance(value, PgDict):
+				value = value.copy()
+			elif isinstance(value, PgList):
+				value = value.copy()
+			_json[name] = value
+		if (_id := _json.get("_id")) is not None:
+			_json["_id"] = str(_id)
+		return _json
+
 	def _to_doc(self):
 		doc = {}
 		inst = vars(self)  # instance __dict__ only; avoids picking up class-level Attribute objects
@@ -885,8 +907,8 @@ class Model:
 		all_params = []
 
 		# JSONB expression (only when there are non-column updates)
-		has_jsonb_inc = bool(json_updates.get("$inc") or json_updates.get("$push"))
-		if any(json_updates.get(op) for op in ("$set", "$unset", "$inc", "$push")):
+		has_jsonb_update = any(json_updates.get(op) for op in ("$set", "$unset", "$inc", "$push"))
+		if has_jsonb_update:
 			expr, jparams, _ = cls._build_update_expr(json_updates)
 			set_clauses.append(f"__ = {expr}")
 			all_params.extend(jparams)
@@ -913,9 +935,13 @@ class Model:
 		where_parts = [pk_conditions, "_ = %s"] + extra_conds
 		where = " AND ".join(where_parts)
 
-		# Always RETURNING col attrs so local state stays in sync after column INC
+		# RETURNING keeps the in-memory object in step with the row that was
+		# actually written, so callers never have to re-read after an update.
+		# The whole __ document comes back for any JSONB write, not just $inc and
+		# $push: a $set/$unset lands inside __ too, and without it the object
+		# would still report the old value for anything stored there.
 		returning_cols = ["_"]
-		if has_jsonb_inc:
+		if has_jsonb_update:
 			returning_cols.append("__")
 		returning_cols.extend(col_attrs.keys())
 		returning = "RETURNING " + ", ".join(returning_cols)
@@ -1233,13 +1259,27 @@ class Model:
 	@classmethod
 	def create_table(cls):
 		"""
-		Create the table and all declared indexes if they don't already exist.
+		Create the table and all declared indexes if they don't already exist,
+		and add any column=True attribute the table is missing.
+
 		initialize_model() must be called first so _pk_attrs_ is populated.
+
+		The ADD COLUMN pass is what makes adding an attribute to an existing
+		model work: CREATE TABLE IF NOT EXISTS is a no-op once the table is
+		there, so without it a new column=True field would be selected for and
+		never exist. Only ever additive — nothing is dropped or retyped, so an
+		attribute that was removed or whose type changed still needs a migration
+		written by hand.
 		"""
 		table_sql = cls._build_create_table_sql()
 		with cls._db_node_.use_conn() as conn:
 			with conn.cursor() as cur:
 				cur.execute(table_sql)
+				for name, attr in cls._col_attrs_.items():
+					pg_type = "BIGINT" if attr.auto_increment else _PY_TO_PG_TYPE.get(attr.type, "TEXT")
+					cur.execute(
+						f"ALTER TABLE {cls._table_name_} ADD COLUMN IF NOT EXISTS {name} {pg_type}"
+					)
 				for index_spec in cls._indexes_:
 					cur.execute(index_spec['sql'])
 			conn.commit()
