@@ -230,6 +230,15 @@ class TestListAndDict(unittest.TestCase):
         p["b"]["c"] = 1
 
         self.assertDictEqual(a._set_query_updates, {})
+        a.h = {"a": {"b": {"c": [1, 2, 3]}}}
+        a.commit()
+
+        l = a.h["a"]["b"]["c"]
+        l.append(4)
+        a.h["a"]["b"]["c"] = l
+        self.assertDictEqual(a._set_query_updates, {"h.a.b.c": [1, 2, 3, 4]})
+        a.commit()
+        self.assertDictEqual(a.h, {"a": {"b": {"c": [1, 2, 3, 4]}}})
 
 
 class TestSnippets(unittest.TestCase):

@@ -109,7 +109,7 @@ class MongoList(list):
 	def __setitem__(self, k, v):
 		_model_obj = self._model_obj
 		if(not self._is_local):
-			_model_obj._set_query_updates[self.path + "." + str(k)] = v
+			_model_obj._set_query_updates_with_no_conflicts(self.path + "." + str(k), v)
 		elif(_model_obj._initializing_):
 			# recursively create custom dicts/list when
 			# loading object from db
@@ -202,7 +202,7 @@ class MongoList(list):
 
 	def clear(self):
 		super().clear()
-		self._model_obj._set_query_updates[self.path] = self
+		self._model_obj._set_query_updates_with_no_conflicts(self.path, self)
 		self._is_local = True  # Hack for new object
 
 	def copy(self) -> dict:
@@ -557,7 +557,9 @@ class Model(object):
 			# change type of objects when setting them
 			_attr_obj_type = _attr_obj._type
 			if(not self._initializing_):
-				self._set_query_updates[k] = self.__validate_setattr(_attr_obj, k, v)
+				self._set_query_updates_with_no_conflicts(
+					k, self.__validate_setattr(_attr_obj, k, v)
+				)
 			else:  # LOADING DATA FROM DB
 				# while initializing it, we tranform db data to objects fields
 				if(_attr_obj_type in LIST_OR_DICT_TYPE):
@@ -652,25 +654,26 @@ class Model(object):
 			cls._cache_[self.pk_tuple()] = doc
 
 	def _set_query_updates_with_no_conflicts(self, path, v):
-		# if there is a subpath of this path, remove it from updates
-		conflicting_keys_updates_to_remove = None
-		path_len = len(path)
-		for _path in self._set_query_updates.keys():
-			# a.b was set, and now a is being set
-			# this is kinda acceptable frequently used case
-			if(
-				len(_path) > path_len  # longer path
-				and _path.startswith(path) 	# current one can override
-				and _path[path_len] == "."
-			):  # prefix
-				if(conflicting_keys_updates_to_remove is None):
-					conflicting_keys_updates_to_remove = []
-				conflicting_keys_updates_to_remove.append(_path)
+		# Mongo cannot apply two update operators to the same path or to a
+		# parent/child pair of paths.  The latest assignment is authoritative, so
+		# discard every earlier overlapping update, including list operations.
+		def paths_conflict(old_path):
+			return (
+				old_path == path
+				or old_path.startswith(path + ".")
+				or path.startswith(old_path + ".")
+			)
 
-		# remove conflicting keys if found
-		if(conflicting_keys_updates_to_remove is not None):
-			for _path in conflicting_keys_updates_to_remove:
-				del self._set_query_updates[_path]
+		for old_path in [
+			old_path for old_path in self._set_query_updates
+			if paths_conflict(old_path)
+		]:
+			del self._set_query_updates[old_path]
+		for operator, updates in list(self._other_query_updates.items()):
+			for old_path in [old_path for old_path in updates if paths_conflict(old_path)]:
+				del updates[old_path]
+			if(not updates):
+				del self._other_query_updates[operator]
 
 		self._set_query_updates[path] = v
 
