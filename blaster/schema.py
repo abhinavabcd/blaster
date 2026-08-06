@@ -518,8 +518,6 @@ def schema(x, default=_OBJ_END_):
 			if("_fields_" not in _base.__dict__):
 				schema(_base)
 			_fields_.update(_base._fields_)
-		for _name, _type in getattr(x, "__annotations__", {}).items():
-			_fields_[_name] = {"type": _type, "default": x.__dict__.get(_name, _OBJ_END_)}
 		for _name, _field in x.__dict__.items():
 			if(isinstance(_field, Field)):
 				_fields_[_name] = {
@@ -528,6 +526,8 @@ def schema(x, default=_OBJ_END_):
 					"description": _field.description
 				}
 				setattr(x, _name, _field.default)
+		for _name, _type in getattr(x, "__annotations__", {}).items():
+			_fields_[_name] = {"type": _type, "default": x.__dict__.get(_name, _OBJ_END_)}
 
 		for _name, _field_data in _fields_.items():
 			_type = _field_data["type"]
