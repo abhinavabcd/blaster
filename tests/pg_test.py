@@ -177,6 +177,28 @@ class TestBasicCRUD(TestSetup):
 		# with limit/offset we just check count is bounded
 		self.assertLessEqual(len(results), 3)
 
+	def test_get_and_query_projections(self):
+		user = User(
+			id=uid(), name="Projected", age=37, meta={"city": "Amsterdam"}, tags=["private"]
+		).commit()
+
+		# String field names work for get(), including a field stored in JSONB.
+		fetched = User.get(user.id, projections=["name", "meta"])
+		self.assertEqual(fetched.id, user.id)  # primary key is loaded implicitly
+		self.assertEqual(fetched.name, "Projected")
+		self.assertEqual(fetched.meta, {"city": "Amsterdam"})
+		self.assertEqual(fetched.age, 0)  # its declared default, not the stored value
+		self.assertEqual(fetched.tags, [])
+		self.assertEqual(set(fetched._row_), {"_", "id", "name", "__"})
+		self.assertEqual(fetched._row_["__"], {"meta": {"city": "Amsterdam"}})
+
+		# Attribute objects work too, and query() uses the same projection path.
+		result = next(iter(User.query({"id": user.id}, projections=[User.age, User.meta])))
+		self.assertEqual(result.age, 37)
+		self.assertEqual(result.meta, {"city": "Amsterdam"})
+		self.assertNotIn("name", result._row_)
+		self.assertNotIn("tags", result._row_["__"])
+
 	def test_dont_update_empty_fields(self):
 		u = User(id=uid(), name="EmptyList")
 		u.commit()

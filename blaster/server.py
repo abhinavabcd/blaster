@@ -27,7 +27,7 @@ from .logging import LOG_ERROR, LOG_SERVER, LOG_WARN, LOG_DEBUG, log_ctx
 from .schema import Object, schema as schema_func
 from .websocket.server import WebSocketServerHandler
 from .config import IS_DEV, BLASTER_HTTP_TOOK_LONG_WARN_THRESHOLD
-
+from .utils.fork import _has_forked
 
 HTTP_SOCKET_MAX_TIMEOUT = 40
 if(IS_DEV):
@@ -647,13 +647,14 @@ class App:
 			self.generate_openapi_doc(handler)
 
 		class CustomStreamServer(StreamServer):
-			def do_close(self, *args):
-				return
 
 			@classmethod
 			def get_listener(cls, address, backlog=None, family=None):
 				sock = GeventSocket(family=family)
-				sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+				# allow immediate rebind, skipping the TIME_WAIT delay on restart
+				sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+				if(_has_forked):
+					sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
 				sock.bind(address)
 				sock.listen(backlog or cls.backlog or 256)
 				sock.setblocking(0)

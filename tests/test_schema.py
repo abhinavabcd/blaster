@@ -46,6 +46,10 @@ class Test6(Object):
 	a = Field(list[int] | list[str], "hello", "a description")
 
 
+class Test7(Object):
+	address: dict = None
+
+
 schema.init()
 
 
@@ -53,6 +57,9 @@ class TestTools(unittest.TestCase):
 	def setUp(self):
 		self.maxDiff = 2048
 	def test_1(self):
+		address = Test7.from_dict({"address": "221B Baker Street"})
+		self.assertIsNone(address.address)
+
 		with self.assertRaises(Exception) as context:
 			t = Test1.from_dict({"a": [1, 2, 3], "b": "1", "c": None, "e": "1"})
 

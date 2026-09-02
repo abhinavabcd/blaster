@@ -301,7 +301,7 @@ class Attribute:
 		self.type = _type
 		self.default = default
 		if(column is _NOT_SET):
-			column = True if _type in (int, float, str, bool) else False
+			column = True if _type in (int, float, str, bool, bytes) else False
 		self.column = column or auto_increment  # True → stored as a real DB column instead of inside __
 		self.auto_increment = auto_increment  # True → BIGSERIAL; DB generates value on INSERT
 		self.kwargs = kwargs
@@ -327,7 +327,7 @@ class Attribute:
 	def coerce(self, value):
 		if value is None:
 			return None
-		if self.type in (int, float, str, bool):
+		if self.type in (int, float, str, bool, bytes):
 			try:
 				return self.type(value)
 			except (ValueError, TypeError):
@@ -547,13 +547,14 @@ class Model:
 
 		col_attrs = cls._col_attrs_
 		for name, attr in cls._attrs_.items():
-			# column=True fields are read directly from the row, not from __
+			# Primary-key and column=True fields are read directly from the row,
+			# rather than from __.
 			if partial:
-				if name in col_attrs:
+				if name in cls._pk_attrs_ or name in col_attrs:
 					if name not in row: continue
 				else:
 					if "__" not in row: continue
-			source = row if name in col_attrs else row["__"]
+			source = row if name in cls._pk_attrs_ or name in col_attrs else row["__"]
 			value = source.get(name, _NOT_SET)
 			if value is not _NOT_SET:  # exists
 				value = attr.coerce(value)
@@ -584,6 +585,53 @@ class Model:
 
 	def _pk_values(self):
 		return [getattr(self, pk) for pk in self.__class__._pk_attrs_]
+
+	@classmethod
+	def _build_select_columns(cls, projections):
+		"""Return SELECT columns and parameters for an optional field projection.
+
+		Primary-key fields and the optimistic-lock version (``_``) are always
+		included so a projected result remains a usable Model instance. JSONB
+		fields are reconstructed into a small ``__`` document in PostgreSQL,
+		which avoids transferring unprojected JSONB fields to the client.
+		"""
+		all_column_names = list(cls._pk_attrs_) + list(cls._col_attrs_.keys())
+		if projections is None:
+			return "_, __" + (", " + ", ".join(all_column_names) if all_column_names else ""), []
+
+		if isinstance(projections, (str, Attribute)):
+			projections = [projections]
+
+		projection_names = []
+		for field in projections:
+			name = field.attr_name if isinstance(field, Attribute) else field
+			if not isinstance(name, str):
+				raise TypeError("projections must contain field names or Attribute objects")
+			if name not in cls._attrs_:
+				raise ValueError(f"{cls.__name__} has no field named {name!r}")
+			if name not in projection_names:
+				projection_names.append(name)
+
+		selected_columns = list(cls._pk_attrs_)
+		selected_columns.extend(
+			name for name in projection_names
+			if name in cls._col_attrs_ and name not in selected_columns
+		)
+		json_names = [name for name in projection_names if name not in all_column_names]
+
+		select_columns = ["_"] + selected_columns
+		if json_names:
+			select_columns.append(
+				"COALESCE((SELECT jsonb_object_agg(projection.field, __ -> projection.field) "
+				"FROM unnest(%s::text[]) AS projection(field) "
+				"WHERE __ ? projection.field), '{}'::jsonb) AS __"
+			)
+			return ", ".join(select_columns), [json_names]
+
+		# Keep the __ key present for _from_doc(), without reading the table's
+		# JSONB column when no JSONB fields were requested.
+		select_columns.append("'{}'::jsonb AS __")
+		return ", ".join(select_columns), []
 
 	@classmethod
 	def _build_conditions_sql(cls, _query):
@@ -1058,22 +1106,35 @@ class Model:
 			lock_handle._acquired = True
 			return lock_handle
 
-		# DB lock: atomically claim the lock field if absent or expired
+		# DB lock: atomically claim the lock field if absent or expired, via raw SQL
+		# (skips self.update()'s generic JSONB-diff/optimistic-lock machinery entirely)
 		count = 0
 		cls = self.__class__
+		pk_conditions = cls._pk_conditions()
+		pk_values = self._pk_values()
+		sql = (
+			f"UPDATE {cls._table_name_} "
+			f"SET __ = jsonb_set(__, %s::text[], %s::jsonb, true), _ = %s "
+			f"WHERE {pk_conditions} AND "
+			f"((__->>%s::text) IS NULL OR (__->>%s::text)::bigint < %s) "
+			f"RETURNING _"
+		)
 		while cur_ms() - start_timestamp < timeout:
 			count += 1
 			cur_timestamp = cur_ms()
 			locked_until = cur_timestamp + can_hold_until
-			if self.update(
-				{"$set": {lock_name: locked_until}},
-				conditions={
-					"$or": [
-						{lock_name: None},
-						{lock_name: {"$lt": cur_timestamp}},
-					]
-				},
-			):
+			params = [
+				[lock_name], json.dumps(locked_until), cur_timestamp,
+				*pk_values,
+				lock_name, lock_name, cur_timestamp,
+			]
+			with cls._db_node_.use_conn() as conn:
+				with conn.cursor() as cur:
+					cur.execute(sql, params)
+					result = cur.fetchone()
+				conn.commit()
+			if result:
+				object.__setattr__(self, '_', result['_'])
 				self.__locks[lock_name] = locked_until
 				lock_handle._acquired = True
 				return lock_handle
@@ -1101,10 +1162,18 @@ class Model:
 		if not force and lock_name not in self.__locks:
 			return
 		if not object.__getattribute__(self, '_is_create_new_'):
-			self.update(
-				{"$unset": {lock_name: 1}},
-				conditions=None if force else {lock_name: str(self.__locks[lock_name])},
-			)
+			cls = self.__class__
+			pk_conditions = cls._pk_conditions()
+			pk_values = self._pk_values()
+			sql = f"UPDATE {cls._table_name_} SET __ = __ - %s::text, _ = %s WHERE {pk_conditions}"
+			params = [lock_name, cur_ms(), *pk_values]
+			if not force:
+				sql += " AND (__->>%s::text) = %s"
+				params += [lock_name, str(self.__locks[lock_name])]
+			with cls._db_node_.use_conn() as conn:
+				with conn.cursor() as cur:
+					cur.execute(sql, params)
+				conn.commit()
 		self.__locks.pop(lock_name, None)
 
 	def delete(self):
@@ -1120,7 +1189,9 @@ class Model:
 		cls._trigger_event(EVENT_AFTER_DELETE, self)
 
 	@classmethod
-	def get(cls: Type[T], *pk_args, _replica: bool = False, **pk_kwargs) -> Optional[T]:
+	def get(
+		cls: Type[T], *pk_args, _replica: bool = False, projections=None, **pk_kwargs
+	) -> Optional[T]:
 		"""
 		Fetch a single record by primary key fields.
 
@@ -1137,6 +1208,8 @@ class Model:
 		positionally aligned with the input.
 
 		_replica=True routes the read to the replica node (if configured on _db_node_).
+		projections optionally limits loaded fields, e.g. ``projections=[User.name, "meta"]``.
+		Primary-key fields and ``_`` are always loaded internally.
 		"""
 		pk_attrs = cls._pk_attrs_
 		many = len(pk_args) == 1 and isinstance(pk_args[0], (list, set))
@@ -1175,12 +1248,11 @@ class Model:
 			where, limit = cls._pk_conditions(), " LIMIT 1"
 
 		node = cls._db_node_._get_replica() if _replica else cls._db_node_
-		col_names = list(cls._col_attrs_.keys())
-		select_cols = "_, __" + (", " + ", ".join(col_names) if col_names else "")
+		select_cols, select_params = cls._build_select_columns(projections)
 		sql = f"SELECT {select_cols} FROM {cls._table_name_} WHERE {where}{limit}"
 		with node.use_conn() as conn:
 			with conn.cursor() as cur:
-				cur.execute(sql, params)
+				cur.execute(sql, select_params + params)
 				rows = cur.fetchall() if many else cur.fetchone()
 		if many:
 			return [cls.__new__(cls)._from_doc(row) for row in rows]
@@ -1194,6 +1266,7 @@ class Model:
 		limit: int = None,
 		offset: int = None,
 		_replica: bool = False,
+		projections=None,
 	) -> Iterator[T]:
 		"""
 		Query records with MongoDB-style filter syntax.
@@ -1202,6 +1275,8 @@ class Model:
 		PK fields are compared against real columns; all others via JSONB.
 
 		_replica=True routes the read to the replica node (if configured on _db_node_).
+		projections optionally limits loaded fields, e.g. ``projections=[User.name, "meta"]``.
+		Primary-key fields and ``_`` are always loaded internally.
 
 		Example:
 		    User.query({'age': {'$gte': 18}}, sort=[('name', 1)], limit=10, _replica=True)
@@ -1223,13 +1298,12 @@ class Model:
 		limit_clause = f"LIMIT {int(limit)}" if limit is not None else ""
 		offset_clause = f"OFFSET {int(offset)}" if offset is not None else ""
 
-		col_names = list(cls._col_attrs_.keys())
-		select_cols = "_, __" + (", " + ", ".join(col_names) if col_names else "")
+		select_cols, select_params = cls._build_select_columns(projections)
 		sql = f"SELECT {select_cols} FROM {cls._table_name_} {where} {order} {limit_clause} {offset_clause}".strip()
 
 		with node.use_conn() as conn:
 			with conn.cursor() as cur:
-				cur.execute(sql, params)
+				cur.execute(sql, select_params + params)
 				rows = cur.fetchall()
 
 		for row in rows:
@@ -1560,7 +1634,7 @@ def initialize_model(model_cls):
 			create_sql = model_cls._build_create_table_sql()
 			index_sqls = "\n".join(spec['sql'] + ";" for spec in indexes)
 			_loading_errors.append(MissingTableError(
-				f"Table '{table}' does not exist. Create it with:\n\n"
+				f"-- Table '{table}' does not exist. Create it with:\n\n"
 				f"{create_sql};\n\n{index_sqls}"
 			))
 	else:
