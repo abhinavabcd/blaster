@@ -27,6 +27,10 @@ class User(Model):
 	INDEX((id, ASCENDING), {"unique": True})
 	INDEX(name, {"unique": False})
 	INDEX((age, DESCENDING), {"unique": False})
+	INDEX("""CREATE INDEX IF NOT EXISTS pg_test_users_meta_rank_desc
+		ON public.pg_test_users USING btree
+		(((__ #>> '{meta,rank}'::text[])::bigint) DESC NULLS FIRST)
+		TABLESPACE pg_default;""")
 
 
 class UserAddress(Model):
@@ -525,6 +529,20 @@ class TestPkFromIndex(TestSetup):
 		self.assertIn("pg_test_users_id_asc", index_names)
 		self.assertIn("pg_test_users_name_asc", index_names)
 		self.assertIn("pg_test_users_age_desc", index_names)
+		self.assertIn("pg_test_users_meta_rank_desc", index_names)
+
+	def test_raw_create_index_is_created(self):
+		raw_spec = next(spec for spec in User._indexes_ if spec.get("raw"))
+		self.assertNotIn("\n", raw_spec["sql"])
+		self.assertIn(
+			"ON public.pg_test_users USING btree (((__ #>> '{meta,rank}'::text[])::bigint)",
+			raw_spec["sql"],
+		)
+		with User._db_node_.use_conn() as conn:
+			with conn.cursor() as cur:
+				cur.execute("SELECT to_regclass('public.pg_test_users_meta_rank_desc') AS index")
+				row = cur.fetchone()
+		self.assertEqual(row["index"], "pg_test_users_meta_rank_desc")
 
 
 class TestDefaultIdIndex(unittest.TestCase):

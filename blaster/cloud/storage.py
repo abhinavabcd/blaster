@@ -64,18 +64,20 @@ if(UPLOADS_GCLOUD_BUCKET):
     @use_connection_pool(gcloud_storage="gcloud_storage")
     def upload_file_obj_private(
         file_path, file_obj, mime_type=None,
-        expires_in=8 * 3600, gcloud_storage=None  # seconds
+        expires_in=8 * 3600, return_url=True, gcloud_storage=None,  # seconds
     ):
         if(not mime_type):
             mime_type = FILE_EXTENSION_TO_MIME_TYPE[os.path.splitext(file_path)[1]]
         bucket = gcloud_storage.bucket(UPLOADS_GCLOUD_BUCKET)
         blob = bucket.blob(file_path)
         blob.upload_from_file(file_obj, content_type=mime_type)
-        return blob.generate_signed_url(
-            version="v4",
-            expiration=timedelta(seconds=expires_in),
-            method="GET"
-        )
+        if return_url:
+            return blob.generate_signed_url(
+                version="v4",
+                expiration=timedelta(seconds=expires_in),
+                method="GET"
+            )
+        return None
 
 # decide uploading via s3 or gcloud
 elif(UPLOADS_S3_CLIENT_POOL_NAME and UPLOADS_S3_BUCKET):
@@ -130,7 +132,8 @@ elif(UPLOADS_S3_CLIENT_POOL_NAME and UPLOADS_S3_BUCKET):
     @use_connection_pool(s3_client=UPLOADS_S3_CLIENT_POOL_NAME)
     def upload_file_obj_private(
         file_path, file_obj, mime_type=None,
-        expires_in=8 * 3600, s3_client=None
+        expires_in=8 * 3600, s3_client=None,
+        return_url=True,
     ):
         if(not mime_type):
             mime_type = FILE_EXTENSION_TO_MIME_TYPE[os.path.splitext(file_path)[1]]
@@ -141,11 +144,13 @@ elif(UPLOADS_S3_CLIENT_POOL_NAME and UPLOADS_S3_BUCKET):
             ExtraArgs={"ContentType": mime_type}
         )
 
-        return s3_client.generate_presigned_url(
-            'get_object',
-            Params={'Bucket': UPLOADS_S3_BUCKET, 'Key': file_path},
-            ExpiresIn=expires_in  # Expires in 1 hour
-        )
+        if return_url:
+            return s3_client.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': UPLOADS_S3_BUCKET, 'Key': file_path},
+                ExpiresIn=expires_in  # Expires in 1 hour
+            )
+        return None
 
 else:
     # DUMMY FUNCTIONS THAT THROW EXCEPTION IF CALLED

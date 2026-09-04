@@ -1,6 +1,7 @@
 import hashlib
 import inspect
 import json
+import re
 import time
 from contextlib import contextmanager
 from typing import TypeVar, Type, Iterator, Optional
@@ -30,6 +31,14 @@ _NOT_SET = object()
 
 # Postgres truncates any identifier longer than this (NAMEDATALEN - 1)
 _MAX_IDENTIFIER_LEN = 63
+
+_PG_IDENTIFIER_PATTERN = r'(?:"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*)'
+_RAW_INDEX_PATTERN = re.compile(
+	rf'^\s*CREATE\s+(?P<unique>UNIQUE\s+)?INDEX\s+'
+	rf'(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?'
+	rf'(?:{_PG_IDENTIFIER_PATTERN}\.)?(?P<name>{_PG_IDENTIFIER_PATTERN})\s+ON\b',
+	re.IGNORECASE | re.DOTALL,
+)
 
 # pg type map for create_table
 _PY_TO_PG_TYPE = {
@@ -81,12 +90,24 @@ def _is_field_spec(item):
 	return len(item) == 1 or isinstance(item[1], int)
 
 
+def _is_raw_index_sql(item):
+	return (
+		isinstance(item, str)
+		and re.match(r'^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\b', item, re.IGNORECASE) is not None
+	)
+
+
 def INDEX(*indexes):
 	"""
 	Declare indexes for the enclosing Model class.
 	Must be called inside the class body, after _table_name_/_collection_name_ is set.
 
-	Two declaration styles are accepted, and may be mixed in one call.
+	Three declaration styles are accepted, and may be mixed in one call.
+
+	raw PostgreSQL SQL — a string beginning with CREATE INDEX:
+
+	    INDEX('''CREATE INDEX IF NOT EXISTS users_next_run_at_desc
+	        ON users (((__ #>> '{next_scheduled_run,at}')::bigint) DESC)''')
 
 	pg_orm style — the whole call declares ONE (possibly compound) index, where
 	each positional arg is either a field spec or an options dict:
@@ -111,7 +132,9 @@ def INDEX(*indexes):
 	declarations = []
 	own_index = []  # field specs/options belonging to this call itself (pg style)
 	for item in indexes:
-		if isinstance(item, dict) or _is_field_spec(item):
+		if _is_raw_index_sql(item):
+			declarations.append(item)
+		elif isinstance(item, dict) or _is_field_spec(item):
 			own_index.append(item)
 		else:
 			declarations.append(item)  # a complete nested index (mongo style)
@@ -1428,6 +1451,25 @@ def _parse_index_declaration(raw_index, attrs_to_name):
 	return fields, props
 
 
+def _parse_raw_index_sql(index_sql):
+	"""Return ORM index metadata extracted from a raw CREATE INDEX statement."""
+	match = _RAW_INDEX_PATTERN.match(index_sql)
+	if match is None:
+		raise ValueError("Raw index SQL must begin with a valid CREATE INDEX statement")
+	normalized_sql = re.sub(r'\n\s*', ' ', index_sql).strip()
+	index_name = match.group("name")
+	if index_name.startswith('"'):
+		index_name = index_name[1:-1].replace('""', '"')
+	return {
+		'fields': [],
+		'unique': bool(match.group("unique")),
+		'condition': None,
+		'name': index_name,
+		'sql': normalized_sql,
+		'raw': True,
+	}
+
+
 def _table_exists(db_node, table_name):
 	"""Return True/False if the table exists, or None if the DB is unreachable."""
 	try:
@@ -1520,10 +1562,14 @@ def initialize_model(model_cls):
 	table = model_cls._table_name_
 	raw_indexes = IndexesToCreate.get(table, [])
 
-	parsed_indexes = []   # list of {'fields', 'unique', 'name', 'sql'}
+	parsed_indexes = []   # field-based index declarations awaiting SQL generation
+	raw_index_specs = []  # complete CREATE INDEX statements supplied by the model
 	pk_attrs = None
 
 	for raw_index in raw_indexes:
+		if _is_raw_index_sql(raw_index):
+			raw_index_specs.append(_parse_raw_index_sql(raw_index))
+			continue
 		fields, props = _parse_index_declaration(raw_index, attrs_to_name)
 		if not fields:
 			continue
@@ -1615,6 +1661,7 @@ def initialize_model(model_cls):
 			'name': spec['name'],
 			'sql': index_sql,
 		})
+	indexes.extend(raw_index_specs)
 
 	model_cls._indexes_ = indexes
 
@@ -1658,6 +1705,10 @@ def initialize_model(model_cls):
 
 			# Declared but not in DB → missing, warn
 			for spec in indexes:
+				# Raw CREATE INDEX statements are user-managed SQL and may contain
+				# expressions that the ORM cannot meaningfully compare for drift.
+				if spec.get('raw'):
+					continue
 				if spec['name'] not in existing_names:
 					LOG_WARN(
 						"pg_orm_missing_index",
