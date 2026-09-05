@@ -15,21 +15,27 @@ from ..config import UPLOADS_S3_BUCKET, UPLOADS_S3_CLIENT_POOL_NAME, \
 
 if(UPLOADS_GCLOUD_BUCKET):
     @use_connection_pool(gcloud_storage="gcloud_storage")
-    def generate_upload_url(file_path, mime_type=None, gcloud_storage=None):
+    def generate_upload_url(
+        file_path, mime_type=None, max_file_size=None, gcloud_storage=None
+    ):
         if(not mime_type):
             mime_type = FILE_EXTENSION_TO_MIME_TYPE[os.path.splitext(file_path)[1]]
 
         bucket = gcloud_storage.bucket(UPLOADS_GCLOUD_BUCKET)
         blob = bucket.blob(file_path)  # name of file to be saved/uploaded to storage
+        headers = {
+            "x-goog-acl": "public-read",
+            "Content-Type": mime_type
+        }
+        if(max_file_size is not None):
+            headers["x-goog-content-length-range"] = f"0,{max_file_size}"
+
         url = blob.generate_signed_url(
             version='v4',
             expiration=timedelta(minutes=30),
             method='PUT',
             content_type=mime_type,
-            headers={
-                "x-goog-acl": "public-read",
-                "Content-Type": mime_type
-            }
+            headers=headers
         )
         # bucket.cors = [{
         #   'origin': ['http://localhost:3000', 'https://localhost', 'https://preludio.io'],
@@ -44,10 +50,7 @@ if(UPLOADS_GCLOUD_BUCKET):
             "method": "PUT",
             # after shit ton of trial and error, this started working
             # if you wish to change, be careful to test it
-            "headers": {
-                "x-goog-acl": "public-read",
-                "Content-Type": mime_type
-            },
+            "headers": headers,
         }, f"https://storage.googleapis.com/{UPLOADS_GCLOUD_BUCKET}/{file_path}"
 
     @use_connection_pool(gcloud_storage="gcloud_storage")
@@ -83,7 +86,8 @@ if(UPLOADS_GCLOUD_BUCKET):
 elif(UPLOADS_S3_CLIENT_POOL_NAME and UPLOADS_S3_BUCKET):
     @use_connection_pool(s3_client=UPLOADS_S3_CLIENT_POOL_NAME)
     def generate_upload_url(
-        file_path, mime_type=None, redirect_url=None, s3_client=None
+        file_path, mime_type=None, redirect_url=None, max_file_size=None,
+        s3_client=None
     ):
         if(not mime_type):
             mime_type = FILE_EXTENSION_TO_MIME_TYPE[os.path.splitext(file_path)[1]]
@@ -103,6 +107,8 @@ elif(UPLOADS_S3_CLIENT_POOL_NAME and UPLOADS_S3_BUCKET):
 
         if(redirect_url):
             conditions.append({"redirect": redirect_url})
+        if(max_file_size is not None):
+            conditions.append(["content-length-range", 0, max_file_size])
 
         post = s3_client.generate_presigned_post(
             Bucket=UPLOADS_S3_BUCKET,

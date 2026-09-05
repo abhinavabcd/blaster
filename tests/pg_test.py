@@ -140,6 +140,32 @@ class TestBasicCRUD(TestSetup):
 		self.assertEqual(fetched.age, 30)
 		self.assertEqual(User.get(_id, use_cache=False).id, _id)
 
+	def test_updated_at_is_persisted_on_insert(self):
+		before_commit = int(time.time() * 1000)
+		u = User(id=uid(), name="Timestamped").commit()
+		after_commit = int(time.time() * 1000)
+
+		self.assertIsInstance(u.updated_at, int)
+		self.assertGreaterEqual(u.updated_at, before_commit)
+		self.assertLessEqual(u.updated_at, after_commit)
+
+		fetched = User.get(u.id, use_cache=False)
+		self.assertEqual(fetched.updated_at, u.updated_at)
+
+	def test_updated_at_advances_on_update(self):
+		u = User(id=uid(), name="Before").commit()
+		created_at = u.updated_at
+
+		# updated_at has millisecond precision, so wait for the next millisecond.
+		while int(time.time() * 1000) <= created_at:
+			time.sleep(0.001)
+
+		u.name = "After"
+		u.commit()
+
+		self.assertGreater(u.updated_at, created_at)
+		self.assertEqual(User.get(u.id, use_cache=False).updated_at, u.updated_at)
+
 	def test_get_missing_returns_none(self):
 		self.assertIsNone(User.get(id="does-not-exist"))
 
