@@ -557,6 +557,11 @@ class Model:
 			doc[name] = json.loads(json.dumps(value, default=_json_default))
 		return doc
 
+	@property
+	def updated_at(self):
+		# get "_" attr
+		return getattr(self, '_', None)
+
 	def _from_doc(obj, row, partial=False) -> T:
 		# LOADING FROM DB
 		cls = obj.__class__
