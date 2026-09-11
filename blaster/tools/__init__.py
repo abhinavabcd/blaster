@@ -111,6 +111,24 @@ class LRUCache:
 		except KeyError:
 			return default
 
+	def peek(self):
+		return next(iter(self.cache.items()), None)
+
+	def pop(self, key=_OBJ_END_):
+		if(key is not _OBJ_END_):
+			try:
+				return key, self.cache.pop(key)
+			except KeyError:
+				return None
+
+		try:
+			return self.cache.popitem(last=False)
+		except KeyError:
+			return None
+
+	def count(self):
+		return len(self.cache)
+
 	def set(self, key, value):
 		removed_entries = []
 		try:
@@ -1888,8 +1906,8 @@ class PartitionedTasksRunner:
 				func(*args, **kwargs)
 			except Exception as ex:
 				LOG_ERROR(
-					"background_task", partition_key=partition_key,
-					desc=str(ex), stracktrace_string=traceback.format_exc()
+					f"background_task_{func.__name__}", partition_key=partition_key,
+					desc=str(ex), stracktrace_string=traceback.format_exc(),
 				)
 
 			# signal the main thread to ask for more tasks

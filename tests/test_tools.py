@@ -97,6 +97,51 @@ class TestAuth(unittest.TestCase):
 
 
 class TestTools(unittest.TestCase):
+	def test_lru_cache_peek_returns_least_recently_used_entry_without_removing_it(self):
+		cache = tools.LRUCache(3, [("first", 1), ("second", 2)])
+
+		self.assertEqual(cache.peek(), ("first", 1))
+		self.assertEqual(cache.peek(), ("first", 1))
+		self.assertEqual(len(cache.cache), 2)
+
+		cache.get("first")
+		self.assertEqual(cache.peek(), ("second", 2))
+
+	def test_lru_cache_peek_returns_none_when_empty(self):
+		self.assertIsNone(tools.LRUCache(3).peek())
+
+	def test_lru_cache_pop_removes_and_returns_least_recently_used_entry(self):
+		cache = tools.LRUCache(3, [("first", 1), ("second", 2)])
+
+		self.assertEqual(cache.pop(), ("first", 1))
+		self.assertEqual(cache.peek(), ("second", 2))
+		self.assertEqual(len(cache.cache), 1)
+		self.assertEqual(cache.pop(), ("second", 2))
+		self.assertIsNone(cache.pop())
+
+	def test_lru_cache_pop_removes_requested_entry(self):
+		cache = tools.LRUCache(3, [("first", 1), ("second", 2), (None, 3)])
+
+		self.assertEqual(cache.pop("second"), ("second", 2))
+		self.assertEqual(cache.peek(), ("first", 1))
+		self.assertEqual(cache.pop(None), (None, 3))
+		self.assertIsNone(cache.pop("missing"))
+		self.assertEqual(cache.pop(), ("first", 1))
+
+	def test_lru_cache_count_returns_current_number_of_entries(self):
+		cache = tools.LRUCache(3)
+
+		self.assertEqual(cache.count(), 0)
+		cache.set("first", 1)
+		cache.set("second", 2)
+		self.assertEqual(cache.count(), 2)
+		cache.set("second", 20)
+		self.assertEqual(cache.count(), 2)
+		cache.pop()
+		self.assertEqual(cache.count(), 1)
+		cache.clear()
+		self.assertEqual(cache.count(), 0)
+
 	def test_dummy_object_to_dict_recursively_parses_dummy_objects(self):
 		item = DummyObject({
 			"name": "root",
