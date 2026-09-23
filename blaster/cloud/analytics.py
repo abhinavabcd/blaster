@@ -1,3 +1,5 @@
+"""Best-effort BigQuery analytics using the application's gevent task runner."""
+
 from farmhash import FarmHash64
 from ..config import BQ_USER_PROPERTIES_TABLE, \
 	BQ_USER_EVENT_TABLE, IS_DEV, GCLOUD_CREDENTIALS
@@ -5,141 +7,135 @@ from ..connection_pool import use_connection_pool, \
 	register_pool_item_generator, get_gcloud_bigquery
 from ..logging import LOG_DEBUG, LOG_ERROR
 from ..tools import background_task, cur_ms, LRUCache
-from collections import deque
 
 DEFAULT_EMPTY_PARAMS = {"": ""}
+MAX_BATCH_ROWS = 500
 
+# Only rows waiting for a worker live here. Workers detach batches before I/O.
 _table_pending_data_to_push = {}
+register_pool_item_generator("blaster_analytics_bq_client", get_gcloud_bigquery)
 
 
-if(GCLOUD_CREDENTIALS):
-	register_pool_item_generator("blaster_analytics_bq_client", get_gcloud_bigquery)
+@use_connection_pool(bq_client="blaster_analytics_bq_client")
+def _bq_insert_batches(table_id, rows, bq_client=None):
+	errors = []
+	for offset in range(0, len(rows), MAX_BATCH_ROWS):
+		batch_errors = bq_client.insert_rows_json(
+			table_id, rows[offset:offset + MAX_BATCH_ROWS]
+		)
+		# BigQuery reports row indices relative to each request.
+		for error in batch_errors or ():
+			errors.append({**error, "index": error["index"] + offset})
+	return errors
 
-	@use_connection_pool(bq_client="blaster_analytics_bq_client")  # use from pool so that it is thread safe
-	def bq_push(table_id, bq_client=None):
-		num_rows = len(q := _table_pending_data_to_push[table_id])
-		if(num_rows > 0):
-			return bq_client.insert_rows_json(table_id, [q.popleft() for _ in range(num_rows)])
 
-	def bq_insert_rows(table_id, rows: dict):
-		if((_pending_to_push := _table_pending_data_to_push.get(table_id)) is None):
-			_pending_to_push = _table_pending_data_to_push[table_id] = deque()
-		_pending_to_push.extend(rows)
-		return bq_push(table_id)  # deferred call
+def bq_insert_rows(table_id, rows: dict | list[dict]):
+	"""Insert synchronously; return BigQuery errors with input row indices."""
+	if(isinstance(rows, dict)):
+		rows = [rows]
+	if(not rows):
+		return []
+	if(not GCLOUD_CREDENTIALS):
+		log = LOG_DEBUG if IS_DEV else LOG_ERROR
+		log(
+			"bq_insert_rows", desc="BigQuery not configured for tracking events",
+			table_id=table_id, rows=str(rows)
+		)
+		return
+	return _bq_insert_batches(table_id, rows)
 
-else:
-	def bq_insert_rows(table_id, rows: dict):
-		if(IS_DEV):
-			LOG_DEBUG(
-				"bq_insert_rows", desc="BigQuery not configured for tracking events",
-				table_id=table_id, rows=str(rows)
-			)
-		else:
-			LOG_ERROR(
-				"bq_insert_rows", desc="BigQuery not configured for tracking events",
-				table_id=table_id, rows=str(rows)
-			)
+
+def TRACK_EVENT(table_id, rows: dict | list[dict]):
+	"""Queue rows, coalescing submissions by table until a worker starts.
+
+	Uses the application's background runner, including its shutdown drain.
+	Delivery is best effort; failed inserts are logged, not retried here.
+	"""
+	rows = [rows] if isinstance(rows, dict) else rows
+	if(not rows):
+		return
+	pending = _table_pending_data_to_push.get(table_id)
+	if(pending is not None):
+		pending.extend(rows)
+		return
+	# No yielding between looking up and publishing the batch in gevent.
+	_table_pending_data_to_push[table_id] = list(rows)
+	try:
+		_flush_table(table_id)
+	except Exception:
+		_table_pending_data_to_push.pop(table_id, None)
+		raise
 
 
 @background_task
-def TRACK_EVENT(table_id, rows: dict, ns=None):
-	'''
-		Parameters:
-		rows:  are a dict or list of dicts containing column_name: value
-	'''
-	if(ns):
-		table_id += f"_{ns}"
-	# collect all rows to push into a bucket to batch
-	errors = bq_insert_rows(table_id, rows if isinstance(rows, list) else [rows])
-	if(errors): 
+def _flush_table(table_id):
+	rows = _table_pending_data_to_push.pop(table_id)
+	errors = bq_insert_rows(table_id, rows)
+	if(errors):
 		LOG_ERROR(
 			"bq_insert_rows", desc=f"errors: {errors}",
 			table_id=table_id, rows=str(rows)
 		)
 
 
-# property_id cannot contain ":"
-# synchronously added to queue
-# each ns has it's own ttl/partition retention policy
-'''
-CREATE TABLE `PROJECT.<<BQ_USER_PROPERTIES_TABLE>>`
-(
-	user_id STRING(100) NOT NULL,
-	property STRING(100) NOT NULL,
-	value STRING,
-	timestamp TIMESTAMP NOT NULL
-)
-PARTITION BY DATE(timestamp)
-'''
+def _timestamp_seconds(timestamp):
+	return (cur_ms() if timestamp is None else timestamp) // 1000
 
 
-def TRACK_USER_PROPERTY(user_id, property_id, value, timestamp=None, ns=None):
+def _string_value(value):
+	return None if value is None else str(value)
+
+
+def TRACK_USER_PROPERTY(user_id, property_id, value, timestamp=None):
+	"""Synchronously record a property; timestamp is in milliseconds."""
 	if(not BQ_USER_PROPERTIES_TABLE):
 		return
-	bq_insert_rows(
+	errors = bq_insert_rows(
 		BQ_USER_PROPERTIES_TABLE,
 		{
 			"user_id": user_id,
 			"property": property_id,
-			"value": value and str(value),
-			"timestamp": (timestamp or cur_ms()) // 1000
-		},
-		ns=ns
+			"value": _string_value(value),
+			"timestamp": _timestamp_seconds(timestamp)
+		}
 	)
+	if(errors):
+		LOG_ERROR(
+			"bq_insert_rows", desc=f"errors: {errors}",
+			table_id=BQ_USER_PROPERTIES_TABLE
+		)
 
 
-'''
-CREATE TABLE `sukhiba-e4413.user_analytics.user_events`
-(
-	user_id STRING(100) NOT NULL,
-	event STRING(100) NOT NULL,
-	param STRING(100) NOT NULL,
-	value STRING(100),
-	timestamp TIMESTAMP NOT NULL
-)
-PARTITION BY DATE(timestamp);
-OPTIONS(
-	require_partition_filter=true
-);
-'''
-
-
-# defered added to queue
-def TRACK_USER_EVENT(user_id, event_id, params=None, timestamp=None, ns=None):
+def TRACK_USER_EVENT(user_id, event_id, params=None, timestamp=None):
+	"""Queue one row per event parameter; timestamp is in milliseconds."""
 	if(not BQ_USER_EVENT_TABLE):
 		return
 	params = params or DEFAULT_EMPTY_PARAMS
-	timestamp = (timestamp or cur_ms()) // 1000
+	timestamp = _timestamp_seconds(timestamp)
 	rows = [
 		{
 			"user_id": user_id,
 			"event": event_id,
-			"param": str(k) if k else None,
-			"value": str(v) if v else None,
+			"param": str(k),
+			"value": _string_value(v),
 			"timestamp": timestamp
 		} for k, v in params.items()
 	]
-	TRACK_EVENT(BQ_USER_EVENT_TABLE, rows, ns=ns)
+	TRACK_EVENT(BQ_USER_EVENT_TABLE, rows)
 
 
-# Experimentation
-_user_already_tracked = LRUCache(10000)  # to reduce number of LOGS
-# Logs event
+_user_already_tracked = LRUCache(10000)
 INT64_MAX = 9223372036854775807
 
 
 def TRACK_USER_EXPERIMENT(user_id, experiment_id, rollout=100, num_variants=2):
-	# consistent hash 0-INT64_MAX
-	user_exp_str = f"{experiment_id}{user_id}"
-	key = FarmHash64(user_exp_str)
-	d = key / INT64_MAX
-	# which variant ?
-	# in each variant only partial rollout , check if we qualify
-	if(d < rollout / 100):
-		# not in experiment, always base not tracked
+	# Preserve the legacy hash and rollout scale to keep existing assignments.
+	key = FarmHash64(f"{experiment_id}{user_id}")
+	if(key / INT64_MAX < rollout / 100):
 		variant = key % num_variants
-		if(not _user_already_tracked.get(user_exp_str)):
-			_user_already_tracked[user_exp_str] = variant  # TODO: change this
-			TRACK_USER_PROPERTY(user_id, experiment_id, variant, ns="exp")
+		cache_key = (user_id, experiment_id)
+		if(_user_already_tracked.get(cache_key) is None):
+			TRACK_USER_PROPERTY(user_id, experiment_id, variant)
+			_user_already_tracked[cache_key] = variant
 		return variant
 	return 0
