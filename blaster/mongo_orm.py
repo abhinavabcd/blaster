@@ -401,6 +401,10 @@ class Model(object):
 	# YourTable.get(SOMEID) # this will kick in cache use
 	@classmethod
 	def get(cls: Type[ModelType], _pk=None, use_cache=True, **kwargs) -> ModelType:
+		if(isinstance(_pk, dict) and any(k not in _pk for k in cls._pk_attrs)):
+			kwargs.update(_pk)
+			_pk = None
+
 		if(_pk is not None):
 			is_single_item = False
 			_pks = None
