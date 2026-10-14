@@ -845,7 +845,8 @@ class Model:
 
 		all_cols = ", ".join(pk_attrs + col_names + ["_", "__"])
 		all_placeholders = ", ".join(["%s"] * (len(pk_attrs) + len(col_names)) + ["%s", "%s::jsonb"])
-		returning = "_, __" + (", " + ", ".join(col_names) if col_names else "")
+		# pk columns too, else _from_doc(row) regenerates them from their defaults
+		returning = ", ".join(["_", "__"] + pk_attrs + col_names)
 
 		sql = (
 			f"INSERT INTO {cls._table_name_} "
