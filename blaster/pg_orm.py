@@ -226,8 +226,9 @@ class PgDict(dict):
 	def clear(self):
 		dict.clear(self)
 		if not self._is_local:
-			self._parent._add_set_update(self._path, {})
-		self._is_local = True  # treat as local after clear (like Mongo)
+			# Keep the live value so additions before commit are included in the
+			# replacement, and keep tracking subsequent nested mutations.
+			self._parent._add_set_update(self._path, self)
 
 	def copy(self):
 		return json.loads(json.dumps(dict(self), default=_json_default))
@@ -1216,6 +1217,73 @@ class Model:
 				cur.execute(sql, pk_values)
 			conn.commit()
 		cls._trigger_event(EVENT_AFTER_DELETE, self)
+
+
+	def reload(self, projections=None, if_none=False):
+		"""Refresh this instance and return it, discarding changes to loaded fields.
+
+		Projections accept field names or Attribute objects, as in get().
+		if_none limits the refresh to missing/None values and empty strings or
+		containers; zero and False are preserved. A missing row raises LookupError.
+		"""
+		cls = self.__class__
+		if projections is not None:
+			if isinstance(projections, (str, Attribute)):
+				projections = [projections]
+			else:
+				projections = list(projections)
+			cls._build_select_columns(projections)  # validate before filtering
+			projections = list(dict.fromkeys(
+				field.attr_name if isinstance(field, Attribute) else field
+				for field in projections
+			))
+		if if_none:
+			fields = cls._attrs_ if projections is None else projections
+			projections = [
+				name for name in fields
+				if (value := self.__dict__.get(name)) is None
+				or (isinstance(value, (str, bytes, dict, list, tuple, set)) and not value)
+			]
+		if projections == []:
+			return self
+
+		fresh = cls.get(*self._pk_values(), projections=projections)
+		if fresh is None:
+			raise LookupError(f"{cls.__name__} {self._pk_values()!r} not found")
+		row = fresh._row_
+		if projections is None:
+			# Remove stale values for fields no longer present in the row.
+			for name in cls._attrs_:
+				self.__dict__.pop(name, None)
+			return self._from_doc(row)
+
+		object.__setattr__(self, '_initializing_', True)
+		object.__setattr__(self, '_is_create_new_', False)
+		try:
+			for name in projections:
+				attr = cls._attrs_[name]
+				source = row if name in cls._pk_attrs_ or name in cls._col_attrs_ else row['__']
+				value = attr.coerce(source[name]) if name in source else attr.get_default()
+				setattr(self, name, value)
+		finally:
+			object.__setattr__(self, '_initializing_', False)
+		for path in list(self._set_updates):
+			if path[0] in projections:
+				del self._set_updates[path]
+		self._unset_updates.difference_update(
+			path for path in list(self._unset_updates) if path[0] in projections
+		)
+		object.__setattr__(self, '_', row['_'])
+		previous_row = getattr(self, '_row_', {})
+		merged_row = {**previous_row, **row}
+		merged_json = dict(previous_row.get('__', {}))
+		for name in projections:
+			if name not in cls._pk_attrs_ and name not in cls._col_attrs_:
+				merged_json.pop(name, None)
+		merged_json.update(row['__'])
+		merged_row['__'] = merged_json
+		object.__setattr__(self, '_row_', merged_row)
+		return self
 
 	@classmethod
 	def get(

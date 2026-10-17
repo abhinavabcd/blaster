@@ -23,6 +23,7 @@ class User(Model):
 	score = Attribute(float, default=0.0, column=True)
 	meta  = Attribute(dict)
 	tags  = Attribute(list)
+	channels = Attribute(dict)
 
 	INDEX((id, ASCENDING), {"unique": True})
 	INDEX(name, {"unique": False})
@@ -236,6 +237,32 @@ class TestBasicCRUD(TestSetup):
 
 
 class TestSetAttribute(TestSetup):
+	def test_commit_100_empty_channel_dicts(self):
+		for state in ('new', 'saved', 'loaded', 'cleared'):
+			for commit_each in (False, True):
+				with self.subTest(state=state, commit_each=commit_each):
+					user = User(id=uid(), name="Channels")
+					if state != 'new':
+						user.commit()
+					if state == 'loaded':
+						user = User.get(user.id)
+					if state == 'cleared':
+						user.channels['old'] = {'remove': True}
+						user.commit()
+						user.channels.clear()
+					for i in range(100):
+						user.channels[str(i)] = {}
+						if commit_each:
+							user.commit()
+					user.commit()
+					expected = {str(i): {} for i in range(100)}
+					self.assertEqual(user.channels, expected)
+					self.assertEqual(User.get(user.id).channels, expected)
+					user.channels['0']['joined'] = True
+					user.commit()
+					self.assertEqual(user.channels['0'], {'joined': True})
+					self.assertEqual(User.get(user.id).channels['0'], {'joined': True})
+
 	def test_field_update_tracked(self):
 		u = User(id=uid(), name="Before", age=10)
 		u.commit()
