@@ -1478,49 +1478,35 @@ class BufferedSocket():
 		self.readbuf = self.readbuf[n:]
 		return ret
 
-	# fails if it couldn't find the delimiter until max_size
+	# max_size includes the delimiter. Preserve bytes following it for the next read.
 	def readuntil(self, delimiter, max_size, discard_delimiter):
-		# check in store
 		if(isinstance(delimiter, str)):
 			delimiter = delimiter.encode()
-
+		if(not delimiter):
+			raise ValueError("delimiter must not be empty")
 		delimiter_len = len(delimiter)
-		# scan the store until end, if not found extend
-		# and continue until store > max_size
-		to_scan_len = len(self.readbuf)
-		i = 0  # how much we scanned already
-
-		_store = self.readbuf  # get a reference
+		if(max_size < delimiter_len):
+			self.is_eof = True
+			return None
+		_store = self.readbuf
+		start = 0
 		while(True):
-			if(i > max_size):
-				# WITHIN THE LIMIT DELIMITER NOT FOUND
+			index = _store.find(delimiter, start, max_size)
+			if(index != -1):
+				end = index + delimiter_len
+				ret = _store[:index if discard_delimiter else end]
+				del _store[:end]
+				return ret
+			if(len(_store) >= max_size):
 				self.is_eof = True
 				return None
-			if(i >= delimiter_len):
-				j = 0
-				lookup_from = i - delimiter_len
-				while(j < delimiter_len and _store[lookup_from + j] == delimiter[j]):
-					j += 1
-
-				if(j == delimiter_len):
-					# found
-					ret = None
-					if(discard_delimiter):
-						ret = _store[:i - delimiter_len]
-					else:
-						ret = _store[:i]
-					self.readbuf = _store[i:]  # set store to unscanned/pending
-					return ret
-			if(i >= to_scan_len):
-				# scanned all buffer, need more
-				data = self.sock.recv(4096)
-				if(not data):
-					self.is_eof = True
-					return None
-
-				_store.extend(data)  # fetch more data
-				to_scan_len = len(_store)
-			i += 1
+			# Only rescan the suffix that could straddle the next recv boundary.
+			start = max(0, len(_store) - delimiter_len + 1)
+			data = self.sock.recv(4096)
+			if(not data):
+				self.is_eof = True
+				return None
+			_store.extend(data)
 
 	def __getattr__(self, key):
 		ret = getattr(self.sock, key, _OBJ_END_)

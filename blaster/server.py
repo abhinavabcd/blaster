@@ -58,24 +58,57 @@ HTTP_MAX_REQUEST_BODY_SIZE = 2 * _1_MB_  # 1 mb
 HTTP_MAX_HEADERS_DATA_SIZE = 16 * _1_KB_  # 16kb
 
 
+class _HTTPError(ValueError):
+	def __init__(self, message, status="400 Bad Request"):
+		super().__init__(message)
+		self.status = status
+
+
+_HTTP_TOKEN = rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
+_HEADER_NAME = re.compile(_HTTP_TOKEN)
+_HEADER_CONTROL = re.compile(rb"[\x00-\x08\x0a-\x1f\x7f]")
+_RESPONSE_FRAMING_HEADERS = ('content-length', 'transfer-encoding', b'content-length', b'transfer-encoding')
+_CHUNK_HEADER = re.compile(
+	rb"([0-9A-Fa-f]+)(?:[ \t]*;[ \t]*" + _HTTP_TOKEN
+	+ rb'(?:[ \t]*=[ \t]*(?:' + _HTTP_TOKEN
+	+ rb'|"(?:[\t !#-\[\]-~\x80-\xff]|\\[\t -~\x80-\xff])*"))?)*'
+)
+
+
 def get_chunk_size_from_header(chunk_header):
-	ret = 0
-	i = 0
-	chunk_header_len = len(chunk_header)
-	A = ord('A')
-	Z = ord('Z')
-	_0 = ord('0')
-	_9 = ord('9')
-	while(i < chunk_header_len):
-		c = ord(chunk_header[i])
-		if(c >= A and c <= Z):
-			ret = ret * 16 + (10 + c - A)
-		elif(c >= _0 and c <= _9):
-			ret = ret * 16 + (c - _0)
-		else:
-			return ret
-		i += 1
-	return ret
+	if(isinstance(chunk_header, str)):
+		chunk_header = chunk_header.encode('ascii')
+	match = _CHUNK_HEADER.fullmatch(chunk_header) if chunk_header is not None else None
+	if(match is None):
+		raise _HTTPError("Invalid or incomplete chunk header")
+	return int(match[1], 16)
+
+
+def _read_http_headers(buffered_socket, headers, max_size, trailers=False):
+	# Count all wire bytes, including CRLFs and the terminating empty line.
+	remaining = max_size
+	while(True):
+		data = buffered_socket.readuntil(b'\r\n', remaining, True)
+		if(data is None):
+			raise _HTTPError("Incomplete or oversized headers", "431 Request Header Fields Too Large")
+		remaining -= len(data) + 2
+		if(not data):
+			return max_size - remaining
+		name, sep, value = data.partition(b':')
+		if(not sep or not _HEADER_NAME.fullmatch(name) or _HEADER_CONTROL.search(value)):
+			raise _HTTPError("Invalid header field")
+		name = name.decode('ascii').lower()
+		value = value.strip(b' \t').decode('latin-1')
+		if(trailers):
+			# Consume trailers without letting them change framing or application headers.
+			if(name in ('content-length', 'transfer-encoding', 'host', 'connection', 'trailer')):
+				raise _HTTPError("Forbidden trailer field")
+			continue
+		if(name in headers):
+			if(name == 'host'):
+				raise _HTTPError("Duplicate Host")
+			value = headers[name] + ('; ' if name == 'cookie' else ', ') + value
+		headers[name] = value
 
 
 # parse query string
@@ -869,15 +902,13 @@ class App:
 
 		try:
 			request_line = request_line.decode("utf-8")
-			request_type, _request_line = request_line.split(" ", 1)
-			# set request type
+			request_parts = request_line.split(" ")
+			if(len(request_parts) != 3 or request_parts[2] not in ("HTTP/1.0", "HTTP/1.1")):
+				raise _HTTPError("Invalid HTTP/1.x request line")
+			request_type, request_path, http_version = request_parts
 			req.request_type = request_type
-			_http_protocol_index = _request_line.rfind(" ")
-			request_path \
-				= req.path \
-				= _request_line[: _http_protocol_index]
+			req.path = request_path
 
-			# http_version = _request_line[_http_protocol_index + 1:]
 			query_start_index = request_path.find("?")
 			if(query_start_index != -1):
 				query_string = request_path[query_start_index + 1:]
@@ -907,46 +938,67 @@ class App:
 			headers = req._headers
 			max_headers_data_size \
 				= handler.get("max_headers_data_size") or HTTP_MAX_HEADERS_DATA_SIZE
-			_headers_data_size = 0
-			while(_headers_data_size < max_headers_data_size):  # keep reading headers
-				data = buffered_socket.readuntil('\r\n', max_headers_data_size, True)
-				if(data == b''):
-					break
-				elif(data is None):
-					return  # won't resuse socket
+			_headers_data_size = _read_http_headers(buffered_socket, headers, max_headers_data_size)
+			if(http_version == "HTTP/1.1" and not headers.get('host')):
+				raise _HTTPError("Missing Host")
+			connection_tokens = {token.strip() for token in headers.get('connection', '').lower().split(',')}
+			reuse_socket_for_next_http_request = 'close' not in connection_tokens and (
+				http_version == "HTTP/1.1" or 'keep-alive' in connection_tokens
+			)
 
-				header_name_value_pair = data.split(b':', 1)
-				if(len(header_name_value_pair) == 2):
-					header_name, header_value = header_name_value_pair
-					headers[header_name.lower().decode()] = header_value.lstrip(b' ').decode()
-
-				_headers_data_size += len(data)
-
-			# check if there is a content length or transfer encoding chunked
-			content_length = int(headers.get("content-length", 0))
+			# A proxy and origin must agree on the request boundary before reusing a socket.
+			transfer_encoding = headers.get("transfer-encoding")
+			content_length_header = headers.get("content-length")
+			if(transfer_encoding is not None and content_length_header is not None):
+				raise _HTTPError("Both Transfer-Encoding and Content-Length")
+			if(transfer_encoding is not None and transfer_encoding.lower() != "chunked"):
+				raise _HTTPError("Unsupported Transfer-Encoding")
+			content_length = 0
+			if(content_length_header is not None):
+				lengths = [value.strip(' \t') for value in content_length_header.split(',')]
+				if(any(not value.isascii() or not value.isdecimal() for value in lengths)):
+					raise _HTTPError("Invalid Content-Length")
+				try:
+					values = [int(value) for value in lengths]
+				except ValueError:
+					raise _HTTPError("Invalid Content-Length") from None
+				if(any(value != values[0] for value in values)):
+					raise _HTTPError("Conflicting Content-Length")
+				content_length = values[0]
 			_max_body_size = handler.get("max_body_size") or HTTP_MAX_REQUEST_BODY_SIZE
-			if(content_length > 0):
-				if(content_length < _max_body_size):
-					post_data = buffered_socket.recvn(content_length)
-				else:
-					reuse_socket_for_next_http_request = False
-					raise Exception("Content length too large")
-			else:  # handle chuncked encoding
-				transfer_encoding = headers.get("transfer-encoding")
-				if(transfer_encoding and "chunked" in transfer_encoding):
-					post_data = bytearray()
-					chunk_size = get_chunk_size_from_header(
-						buffered_socket.readuntil('\r\n', 512, True)
-					)  # hex
-					while(chunk_size > 0 and len(post_data) + chunk_size < _max_body_size):
-						data = buffered_socket.recvn(chunk_size)
-						post_data.extend(data)
-						buffered_socket.readuntil('\r\n', 8, False)  # remove the trailing \r\n
-						# next chunk size
-						chunk_size = get_chunk_size_from_header(
-							buffered_socket.readuntil('\r\n', 512, True)
-						)  # hex
-					# as bytes
+			if(content_length > _max_body_size):
+				raise _HTTPError("Content length too large", "413 Content Too Large")
+
+			# Some proxies forward Expect and wait for this before sending the upload.
+			if(expect := headers.get('expect')):
+				if(expect.lower() != '100-continue'):
+					raise _HTTPError("Unsupported expectation", "417 Expectation Failed")
+				if(content_length or transfer_encoding):
+					buffered_socket.send(b'HTTP/1.1 100 Continue\r\n\r\n')
+
+			if(transfer_encoding):
+				post_data = bytearray()
+				extension_bytes = 0
+				while(True):
+					chunk_header = buffered_socket.readuntil(b'\r\n', 512, True)
+					chunk_size = get_chunk_size_from_header(chunk_header)
+					if((extension_start := chunk_header.find(b';')) != -1):
+						extension_bytes += len(chunk_header) - extension_start
+						if(extension_bytes > max_headers_data_size):
+							raise _HTTPError("Chunk extensions too large")
+					if(chunk_size == 0):
+						_read_http_headers(buffered_socket, {}, max_headers_data_size - _headers_data_size, trailers=True)
+						break
+					if(len(post_data) + chunk_size > _max_body_size):
+						raise _HTTPError("Chunked body too large", "413 Content Too Large")
+					data = buffered_socket.recvn(chunk_size)
+					if(data is None or len(data) != chunk_size or buffered_socket.recvn(2) != b'\r\n'):
+						raise _HTTPError("Incomplete chunk or missing chunk CRLF")
+					post_data.extend(data)
+			elif(content_length):
+				post_data = buffered_socket.recvn(content_length)
+				if(post_data is None or len(post_data) != content_length):
+					raise _HTTPError("Incomplete request body")
 
 			func = handler.get("func")
 			# process cookies
@@ -996,21 +1048,25 @@ class App:
 
 				for after_handling_hook in after_handling_hooks:  # post processing
 					response_from_handler = after_handling_hook(req, response_from_handler)
-
-				# if there is connection header, handle it
-				if(_connection_header := headers.get('Connection')):
-					reuse_socket_for_next_http_request \
-						= _connection_header.lower() != "close"
-				# app specific headers
-				# handle various return values from handler functions
-
 			status, response_headers, body = App.response_body_to_parts(response_from_handler)
+			# Buffered responses have framing computed below. Do not emit duplicate
+			# lengths or advertise chunking when the wire body is not chunk encoded.
+			if(body is not I_AM_HANDLING_THE_SOCKET):
+				if(isinstance(response_headers, dict)):
+					response_headers = {k: v for k, v in response_headers.items()
+						if k.lower() not in _RESPONSE_FRAMING_HEADERS}
+				elif(isinstance(response_headers, list)):
+					response_headers = [h for h in response_headers
+						if h.split(b':' if isinstance(h, bytes) else ':', 1)[0].strip().lower()
+						not in _RESPONSE_FRAMING_HEADERS]
 
 			# resp.1 Send status line
 			if(status or (body is not I_AM_HANDLING_THE_SOCKET)):
 				# we will send the status, either default
 				# or given from response
 				status = str(status) if status else '200 OK'
+				if(status.isdecimal()):
+					status += ' '
 				buffered_socket.sendb(b'HTTP/1.1 ', status, b'\r\n')
 
 			# resp.2 Send headers
@@ -1088,20 +1144,16 @@ class App:
 				if(isinstance(body, str)):
 					body = body.encode()
 
-				# resp.3.3 send content length and body
-				content_length = 0
-				if(body):
-					content_length = len(body)
-					# finalize all the headers
-					if(request_type != "HEAD"):
-						buffered_socket.sendb(b'Content-Length: ', str(content_length), b'\r\n\r\n')
-						buffered_socket.sendb(body)
-					else:
-						# HEAD request with body
-						buffered_socket.sendb(b'Suggested-Content-Length: ', str(content_length), b'\r\n')
-						buffered_socket.sendb(b'Content-Length: 0', b'\r\n\r\n')
+				# HEAD carries GET's length but no body. 204/304 must never send a body:
+				# stray bytes would poison a proxy's persistent upstream connection.
+				content_length = len(body) if body else 0
+				status_code = int(status.split(' ', 1)[0])
+				if(status_code in (204, 304) or 100 <= status_code < 200):
+					buffered_socket.sendb(b'\r\n')
 				else:
-					buffered_socket.sendb(b'Content-Length: 0', b'\r\n\r\n')
+					buffered_socket.sendb(b'Content-Length: ', str(content_length), b'\r\n\r\n')
+					if(request_type != "HEAD" and body):
+						buffered_socket.sendb(body)
 
 				buffered_socket.flush()  # flush the socket
 				_wallclock_ms = int(1000 * time.time()) - cur_millis
@@ -1137,8 +1189,12 @@ class App:
 				body = json.dumps(body)
 				resp_headers.append("Content-Type: application/json")
 
-			status = str(status) if status else b'502 Server error'
+			status = str(status) if status else (ex.status if isinstance(ex, _HTTPError) else '502 Server error')
+			if(status.isdecimal()):
+				status += ' '
 			body = body or b'Internal server error'
+			if(isinstance(body, str)):
+				body = body.encode('utf-8')
 
 			reuse_socket_for_next_http_request = False
 			try:
@@ -1154,7 +1210,7 @@ class App:
 				buffered_socket.sendb(  # final send
 					b'Connection: close', b'\r\n',
 					b'Content-Length: ', str(len(body)), b'\r\n\r\n',
-					body
+					body if request_type != 'HEAD' else b''
 				)
 				buffered_socket.flush()  # flush the socket
 				log_handler(
