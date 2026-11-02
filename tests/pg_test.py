@@ -97,6 +97,12 @@ class MongoStyleModel(Model):
 
 
 
+class ChannelUser(Model):
+	_table_name_ = "pg_test_channel_users"
+	_id = Attribute(str, default=get_random_id)
+	channels = Attribute(dict)
+
+
 initialize_postgres(
 	dict(
 		host="localhost",
@@ -127,6 +133,35 @@ class TestSetup(unittest.TestCase):
 			with conn.cursor() as cur:
 				cur.execute("DROP TABLE IF EXISTS pg_test_users")
 			conn.commit()
+
+
+class TestChannelPersistence(unittest.TestCase):
+	@classmethod
+	def setUpClass(cls):
+		ChannelUser.create_table()
+
+	@classmethod
+	def tearDownClass(cls):
+		with ChannelUser._db_node_.use_conn() as conn:
+			with conn.cursor() as cur:
+				cur.execute("DROP TABLE pg_test_channel_users")
+			conn.commit()
+
+	def test_empty_channel_dicts_with_user_pair_keys(self):
+		for initial_channels in (None, {"existing": {}}):
+			with self.subTest(initial_channels=initial_channels):
+				u_id = ChannelUser(channels=initial_channels).commit()._id
+				u = ChannelUser.get(u_id)
+				expected = dict(initial_channels or {})
+				for _u in [ChannelUser().commit() for _ in range(100)]:
+					key = "user:" + ":".join(sorted([_u._id, u._id]))
+					u.channels[key] = {}
+					expected[key] = {}
+				self.assertEqual(len(u._set_updates), 100)
+				u.commit()
+				self.assertEqual(u.channels, expected)
+				u = ChannelUser.get(u_id)
+				self.assertEqual(u.channels, expected)
 
 
 class TestBasicCRUD(TestSetup):
