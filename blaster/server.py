@@ -25,7 +25,7 @@ from .utils import events
 from .utils.data_utils import FILE_EXTENSION_TO_MIME_TYPE
 from .logging import LOG_ERROR, LOG_SERVER, LOG_WARN, LOG_DEBUG, log_ctx
 from .schema import Object, schema as schema_func
-from .websocket.server import WebSocketServerHandler
+from .websocket import Websocket
 from .config import IS_DEV, BLASTER_HTTP_TOOK_LONG_WARN_THRESHOLD
 from .utils.fork import _has_forked
 
@@ -1373,12 +1373,12 @@ def proxy_file_handler(url_path, proxy_url):
 def _get_web_socket_handler(req: Request):
 	set_socket_fast_close_options(req.sock)
 	# sends handshake automatically
-	ws = req.wsock = WebSocketServerHandler(req.sock)
+	ws = req.wsock = Websocket(req.sock)
 	ws.do_handshake(req.HEADERS())
 	return ws
 
 
-Request.set_arg_type_hook(WebSocketServerHandler, _get_web_socket_handler)
+Request.set_arg_type_hook(Websocket, _get_web_socket_handler)
 
 
 # Utils

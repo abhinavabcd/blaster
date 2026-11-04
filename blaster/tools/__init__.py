@@ -43,7 +43,7 @@ except Exception:
 	pass
 
 
-from ..websocket._core import WebSocket, WebSocketTimeoutException
+from ..websocket import Websocket
 from ..env import DEBUG_PRINT_LEVEL
 from ..utils.xss_html import XssHtml
 from ..utils import events
@@ -1544,7 +1544,7 @@ def set_socket_fast_close_options(sock):
 
 # wraps send method of websocket which keeps a buffer of messages
 # for 20 seconds if the connection closes, you can use them to resend
-class WebsocketConnection(WebSocket):
+class WebsocketConnection(Websocket):
 	# to keep track of how many greenlets are waiting on semaphore to send
 	queue = None
 	# queue for older sent messages in case of reset we try to retransmit
@@ -2451,7 +2451,7 @@ def run_chrome_in_separate_cpu_process():
 	debugging enabled, then drains url_queue sequentially — each URL is loaded in
 	a fresh tab (opened/closed via CDP), and (url, html|None) is put into results_queue.
 
-	Dependencies: requests, websocket-client  (pip install requests websocket-client)
+	Dependencies: requests, gevent
 	"""
 	chrome_proc = subprocess.Popen(
 		[
@@ -2490,7 +2490,7 @@ def run_chrome_in_separate_cpu_process():
 			tab = resp.json()
 			tab_id = tab["id"]
 
-			ws = WebSocket()
+			ws = Websocket()
 			ws.connect(tab["webSocketDebuggerUrl"], timeout=30)
 
 			cmd_id = 0
@@ -2506,7 +2506,7 @@ def run_chrome_in_separate_cpu_process():
 					try:
 						ws.settimeout(max(0.1, deadline - time.time()))
 						msg = json.loads(ws.recv())
-					except WebSocketTimeoutException:
+					except TimeoutError:
 						break
 					if predicate(msg):
 						return msg
