@@ -7,11 +7,13 @@ Created on 04-Nov-2017
 import gevent
 from gevent.threading import Thread
 from gevent.queue import Queue, Empty as QueueEmptyException
+from gevent.event import AsyncResult
 import os
 import sys
 import csv
 import weakref
 import subprocess
+import tempfile
 import shlex
 import collections
 import random
@@ -2440,129 +2442,174 @@ class NoDuplicateValuesMeta(type):
 
 
 browser_url_queue = Queue(1000)      # main -> chrome greenlet (gevent Queue, cooperative)
-browser_results = ExpiringCache(1000)
-
-CHROME_DEBUG_PORT = 9222
 
 
 def run_chrome_in_separate_cpu_process():
+	"""Run one Chrome child and reuse one browser WebSocket for this queue worker.
+
+	Workers run as greenlets in the calling Python process. Each Chrome child has
+	its own temporary profile and debug port; every capture still uses a fresh tab.
 	"""
-	Long-running OS process: starts a single headless Chrome instance with remote
-	debugging enabled, then drains url_queue sequentially — each URL is loaded in
-	a fresh tab (opened/closed via CDP), and (url, html|None) is put into results_queue.
+	global chrome_browser_processes_started
+	chrome_proc = None
+	ws = None
+	command_id = 0
+	load_events = set()
 
-	Dependencies: requests, gevent
-	"""
-	chrome_proc = subprocess.Popen(
-		[
-			"google-chrome",
-			"--headless=new",
-			"--no-sandbox",
-			"--disable-gpu",
-			"--disable-dev-shm-usage",
-			"--disable-extensions",
-			"--disable-software-rasterizer",
-			"--no-first-run",
-			"--no-default-browser-check",
-			f"--remote-debugging-port={CHROME_DEBUG_PORT}",
-			"--remote-allow-origins=*",
-		],
-		stdout=subprocess.DEVNULL,
-		stderr=subprocess.DEVNULL,
-	)
+	def receive(deadline):
+		remaining = deadline - time.monotonic()
+		if remaining <= 0:
+			raise TimeoutError("Chrome command timed out")
+		ws.settimeout(remaining)
+		raw = ws.recv()
+		if raw is None:
+			raise ConnectionError("Chrome WebSocket closed")
+		message = json.loads(raw)
+		if (message.get("method") == "Page.lifecycleEvent"
+			and message.get("params", {}).get("name") == "load"):
+			load_events.add((message.get("sessionId"), message["params"].get("loaderId")))
+		return message
 
-	# Wait for Chrome's HTTP debug endpoint to be ready
-	for _ in range(20):
+	def command(method, params=None, session_id=None, timeout=10):
+		nonlocal command_id
+		command_id += 1
+		request_id = command_id
+		message = {"id": request_id, "method": method, "params": params or {}}
+		if session_id is not None:
+			message["sessionId"] = session_id
+		ws.settimeout(timeout)
+		ws.send(json.dumps(message))
+		deadline = time.monotonic() + timeout
+		while True:
+			message = receive(deadline)
+			if message.get("id") == request_id:
+				if "error" in message:
+					raise RuntimeError(f"Chrome {method}: {message['error']}")
+				return message.get("result", {})
+
+	def capture(url, ret_type):
+		target_id = None
+		session_id = None
 		try:
-			requests.get(f"http://localhost:{CHROME_DEBUG_PORT}/json/version", timeout=1)
-			break
-		except Exception:
-			sleep(0.5)
-
-	def load_url(url):
-		tab_id = None
-		try:
-			# Open a new blank tab (Chrome 72+ requires PUT)
-			resp = requests.put(
-				f"http://localhost:{CHROME_DEBUG_PORT}/json/new",
-				timeout=5,
-			)
-			tab = resp.json()
-			tab_id = tab["id"]
-
-			ws = Websocket()
-			ws.connect(tab["webSocketDebuggerUrl"], timeout=30)
-
-			cmd_id = 0
-
-			def send(method, params=None):
-				nonlocal cmd_id
-				cmd_id += 1
-				ws.send(json.dumps({"id": cmd_id, "method": method, "params": params or {}}))
-				return cmd_id
-
-			def recv_until(predicate, deadline):
-				while time.time() < deadline:
-					try:
-						ws.settimeout(max(0.1, deadline - time.time()))
-						msg = json.loads(ws.recv())
-					except TimeoutError:
-						break
-					if predicate(msg):
-						return msg
-				return None
-
-			# Enable Page events so loadEventFired is delivered
-			eid = send("Page.enable")
-			recv_until(lambda m: m.get("id") == eid, time.time() + 5)
-
-			nav_id = send("Page.navigate", {"url": url})
-			deadline = time.time() + 30
-
-			# Wait for navigation ack + loadEventFired
-			recv_until(lambda m: m.get("id") == nav_id, deadline)
-			recv_until(lambda m: m.get("method") == "Page.loadEventFired", deadline)
-
-			# Fetch the full rendered DOM
-			eval_id = send(
-				"Runtime.evaluate",
-				{"expression": "document.documentElement.outerHTML", "returnByValue": True},
-			)
-			msg = recv_until(lambda m: m.get("id") == eval_id, time.time() + 10)
-			html = (msg or {}).get("result", {}).get("result", {}).get("value")
-
-			ws.close()
-			return html
-		except Exception:
-			return None
+			target_id = command("Target.createTarget", {"url": "about:blank"})["targetId"]
+			session_id = command("Target.attachToTarget", {
+				"targetId": target_id, "flatten": True,
+			})["sessionId"]
+			command("Page.enable", session_id=session_id)
+			command("Page.setLifecycleEventsEnabled", {"enabled": True}, session_id)
+			deadline = time.monotonic() + 30
+			if url.lstrip().startswith("<") or not url.startswith(("http://", "https://", "data:", "about:")):
+				frame = command("Page.getFrameTree", session_id=session_id)["frameTree"]["frame"]
+				load_events.clear()
+				command("Page.setDocumentContent", {"frameId": frame["id"], "html": url}, session_id, timeout=30)
+				navigation = {"loaderId": frame["loaderId"]}
+			else:
+				navigation = command("Page.navigate", {"url": url}, session_id, timeout=30)
+				if navigation.get("errorText"):
+					raise RuntimeError(navigation["errorText"])
+			# Match this document, including events received before the navigation reply.
+			loader_id = navigation.get("loaderId")
+			while loader_id and (session_id, loader_id) not in load_events:
+				receive(deadline)
+			if ret_type.startswith("screenshot"):
+				_, _type, quality = nsplit(ret_type, ":", 2)
+				params = {"format": _type or "jpeg", "quality": int(quality or 100)}
+				return command("Page.captureScreenshot", params, session_id)["data"]
+			result = command("Runtime.evaluate", {
+				"expression": "document.documentElement.outerHTML", "returnByValue": True,
+			}, session_id)
+			if "exceptionDetails" in result:
+				raise RuntimeError(f"Chrome evaluation failed: {result['exceptionDetails']}")
+			return result["result"].get("value")
 		finally:
-			if tab_id:
-				try:
-					requests.get(
-						f"http://localhost:{CHROME_DEBUG_PORT}/json/close/{tab_id}",
-						timeout=5,
-					)
-				except Exception:
-					pass
+			try:
+				if target_id is not None:
+					command("Target.closeTarget", {"targetId": target_id}, timeout=5)
+			finally:
+				load_events.clear()
 
 	try:
-		while True:
-			url = browser_url_queue.get()   # blocks until a URL is submitted
-			if url is None:         # sentinel: shut down
-				break
-			browser_results[url] = load_url(url)
+		with tempfile.TemporaryDirectory(prefix="blaster-chrome-", ignore_cleanup_errors=True) as profile:
+			try:
+				chrome_proc = subprocess.Popen(
+					[
+						"google-chrome", "--headless=new", "--no-sandbox", "--disable-gpu",
+						"--disable-dev-shm-usage", "--disable-extensions",
+						"--disable-software-rasterizer", "--no-first-run", "--no-default-browser-check",
+						"--remote-debugging-port=0", f"--user-data-dir={profile}",
+					],
+					stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+				)
+				deadline = time.monotonic() + 15
+				while True:
+					if chrome_proc.poll() is not None:
+						raise RuntimeError("Chrome exited during startup")
+					try:
+						with open(os.path.join(profile, "DevToolsActivePort")) as port_file:
+							port, path = port_file.read().splitlines()[:2]
+						browser_ws_url = f"ws://127.0.0.1:{int(port)}{path}"
+						break
+					except (OSError, ValueError):
+						if time.monotonic() >= deadline:
+							raise TimeoutError("Chrome debugging endpoint did not start")
+						sleep(0.1)
+
+				while True:
+					item = browser_url_queue.get()
+					if item is None:
+						break
+					result, url, ret_type = item
+					try:
+						if ret_type not in ("html", "screenshot") and not ret_type.startswith("screenshot:"):
+							raise ValueError(f"Unknown Chrome result type: {ret_type}")
+						if ws is None:
+							ws = Websocket()
+							ws.connect(browser_ws_url, timeout=30)
+						result.set(capture(url, ret_type))
+					except Exception as exc:
+						result.set(None)
+						LOG_WARN("chrome_capture_failed", url=url, stack_trace=traceback.format_exc())
+						# A failed tab is cleaned up by capture(). Reconnect only on transport loss.
+						if ws is not None and (
+							ws.closed
+							or (isinstance(exc, OSError) and not isinstance(exc, TimeoutError))
+						):
+							with contextlib.suppress(Exception):
+								ws.close()
+							ws = None
+			finally:
+				try:
+					if ws is not None:
+						try:
+							command("Browser.close", timeout=5)
+						except Exception:
+							pass
+						finally:
+							ws.close()
+				finally:
+					if chrome_proc is not None:
+						try:
+							chrome_proc.wait(timeout=5)
+						except subprocess.TimeoutExpired:
+							chrome_proc.terminate()
+							try:
+								chrome_proc.wait(timeout=5)
+							except subprocess.TimeoutExpired:
+								chrome_proc.kill()
+								chrome_proc.wait()
 	finally:
-		chrome_proc.terminate()
-		chrome_proc.wait()
+		chrome_browser_processes_started = max(0, chrome_browser_processes_started - 1)
 
 
 chrome_browser_processes_started = 0
 
 
-def load_page_with_chrome(url, timeout=60):
+# url -> url / html, return_type = oneOf("html", "screenshot", "screenshot:jpeg")
+def load_page_with_chrome(html_or_url, return_type="html", timeout=60):
 	global chrome_browser_processes_started
 
-	browser_url_queue.put(url)
+	result = AsyncResult()
+	browser_url_queue.put((result, html_or_url, return_type))
 
 	if(
 		not chrome_browser_processes_started
@@ -2577,14 +2624,9 @@ def load_page_with_chrome(url, timeout=60):
 			"started_chrome_process", total_processes=chrome_browser_processes_started
 		)
 
-	while(
-		(resp := browser_results.get(url)) is None
-		and timeout > 0
-	):
-		sleep(1)
-		timeout -= 1
-	return resp
-
+	with gevent.Timeout(timeout, False):
+		return result.get()
+	return None
 
 @events.register_listener(["blaster_exit5"])
 def shutdown_chrome_process():

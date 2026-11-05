@@ -41,6 +41,8 @@ def blaster_exit():
 	# stage 5 -> all things cleanedup and done
 	for i in range(6):
 		events.broadcast_event("blaster_exit" + str(i))
+	for i in range(6):
+		events.broadcast_event("blaster:exit:" + str(i))
 
 
 def handle_signal(signum):

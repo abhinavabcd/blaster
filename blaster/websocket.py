@@ -28,6 +28,7 @@ class Websocket:
         self._send_lock = Semaphore()
         self._recv_lock = Semaphore()
         self.max_size = max_size
+        self._data = None  # arbitrary user data
 
     def connect(self, url, timeout=None, headers=None):
         """Connect to ws:// or wss://, validating the HTTP upgrade response."""

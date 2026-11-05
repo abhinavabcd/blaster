@@ -1717,7 +1717,7 @@ def initialize_model(model_cls):
 	for spec in parsed_indexes:
 		col_parts = []
 		for field, direction, dir_str in spec['col_exprs']:
-			if field in pk_attrs or field == '_':
+			if field in pk_attrs or field in model_cls._col_attrs_ or field == '_':
 				col_parts.append(f"{field} {dir_str}")
 			else:
 				col_parts.append(f"(__->>'{field}') {dir_str}")
