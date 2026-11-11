@@ -10,9 +10,13 @@ import psycopg2
 import psycopg2.pool
 import psycopg2.extras
 
-from .tools import cur_ms, all_subclasses
 from .logging import LOG_WARN
 from .config import IS_TEST
+
+
+def cur_ms():
+	return int(1000 * time.time())
+
 
 T = TypeVar("T", bound="Model")
 
@@ -71,13 +75,13 @@ def SHARD_BY(*args, **kwargs):  # NO-OP
 def _is_field_spec(item):
 	"""
 	True when `item` names a single indexed field, i.e. one of:
-	    name_or_attr                      e.g. user_id
-	    (name_or_attr, direction)         e.g. (user_id, ASCENDING)
+		name_or_attr                      e.g. user_id
+		(name_or_attr, direction)         e.g. (user_id, ASCENDING)
 
 	False when it is a nested index declaration (mongo_orm style), i.e. a tuple
 	holding several fields and/or its own options dict:
-	    (session_id, user_id)
-	    ((created_at, -1), {"unique": False})
+		(session_id, user_id)
+		((created_at, -1), {"unique": False})
 	"""
 	if not isinstance(item, tuple):
 		return True  # a bare field reference
@@ -106,23 +110,23 @@ def INDEX(*indexes):
 
 	raw PostgreSQL SQL — a string beginning with CREATE INDEX:
 
-	    INDEX('''CREATE INDEX IF NOT EXISTS users_next_run_at_desc
-	        ON users (((__ #>> '{next_scheduled_run,at}')::bigint) DESC)''')
+		INDEX('''CREATE INDEX IF NOT EXISTS users_next_run_at_desc
+			ON users (((__ #>> '{next_scheduled_run,at}')::bigint) DESC)''')
 
 	pg_orm style — the whole call declares ONE (possibly compound) index, where
 	each positional arg is either a field spec or an options dict:
 
-	    INDEX((id, ASCENDING), {'unique': True})
-	    INDEX((city, ASCENDING), (sort_order, DESCENDING), {'unique': False})
+		INDEX((id, ASCENDING), {'unique': True})
+		INDEX((city, ASCENDING), (sort_order, DESCENDING), {'unique': False})
 
 	mongo_orm style — each positional arg is itself a complete index, so one
 	call declares SEVERAL indexes. This keeps models written against
 	mongo_orm.INDEX working unchanged:
 
-	    INDEX(
-	        (session_id, user_id),
-	        (user_id, _type, (updated_at, -1), {"unique": False}),
-	    )
+		INDEX(
+			(session_id, user_id),
+			(user_id, _type, (updated_at, -1), {"unique": False}),
+		)
 	"""
 	locals_ = inspect.currentframe().f_back.f_locals
 	table_name = locals_.get("_table_name_") or locals_.get("_collection_name_")
@@ -368,10 +372,10 @@ class DatabaseNode:
 	Manages a psycopg2 ThreadedConnectionPool for one PostgreSQL database.
 
 	Args:
-	    name:    Optional name to register this node in the global _DB_NODES_ registry
-	             so models can reference it as a string: _db_node_ = "my_db"
-	    replica: Optional DatabaseNode (or registered name) to use for read-only queries
-	             when _replica=True is passed to query() / get().
+		name:    Optional name to register this node in the global _DB_NODES_ registry
+				 so models can reference it as a string: _db_node_ = "my_db"
+		replica: Optional DatabaseNode (or registered name) to use for read-only queries
+				 when _replica=True is passed to query() / get().
 	"""
 
 	def __init__(self, host, port, user, password, db_name, min_conn=1, max_conn=20,
@@ -744,10 +748,10 @@ class Model:
 		Build chained jsonb_set / #- / $inc / $push expression for patching the __ column.
 
 		updates: {
-		    "$set":   {path_or_dotpath: value, ...},   e.g. {"name": "x", "addr.city": "LA"}
-		    "$unset": {path_or_dotpath: 1, ...},
-		    "$inc":   {path_or_dotpath: delta, ...},
-		    "$push":  {path_or_dotpath: value, ...},   append value to a JSONB array
+			"$set":   {path_or_dotpath: value, ...},   e.g. {"name": "x", "addr.city": "LA"}
+			"$unset": {path_or_dotpath: 1, ...},
+			"$inc":   {path_or_dotpath: delta, ...},
+			"$push":  {path_or_dotpath: value, ...},   append value to a JSONB array
 		}
 
 		For $inc, the current value is always read from the original __ column so that
@@ -822,7 +826,7 @@ class Model:
 
 		conditions: passed to update() for conditional commits (see update()).
 		force:      on INSERT duplicate-key conflict, load the existing row and
-		            apply the new fields on top of it instead of raising.
+					apply the new fields on top of it instead of raising.
 		"""
 		if object.__getattribute__(self, '_is_create_new_'):
 			self._insert(force=force)
@@ -944,16 +948,16 @@ class Model:
 		Apply updates to this record with optimistic locking on _.
 
 		updates: {
-		    "$set":   {"field": value, "nested.field": value, ...},
-		    "$unset": {"field": 1, ...},
-		    "$inc":   {"field": delta, ...},
-		    "$push":  {"field": value, ...},   # append value to a JSONB array
+			"$set":   {"field": value, "nested.field": value, ...},
+			"$unset": {"field": 1, ...},
+			"$inc":   {"field": delta, ...},
+			"$push":  {"field": value, ...},   # append value to a JSONB array
 		}
 		conditions: extra WHERE filters beyond pk + _ (same syntax as query())
-		    e.g. {"status": "active", "score": {"$lt": 100}}
+			e.g. {"status": "active", "score": {"$lt": 100}}
 		callback:   called with (self, result_row) after the UPDATE succeeds but
-		            before COMMIT. If it raises, the transaction is rolled back
-		            and the exception is re-raised.
+					before COMMIT. If it raises, the transaction is rolled back
+					and the exception is re-raised.
 
 		When updates is None, tracked changes from attribute mutations are used.
 		column=True fields are updated via direct SQL columns; others via JSONB.
@@ -1376,7 +1380,7 @@ class Model:
 		Primary-key fields and ``_`` are always loaded internally.
 
 		Example:
-		    User.query({'age': {'$gte': 18}}, sort=[('name', 1)], limit=10, _replica=True)
+			User.query({'age': {'$gte': 18}}, sort=[('name', 1)], limit=10, _replica=True)
 		"""
 		node = cls._db_node_._get_replica() if _replica else cls._db_node_
 		conditions, params = cls._build_conditions_sql(_query)
@@ -1495,11 +1499,11 @@ def _parse_index_declaration(raw_index, attrs_to_name):
 	Parse one INDEX() argument group into (fields, properties).
 
 	raw_index is a tuple of positional args passed to INDEX(), e.g.:
-	    ((user_id, ASCENDING), (created_at, DESCENDING), {'unique': True})
+		((user_id, ASCENDING), (created_at, DESCENDING), {'unique': True})
 
 	Returns:
-	    fields: list of (field_name, direction)
-	    props:  dict  e.g. {'unique': True}
+		fields: list of (field_name, direction)
+		props:  dict  e.g. {'unique': True}
 	"""
 	fields = []
 	props = {}
@@ -1594,20 +1598,20 @@ def initialize_model(model_cls):
 	Must be called once after the model class is defined.
 
 	Example:
-	    class User(Model):
-	        _table_name_ = "users"
-	        _db_node_ = my_db_node
+		class User(Model):
+			_table_name_ = "users"
+			_db_node_ = my_db_node
 
-	        id         = Attribute(str)
-	        name       = Attribute(str)
-	        age        = Attribute(int, default=0)
-	        meta       = Attribute(dict, default={})
-	        tags       = Attribute(list, default=[])
+			id         = Attribute(str)
+			name       = Attribute(str)
+			age        = Attribute(int, default=0)
+			meta       = Attribute(dict, default={})
+			tags       = Attribute(list, default=[])
 
-	        INDEX((id,   ASCENDING), {'unique': True})
-	        INDEX((name, ASCENDING))
+			INDEX((id,   ASCENDING), {'unique': True})
+			INDEX((name, ASCENDING))
 
-	    initialize_model(User)
+		initialize_model(User)
 	"""
 
 	# ── 0. Resolve the table name and _db_node_ ──────────────────────────────
@@ -1826,6 +1830,24 @@ def initialize_postgres(db_nodes):
 			f"argument must be a list of dicts, or a single dict, not {type(db_nodes)}"
 		)
 	# set default db node for each class;
+
+	def __iter_subclasses(cls, seen, reverse) -> iter:
+		if(cls in seen):
+			return
+		seen.add(cls)
+		if(not reverse):
+			yield cls
+		for sub_class in cls.__subclasses__():
+			yield from __iter_subclasses(sub_class, seen, reverse)
+		if(reverse):
+			yield cls
+
+	def all_subclasses(cls, reverse=False, ignore_initial=True) -> iter:
+		_iter = __iter_subclasses(cls, set(), reverse)
+		if(ignore_initial):
+			next(_iter)
+		return _iter
+
 	for cls in all_subclasses(Model):
 		if not getattr(cls, "_db_node_", None):
 			cls._db_node_ = db_nodes[0]
