@@ -1,36 +1,38 @@
 #!/bin/bash
-set -e
+set -euo pipefail
+cd "$(dirname "$0")"
 
-PG_CONTAINER=blaster-test-pg
-PG_PORT=5499
-PG_USER=postgres
-PG_PASS=postgres
-PG_DB=postgres
+# A fresh container/port per invocation avoids changing existing databases.
+PG_CONTAINER="blaster-test-pg-orm-$$"
+PG_IMAGE="${PG_TEST_IMAGE:-pgvector/pgvector:pg16}"
+cleanup() { docker rm -fv "$PG_CONTAINER" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
 
-# Clean up any existing container
-docker stop $PG_CONTAINER 2>/dev/null || true
-docker rm -f $PG_CONTAINER 2>/dev/null || true
+docker run --name "$PG_CONTAINER" --rm \
+    -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=postgres \
+    -p 127.0.0.1::5432 -d "$PG_IMAGE" >/dev/null
 
-# Start PostgreSQL
-docker run --name $PG_CONTAINER \
-	-e POSTGRES_USER=$PG_USER \
-	-e POSTGRES_PASSWORD=$PG_PASS \
-	-e POSTGRES_DB=$PG_DB \
-	-p $PG_PORT:5432 \
-	-d pgvector/pgvector:latest
-
-# Wait until PostgreSQL is accepting connections
-echo "Waiting for PostgreSQL to be ready..."
 for i in $(seq 1 30); do
-	if docker exec $PG_CONTAINER pg_isready -U $PG_USER -q 2>/dev/null; then
-		echo "PostgreSQL is ready."
-		break
-	fi
-	if [ $i -eq 30 ]; then
-		echo "PostgreSQL did not become ready in time."
-		exit 1
-	fi
-	sleep 1
+    if docker exec "$PG_CONTAINER" pg_isready -U postgres -q 2>/dev/null; then
+        break
+    fi
+    if [ "$i" -eq 30 ]; then
+        docker logs "$PG_CONTAINER"
+        exit 1
+    fi
+    sleep 1
 done
 
-IS_TEST=1 /home/abhinav/any/python3_12_venv/bin/python3 -m unittest $1 $2
+export PG_TEST_HOST=127.0.0.1
+export PG_TEST_PORT="$(docker port "$PG_CONTAINER" 5432/tcp | head -1 | cut -d: -f2)"
+export PG_TEST_USER=postgres PG_TEST_PASSWORD=postgres PG_TEST_DB=postgres IS_TEST=1
+PYTHON_BIN="${PG_TEST_PYTHON:-/home/abhinav/any/python3_14_venv/bin/python3}"
+if [ "$#" -gt 0 ]; then
+    "$PYTHON_BIN" -m unittest "$@"
+else
+    "$PYTHON_BIN" -m unittest tests.test_pg_sync_core
+    # Runtime patches are consumer-owned and tested in separate processes.
+    "$PYTHON_BIN" -m unittest tests.pg_test tests.test_pg_reload
+    "$PYTHON_BIN" -m unittest tests.pg_gevent_test
+    "$PYTHON_BIN" -m unittest tests.pg_async_test
+fi

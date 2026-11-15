@@ -1,50 +1,59 @@
-"""SQLite ORM with the same model, Attribute, INDEX and dbnode API as pg_orm.
+"""Synchronous SQLite ORM using only patchable standard-library thread primitives.
+
+Import from ``orms.sqlite``; its module file links to this implementation. There
+is one Model and DatabaseNode API. No async models, runtime modes or scheduler
+hooks are maintained here. Thread/queue/lock/sleep functions can be patched by a
+consumer before constructing nodes. The module never imports gevent or asyncio.
 
 Example::
 
-	db = DatabaseNode("app.sqlite3", name="app")
-	class User(Model):
-		_table_name_ = "users"
-		_db_node_ = "app"  # a node instance also works
-		id = Attribute(str)
-		meta = Attribute(dict)
-		INDEX(id, {"unique": True})
-	initialize_sqlite(db)
-	User(id="alice", meta={"visits": 1}).commit()
+    from orms.sqlite import Model, Attribute, DatabaseNode, initialize_model
+    db = DatabaseNode("app.sqlite3")
+    class User(Model):
+        _table_name_ = "users"
+        _db_node_ = db
+        _id = Attribute(str)
+        meta = Attribute(dict)
+    initialize_model(User)
+    User(_id="alice").commit()
+    with db.transaction():
+        user = User.get("alice")
+        user.update({"$inc": {"meta.visits": 1}})
+    db.close()
 
-Each node owns one SQLite connection. Concurrent writes are queued and grouped
-into transactions (up to batch_size, after batch_interval seconds). commit(),
-update() and delete() wait for the transaction to commit; they never acknowledge
-uncommitted data. Sequential calls therefore commit individually. Use concurrent
-gevent jobs to benefit from batching. A savepoint isolates each queued operation:
-one invalid write does not discard other successful writes in the batch.
+For asyncio use ``orms.sqlite_async.AsyncAdapter`` with these same sync models.
+``User = await adapter.initialize(SyncUser)`` binds a cached async facade;
+``await User.get("alice")`` delegates to the unchanged sync implementation.
+The lower-level ``await adapter.run(SyncUser.get, "alice")`` and
+``await adapter.transaction(db, synchronous_function)`` remain available. Submit the whole
+transaction in one call. Transaction callbacks and event handlers are synchronous.
 
-File databases use WAL and synchronous=NORMAL by default. WAL permits external
-readers during writes; NORMAL may lose recent commits after power failure, while
-preserving database consistency. SQLite in-memory databases cannot use WAL.
-Callbacks run inside the writer transaction; same-node nested ORM operations join
-that transaction and roll back together on callback failure. Cross-node callbacks
-are not distributed transactions. Call close() before discarding a node. Nodes
-are process-local; create new nodes after forking.
+Each node owns one connection with WAL and synchronous=NORMAL (in-memory SQLite
+cannot use WAL). Concurrent writes share transaction batches, with a savepoint
+per operation. Every call waits for COMMIT; sequential calls commit individually.
+One invalid write is isolated from its peers; a failed COMMIT rolls back the
+whole batch. Explicit transactions group sequential writes and restore nested
+model state on rollback. Cross-node work is not a distributed transaction.
+NORMAL can lose recent commits after power failure while preserving consistency.
 
-Schema setup is explicit and additive: initialize_sqlite() creates tables/indexes
-and create_table() adds missing ordinary columns. Type changes need migrations.
-Requires SQLite 3.35+ with JSON functions. Raw INDEX SQL uses SQLite syntax.
-No PostgreSQL or psycopg2 is required.
+Schema initialization creates tables/indexes and adds missing ordinary columns;
+type changes require migrations. Queries materialize their rows. Close nodes
+before discarding them, and create fresh nodes after forking. Requires SQLite
+3.35+ with JSON functions. Use one import path consistently: module registries
+are local to that import, including when linking this file into another project.
 """
+import concurrent.futures
+import functools
 import hashlib
 import inspect
 import json
 import re
 import sqlite3
+import threading
+import queue
 import time
 from contextlib import contextmanager
 from typing import TypeVar
-
-import gevent
-from gevent.event import AsyncResult
-from gevent.lock import RLock
-from gevent.queue import Queue
 
 
 def cur_ms():
@@ -361,15 +370,16 @@ class Attribute:
 		return value
 
 def with_lock(func):
-	"""Decorator that acquires a lock on self before calling func and releases it after."""
+	"""Acquire a record lease around a synchronous method."""
+	if inspect.iscoroutinefunction(func):
+		raise TypeError('with_lock requires a synchronous function; submit it through AsyncAdapter')
+	@functools.wraps(func)
 	def wrapper(self, *args, **kwargs):
 		try:
-			self.lock()
-			return func(self, *args, **kwargs)
+			with self.lock():
+				return func(self, *args, **kwargs)
 		except TimeoutError:
 			return None
-		finally:
-			self.unlock()
 	return wrapper
 
 class OptimisticLockError(Exception):
@@ -658,6 +668,8 @@ class Model:
 		containers; zero and False are preserved. A missing row raises LookupError.
 		"""
 		cls = self.__class__
+		if cls._db_node_ is not None:
+			cls._db_node_._remember(self)
 		if projections is not None:
 			if isinstance(projections, (str, Attribute)):
 				projections = [projections]
@@ -900,7 +912,11 @@ class Model:
 			vals = [json.dumps(row[c], default=_json_default) if c == '__' else row[c] for c in columns]
 			conn.execute(f'UPDATE {_quote(cls._table_name_)} SET ' + ', '.join(_quote(c) + '=?' for c in columns) + ' WHERE ' + ' AND '.join(where), vals + params)
 			if callback:
-				callback(self, row)
+				cls._db_node_._callback(callback, self, row)
+				# Nested callbacks can update this same record. Reflect the final
+				# transaction value rather than replacing it with the earlier row.
+				pk_where, pk_params = cls._build_conditions_sql({pk: row[pk] for pk in cls._pk_attrs_})
+				row = _decode(conn.execute(f'SELECT * FROM {_quote(cls._table_name_)} WHERE ' + ' AND '.join(pk_where), pk_params).fetchone())
 			return row
 		row = cls._db_node_.write(apply)
 		if row is None:
@@ -921,6 +937,7 @@ class Model:
 
 	def lock(self, name='', timeout=5000, silent=False, can_hold_until=120000):
 		"""Claim a persisted lease atomically; expiry and timeout are milliseconds."""
+		self.__class__._db_node_._remember(self)
 		key = '_lock_' + name
 		locks = self.__dict__.setdefault('_locks', {})
 		deadline = cur_ms() + timeout
@@ -941,12 +958,13 @@ class Model:
 					object.__setattr__(self, '_', acquired['_'])
 				locks[key] = expires
 				return self._LockHandle(self, name, True)
-			time.sleep(0.01)
+			cls._db_node_._sleep(0.01)
 		if not silent:
 			raise TimeoutError(f'Lock timed out: {cls.__name__} {self._pk_values()}')
 		return self._LockHandle(self, name, False)
 
 	def unlock(self, name='', force=False):
+		self.__class__._db_node_._remember(self)
 		key = '_lock_' + name
 		locks = self.__dict__.setdefault('_locks', {})
 		if not force and key not in locks:
@@ -1000,7 +1018,7 @@ class DatabaseNode:
 	"""One SQLite database, connection and batched writer per node.
 
 	path (or db_name) is a filesystem filename or SQLite URI. batch_interval
-	defaults to 1ms and batch_size to 100. Setting interval=0 still groups jobs
+	defaults to 1ms and batch_size to 100. Setting batch_interval=0 still groups jobs
 	already queued. use_conn() is a serialized escape hatch for raw SQL; callers
 	must commit or roll back before leaving. Prefer write(callable) for mutations
 	so they use the default batching and per-operation savepoints.
@@ -1014,19 +1032,55 @@ class DatabaseNode:
 		self.replica = replica
 		self.batch_size = batch_size
 		self.batch_interval = batch_interval
-		self._mutex = RLock()
-		self._queue = Queue()
+		self._mutex = threading.RLock()
+		self._schedule_mutex = threading.RLock()
+		self._local = threading.local()
+		self._queue = queue.Queue()
+		self._sleep = time.sleep
 		self._worker = None
 		self._undo = []
 		self._depth = 0
 		self._closed = False
-		self._conn = sqlite3.connect(self.path, timeout=timeout, uri=uri, check_same_thread=False, isolation_level=None)
-		self._conn.row_factory = sqlite3.Row
-		self._conn.execute('PRAGMA journal_mode=WAL')
-		self._conn.execute('PRAGMA synchronous=NORMAL')
-		self._conn.execute('PRAGMA foreign_keys=ON')
+		self._timeout, self._uri = timeout, uri
+		self._conn = None
+		self._connect()
 		if name:
 			_DB_NODES_[name] = self
+
+	def _connect(self):
+		self._conn = sqlite3.connect(self.path, timeout=self._timeout, uri=self._uri,
+			check_same_thread=False, isolation_level=None)
+		try:
+			self._conn.row_factory = sqlite3.Row
+			self._conn.execute('PRAGMA journal_mode=WAL')
+			self._conn.execute('PRAGMA synchronous=NORMAL')
+			self._conn.execute('PRAGMA foreign_keys=ON')
+		except BaseException:
+			self._conn.close()
+			self._conn = None
+			raise
+
+	def _in_worker(self):
+		return threading.current_thread() is self._worker or getattr(self._local, 'transaction', False)
+
+	def _callback(self, callback, *args):
+		result = callback(*args)
+		if inspect.isawaitable(result):
+			if inspect.iscoroutine(result):
+				result.close()
+			raise TypeError('SQLite transaction callbacks must be synchronous; submit the whole transaction through AsyncAdapter')
+		return result
+
+	def _enqueue(self, operation):
+		with self._schedule_mutex:
+			if self._closed:
+				raise RuntimeError('DatabaseNode is closed')
+			result = concurrent.futures.Future()
+			self._queue.put((operation, result))
+			if self._worker is None:
+				self._worker = threading.Thread(target=self._drain, daemon=True, name='sqlite-orm-writer')
+				self._worker.start()
+			return result
 
 	def _get_replica(self):
 		if isinstance(self.replica, str):
@@ -1035,33 +1089,71 @@ class DatabaseNode:
 
 	def write(self, operation):
 		"""Run operation(connection), returning only after its batch is committed."""
-		if gevent.getcurrent() is self._worker:
+		if self._in_worker():
 			self._depth += 1
 			savepoint = f'orm_nested_{self._depth}'
 			mark = len(self._undo)
 			self._conn.execute('SAVEPOINT ' + savepoint)
 			try:
 				return operation(self._conn)
-			except Exception:
+			except BaseException:
 				self._conn.execute('ROLLBACK TO ' + savepoint)
 				self._restore(mark)
 				raise
 			finally:
 				self._conn.execute('RELEASE ' + savepoint)
 				self._depth -= 1
-		if self._closed:
-			raise RuntimeError('DatabaseNode is closed')
-		result = AsyncResult()
-		self._queue.put((operation, result))
-		if self._worker is None:
-			self._worker = gevent.spawn(self._drain)
-		return result.get()
+		return self._enqueue(operation).result()
+
+	@contextmanager
+	def transaction(self):
+		"""Group synchronous operations on this node into one atomic transaction.
+
+		Nested contexts use savepoints. The body executes on the calling thread;
+		the connection lock prevents queued writers from joining its transaction.
+		Do not await or hand the transaction to another thread while it is open.
+		"""
+		if self._in_worker():
+			self._depth += 1
+			name = f'orm_transaction_{self._depth}'
+			mark = len(self._undo)
+			self._conn.execute('SAVEPOINT ' + name)
+			try:
+				yield self
+			except BaseException:
+				self._conn.execute('ROLLBACK TO ' + name)
+				self._restore(mark)
+				raise
+			finally:
+				self._conn.execute('RELEASE ' + name)
+				self._depth -= 1
+			return
+		with self._mutex:
+			if self._closed:
+				raise RuntimeError('DatabaseNode is closed')
+			self._conn.execute('BEGIN IMMEDIATE')
+			self._local.transaction = True
+			try:
+				yield self
+				self._conn.commit()
+			except BaseException:
+				self._conn.rollback()
+				self._restore()
+				raise
+			else:
+				self._undo.clear()
+			finally:
+				self._local.transaction = False
 
 	def _remember(self, obj):
 		# Nested callbacks update their model before the surrounding commit.
 		# Restore these objects too if that surrounding transaction fails.
-		if gevent.getcurrent() is self._worker:
-			self._undo.append((obj, dict(vars(obj))))
+		if self._in_worker():
+			state = dict(vars(obj))
+			for name in ('_set_updates', '_unset_updates', '_locks'):
+				if state.get(name) is not None:
+					state[name] = state[name].copy()
+			self._undo.append((obj, state))
 
 	def _restore(self, mark=0):
 		for obj, state in reversed(self._undo[mark:]):
@@ -1071,20 +1163,26 @@ class DatabaseNode:
 
 	def _drain(self):
 		try:
-			while not self._queue.empty():
+			while True:
+				with self._schedule_mutex:
+					if self._queue.empty():
+						self._worker = None
+						return
 				if self.batch_interval:
-					gevent.sleep(self.batch_interval)
+					self._sleep(self.batch_interval)
 				jobs = [self._queue.get_nowait() for _ in range(min(self.batch_size, self._queue.qsize()))]
 				outcomes = []
 				with self._mutex:
 					try:
+						if self._conn is None:
+							self._connect()
 						self._conn.execute('BEGIN IMMEDIATE')
 						for operation, result in jobs:
 							mark = len(self._undo)
 							self._conn.execute('SAVEPOINT orm_operation')
 							try:
 								value = operation(self._conn)
-							except Exception as exc:
+							except BaseException as exc:
 								self._conn.execute('ROLLBACK TO orm_operation')
 								self._restore(mark)
 								outcomes.append((result, None, exc))
@@ -1094,22 +1192,25 @@ class DatabaseNode:
 								self._conn.execute('RELEASE orm_operation')
 						self._conn.commit()
 						self._undo.clear()
-					except Exception as exc:
-						self._conn.rollback()
+					except BaseException as exc:
+						if self._conn is not None:
+							self._conn.rollback()
 						self._restore()
 						outcomes = [(result, None, exc) for _, result in jobs]
 				for result, value, error in outcomes:
 					if error is not None:
 						result.set_exception(error)
 					else:
-						result.set(value)
+						result.set_result(value)
 		finally:
-			self._worker = None
+			with self._schedule_mutex:
+				if self._in_worker():
+					self._worker = None
 
 	def get_conn(self):
 		"""Acquire serialized raw access; pair with put_conn() in a finally block."""
 		self._mutex.acquire()
-		if self._closed and gevent.getcurrent() is not self._worker:
+		if self._closed and not self._in_worker():
 			self._mutex.release()
 			raise RuntimeError('DatabaseNode is closed')
 		return self._conn
@@ -1119,7 +1220,7 @@ class DatabaseNode:
 		if conn is not self._conn:
 			raise ValueError('Connection does not belong to this node')
 		try:
-			if gevent.getcurrent() is not self._worker and conn.in_transaction:
+			if not self._in_worker() and conn.in_transaction:
 				conn.rollback()
 		finally:
 			self._mutex.release()
@@ -1141,13 +1242,16 @@ class DatabaseNode:
 
 	def close(self):
 		"""Drain pending writes and close; further operations raise RuntimeError."""
-		if gevent.getcurrent() is self._worker:
+		if self._in_worker():
 			raise RuntimeError('Cannot close a node inside its write callback')
-		self._closed = True
-		if self._worker is not None:
-			self._worker.join()
+		with self._schedule_mutex:
+			self._closed = True
+			worker = self._worker
+		if worker is not None:
+			worker.join()
 		with self._mutex:
-			self._conn.close()
+			if self._conn is not None:
+				self._conn.close()
 
 
 def initialize_model(model_cls):
@@ -1160,6 +1264,7 @@ def initialize_model(model_cls):
 		cls._db_node_ = _DB_NODES_[cls._db_node_]
 	if cls._db_node_ is None:
 		raise ValueError(f'{cls.__name__} requires a DatabaseNode')
+
 	attrs = {}
 	for base in reversed(cls.__mro__):
 		attrs.update({name: attr for name, attr in vars(base).items() if isinstance(attr, Attribute)})

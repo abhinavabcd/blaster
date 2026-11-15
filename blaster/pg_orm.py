@@ -1,4 +1,55 @@
+"""Synchronous PostgreSQL ORM with no asyncio or gevent runtime dependencies.
+
+Use orms.pg for standalone imports; orms/pg.py links to this source. The older
+orms.pg_orm path is retained. Use one core import path consistently per process,
+because registries and descriptors belong to their module.
+
+    from orms.pg import Model, Attribute, DatabaseNode, initialize_model
+    db = DatabaseNode(host="localhost", port=5432, user="postgres",
+        password="postgres", db_name="app")
+    class SyncUser(Model):
+        _table_name_ = "users"
+        _db_node_ = db
+        _id = Attribute(str)
+        meta = Attribute(dict)
+    initialize_model(SyncUser, create_tables=True)
+    with db.transaction():
+        SyncUser(_id="alice").commit()
+    db.close()
+
+For asyncio, use the backend loader orms.pg_async.AsyncAdapter. Inside async code:
+
+    async with AsyncAdapter(create_tables=True) as adapter:
+        User = await adapter.initialize(SyncUser)  # cached/generated once
+        user = await User.get("alice")
+        await user.update({"$inc": {"meta.visits": 1}})
+        async for user in User.query():
+            print(user.to_dict())
+        await adapter.transaction(db, synchronous_transaction_body)
+        await adapter.run(db.close)
+
+The shared async_wrapper runs complete sync operations on bounded native workers.
+The core owns SQL, pooling, change tracking, savepoints and rollback. Callbacks
+and transaction bodies stay synchronous; use User.sync_model/user.sync there.
+
+threading.local/RLock/BoundedSemaphore and time.sleep are ordinary patchable
+stdlib primitives. Consumers needing cooperative scheduling must configure their
+runtime and psycopg2 wait hook themselves. The core never imports gevent, sets a
+wait callback, or patches the process. Importing the blaster server package still
+has its own startup behavior; standalone consumers should import orms.pg.
+
+Production initialization raises MissingTableError for absent tables unless
+create_tables=True is supplied
+(IS_TEST=1 also enables creation). Schema changes are additive through create_table;
+type changes require migrations. Same-node nested writes share the outer scope,
+and failures restore nested model state. Cross-node work is not a distributed
+transaction. Queries materialize rows; close nodes explicitly before discarding.
+"""
+import functools
 import hashlib
+import logging
+import os
+import threading
 import inspect
 import json
 import re
@@ -10,8 +61,11 @@ import psycopg2
 import psycopg2.pool
 import psycopg2.extras
 
-from .logging import LOG_WARN
-from .config import IS_TEST
+IS_TEST = os.environ.get('IS_TEST', '').lower() in ('1', 'true', 'yes')
+
+
+def LOG_WARN(event, **fields):
+	logging.getLogger(__name__).warning('%s %s', event, fields)
 
 
 def cur_ms():
@@ -367,76 +421,184 @@ class Attribute:
 # DatabaseNode — connection pool
 # ──────────────────────────────────────────────────────────────────────────────
 
+class _ConnectionScope:
+	"""Defer commits to the outer use_conn and keep nested rollbacks scoped."""
+	def __init__(self, session, savepoint, mark):
+		self.session, self.savepoint, self.mark = session, savepoint, mark
+
+	def __getattr__(self, name):
+		return getattr(self.session.conn, name)
+
+	def commit(self):
+		pass  # the outermost use_conn owns the commit
+
+	def rollback(self):
+		if self.savepoint:
+			with self.session.conn.cursor() as cur:
+				cur.execute('ROLLBACK TO SAVEPOINT ' + self.savepoint)
+		else:
+			self.session.conn.rollback()
+		self.session.restore(self.mark)
+
+
+class _Session:
+	def __init__(self, node, conn):
+		self.node, self.conn = node, conn
+		self.depth = 0
+		self.undo = []
+
+	def restore(self, mark=0):
+		for obj, state in reversed(self.undo[mark:]):
+			obj.__dict__.clear()
+			obj.__dict__.update(state)
+		del self.undo[mark:]
+
+
 class DatabaseNode:
-	"""
-	Manages a psycopg2 ThreadedConnectionPool for one PostgreSQL database.
+	"""A synchronous bounded pool using patchable stdlib thread primitives.
 
-	Args:
-		name:    Optional name to register this node in the global _DB_NODES_ registry
-				 so models can reference it as a string: _db_node_ = "my_db"
-		replica: Optional DatabaseNode (or registered name) to use for read-only queries
-				 when _replica=True is passed to query() / get().
+	use_conn() commits on success and rolls back on failure. Nested scopes use
+	one connection and savepoints; explicit commit() is deferred to the outer
+	context. transaction() groups whole synchronous bodies. close() drains
+	borrowed connections. Consumer code may patch threading/time and psycopg2's
+	I/O wait hook before constructing a node; this module installs no hooks.
 	"""
-
 	def __init__(self, host, port, user, password, db_name, min_conn=1, max_conn=20,
-				 name: str = None, replica: "DatabaseNode | str" = None):
-		self.host = host
-		self.port = port
-		self.user = user
-		self.password = password
-		self.db_name = db_name
-		self._min_conn = min_conn
-		self._max_conn = max_conn
-		self._pool: Optional[psycopg2.pool.ThreadedConnectionPool] = None
-		self.replica = replica  # resolved lazily in _get_replica()
+				 name=None, replica=None, **connect_options):
+		if not 0 <= min_conn <= max_conn or max_conn < 1:
+			raise ValueError('Require 0 <= min_conn <= max_conn and max_conn >= 1')
+		self.host, self.port, self.user = host, port, user
+		self.password, self.db_name = password, db_name
+		self._min_conn, self._max_conn = min_conn, max_conn
+		self.replica = replica
+		self._connect_options = connect_options
+		self._pool = None
+		self._closed = False
+		self._sleep = time.sleep
+		self._local = threading.local()
+		self._pool_lock = threading.RLock()
+		self._slots = threading.BoundedSemaphore(max_conn)
 		if name:
 			_DB_NODES_[name] = self
 
-	def _get_replica(self) -> "DatabaseNode":
-		"""Return the replica node, resolving a string name if needed."""
-		r = self.replica
-		if r is None:
-			return self
-		if isinstance(r, str):
-			r = _DB_NODES_.get(r, self)
-		return r
+	def _get_replica(self):
+		return _DB_NODES_[self.replica] if isinstance(self.replica, str) else self.replica or self
 
 	def _get_pool(self):
-		if self._pool is None:
-			self._pool = psycopg2.pool.ThreadedConnectionPool(
-				self._min_conn,
-				self._max_conn,
-				host=self.host,
-				port=self.port,
-				user=self.user,
-				password=self.password,
-				dbname=self.db_name,
-				cursor_factory=psycopg2.extras.RealDictCursor,
-			)
-		return self._pool
+		with self._pool_lock:
+			if self._closed:
+				raise RuntimeError('DatabaseNode is closed')
+			if self._pool is None:
+				self._pool = psycopg2.pool.SimpleConnectionPool(
+					self._min_conn, self._max_conn, host=self.host, port=self.port,
+					user=self.user, password=self.password, dbname=self.db_name,
+					cursor_factory=psycopg2.extras.RealDictCursor, **self._connect_options)
+			return self._pool
 
-	def fetch_rows(self, sql, params=None, use_replica=False) -> Optional[Iterator[dict]]:
+	def get_conn(self):
+		self._slots.acquire()
+		try:
+			with self._pool_lock:
+				return self._get_pool().getconn()
+		except BaseException:
+			self._slots.release()
+			raise
+
+	def put_conn(self, conn):
+		try:
+			with self._pool_lock:
+				self._pool.putconn(conn)
+		finally:
+			self._slots.release()
+
+	def _session(self):
+		return getattr(self._local, 'session', None)
+
+	def _in_worker(self):
+		return self._session() is not None
+
+	def _remember(self, obj):
+		if session := self._session():
+			state = dict(vars(obj))
+			for name in ('_set_updates', '_unset_updates', '_Model__locks'):
+				if state.get(name) is not None:
+					state[name] = state[name].copy()
+			session.undo.append((obj, state))
+
+	def _callback(self, callback, *args):
+		result = callback(*args)
+		if inspect.isawaitable(result):
+			if inspect.iscoroutine(result):
+				result.close()
+			raise TypeError('PostgreSQL callbacks must be synchronous; submit the whole transaction through AsyncAdapter')
+		return result
+
+	@contextmanager
+	def use_conn(self):
+		session = self._session()
+		outer = session is None
+		if outer:
+			session = self._local.session = _Session(self, self.get_conn())
+		session.depth += 1
+		mark = len(session.undo)
+		savepoint = None if outer else f'orm_scope_{session.depth}'
+		scope = _ConnectionScope(session, savepoint, mark)
+		try:
+			if savepoint:
+				with session.conn.cursor() as cur:
+					cur.execute('SAVEPOINT ' + savepoint)
+			try:
+				yield scope
+				if outer:
+					session.conn.commit()
+			except BaseException:
+				scope.rollback()
+				raise
+			finally:
+				if savepoint:
+					with session.conn.cursor() as cur:
+						cur.execute('RELEASE SAVEPOINT ' + savepoint)
+		finally:
+			session.depth -= 1
+			if outer:
+				self._local.session = None
+				self.put_conn(session.conn)
+
+	@contextmanager
+	def transaction(self):
+		"""Group a synchronous body on one pooled connection; nest with savepoints."""
+		with self.use_conn():
+			yield self
+
+	def write(self, operation):
+		"""Run a synchronous raw-SQL callable within a transaction."""
+		with self.use_conn() as conn:
+			return operation(conn)
+
+	def fetch_rows(self, sql, params=None, use_replica=False):
 		node = self._get_replica() if use_replica else self
 		with node.use_conn() as conn:
 			with conn.cursor() as cur:
 				cur.execute(sql, params)
-				if cur.description:  # if the query returns rows
-					for row in cur:
-						yield row
+				rows = cur.fetchall() if cur.description else []
+		return iter(rows)
 
-	def get_conn(self):
-		return self._get_pool().getconn()
-
-	def put_conn(self, conn):
-		self._get_pool().putconn(conn)
-
-	@contextmanager
-	def use_conn(self):
-		conn = self.get_conn()
+	def close(self):
+		if self._session():
+			raise RuntimeError('Cannot close a node inside its transaction')
+		# Reserve every pool slot so outstanding operations finish first.
+		for _ in range(self._max_conn):
+			self._slots.acquire()
 		try:
-			yield conn
+			with self._pool_lock:
+				if self._closed:
+					return
+				self._closed = True
+				if self._pool is not None:
+					self._pool.closeall()
 		finally:
-			self.put_conn(conn)
+			for _ in range(self._max_conn):
+				self._slots.release()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -843,27 +1005,25 @@ class Model:
 		pk_attrs = cls._pk_attrs_
 		col_attrs = cls._col_attrs_
 
-		inst = vars(self)
+		inst = dict(vars(self))
 		pk_values = [inst.get(pk) for pk in pk_attrs]
 		col_names = list(col_attrs.keys())
 		col_values = [inst.get(n) for n in col_names]
 
-		all_cols = ", ".join(pk_attrs + col_names + ["_", "__"])
-		all_placeholders = ", ".join(["%s"] * (len(pk_attrs) + len(col_names)) + ["%s", "%s::jsonb"])
-		# pk columns too, else _from_doc(row) regenerates them from their defaults
+		insert_names = pk_attrs + col_names
+		insert_values = pk_values + col_values
+		pairs = [(name, value) for name, value in zip(insert_names, insert_values)
+			if not (cls._attrs_[name].auto_increment and value is None)]
+		all_cols = ", ".join([name for name, _ in pairs] + ["_", "__"])
+		all_placeholders = ", ".join(["%s"] * len(pairs) + ["%s", "%s::jsonb"])
 		returning = ", ".join(["_", "__"] + pk_attrs + col_names)
-
-		sql = (
-			f"INSERT INTO {cls._table_name_} "
-			f"({all_cols}) "
-			f"VALUES ({all_placeholders}) "
-			f"RETURNING {returning}"
-		)
+		sql = (f"INSERT INTO {cls._table_name_} ({all_cols}) "
+			f"VALUES ({all_placeholders}) RETURNING {returning}")
 
 		try:
 			with cls._db_node_.use_conn() as conn:
 				with conn.cursor() as cur:
-					cur.execute(sql, pk_values + col_values + [new_ts, json.dumps(doc, default=_json_default)])
+					cur.execute(sql, [value for _, value in pairs] + [new_ts, json.dumps(doc, default=_json_default)])
 					row = cur.fetchone()
 				conn.commit()
 		except psycopg2.errors.UniqueViolation:
@@ -873,6 +1033,7 @@ class Model:
 			existing = cls.get(**{pk: inst.get(pk) for pk in pk_attrs})
 			if existing is None:
 				raise  # row vanished between INSERT and GET — re-raise original
+			cls._db_node_._remember(self)
 			self._from_doc(existing._row_)
 			# Build $set from the fields that were explicitly provided on this new object
 			set_payload = {}
@@ -889,6 +1050,7 @@ class Model:
 				self.update({"$set": set_payload})
 			return
 
+		cls._db_node_._remember(self)
 		self._from_doc(row)  # update local state with any DB defaults, coerced types, etc.
 		cls._trigger_event(EVENT_AFTER_CREATE, self)
 
@@ -1008,7 +1170,7 @@ class Model:
 		if not set_clauses:
 			return
 
-		set_clauses.append("_ = %s")
+		set_clauses.append("_ = GREATEST(_ + 1, %s)")
 		all_params.append(new_ts)
 
 		pk_conditions = cls._pk_conditions()
@@ -1061,12 +1223,16 @@ class Model:
 					)
 				if callback:
 					try:
-						callback(self, result)
-					except Exception as ex:
+						cls._db_node_._callback(callback, self, result)
+						with conn.cursor() as cur:
+							cur.execute(f"SELECT * FROM {cls._table_name_} WHERE {pk_conditions}", pk_values)
+							result = cur.fetchone()
+					except BaseException as ex:
 						conn.rollback()
 						raise ex
 				conn.commit()
 			original_row = dict(self._row_) if hasattr(self, '_row_') else None
+			cls._db_node_._remember(self)
 			self._from_doc(result, partial=True)
 			cls._trigger_event(EVENT_ROW_AFTER_UPDATE, self, original_row, result)
 			cls._trigger_event(EVENT_AFTER_UPDATE, self)
@@ -1113,6 +1279,7 @@ class Model:
 		timeout:       max ms to wait before giving up (raises TimeoutError unless silent=True)
 		can_hold_until: how long (ms) from now the lock is considered valid by other callers
 		"""
+		self.__class__._db_node_._remember(self)
 		lock_name = f"_lock_{name}"
 		lock_handle = self._LockHandle(self, name, False)
 		start_timestamp = cur_ms()
@@ -1126,7 +1293,7 @@ class Model:
 				lock_name in self.__locks
 				and (cur_ms()) - start_timestamp < timeout
 			):
-				time.sleep(0.001)
+				self.__class__._db_node_._sleep(0.001)
 			if lock_name in self.__locks:
 				if not silent:
 					raise TimeoutError(
@@ -1148,7 +1315,7 @@ class Model:
 		pk_values = self._pk_values()
 		sql = (
 			f"UPDATE {cls._table_name_} "
-			f"SET __ = jsonb_set(__, %s::text[], %s::jsonb, true), _ = %s "
+			f"SET __ = jsonb_set(__, %s::text[], %s::jsonb, true), _ = GREATEST(_ + 1, %s) "
 			f"WHERE {pk_conditions} AND "
 			f"((__->>%s::text) IS NULL OR (__->>%s::text)::bigint < %s) "
 			f"RETURNING _"
@@ -1178,7 +1345,7 @@ class Model:
 			if fresh is None:
 				break
 			object.__setattr__(self, '_', fresh._)
-			time.sleep(0.2 * count)
+			cls._db_node_._sleep(min(0.2 * count, max(0, timeout - (cur_ms() - start_timestamp)) / 1000))
 
 		if not silent:
 			raise TimeoutError(
@@ -1190,6 +1357,7 @@ class Model:
 		return lock_handle
 
 	def unlock(self, name="", force=False):
+		self.__class__._db_node_._remember(self)
 		if self.__locks is None:
 			self.__locks = {}
 		lock_name = f"_lock_{name}"
@@ -1199,7 +1367,7 @@ class Model:
 			cls = self.__class__
 			pk_conditions = cls._pk_conditions()
 			pk_values = self._pk_values()
-			sql = f"UPDATE {cls._table_name_} SET __ = __ - %s::text, _ = %s WHERE {pk_conditions}"
+			sql = f"UPDATE {cls._table_name_} SET __ = __ - %s::text, _ = GREATEST(_ + 1, %s) WHERE {pk_conditions}"
 			params = [lock_name, cur_ms(), *pk_values]
 			if not force:
 				sql += " AND (__->>%s::text) = %s"
@@ -1231,6 +1399,8 @@ class Model:
 		containers; zero and False are preserved. A missing row raises LookupError.
 		"""
 		cls = self.__class__
+		if cls._db_node_ is not None:
+			cls._db_node_._remember(self)
 		if projections is not None:
 			if isinstance(projections, (str, Attribute)):
 				projections = [projections]
@@ -1465,15 +1635,16 @@ class Model:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def with_lock(func):
-	"""Decorator that acquires a lock on self before calling func and releases it after."""
+	"""Acquire a record lease around a synchronous method."""
+	if inspect.iscoroutinefunction(func):
+		raise TypeError('with_lock requires a synchronous function; submit it through AsyncAdapter')
+	@functools.wraps(func)
 	def wrapper(self, *args, **kwargs):
 		try:
-			self.lock()
-			return func(self, *args, **kwargs)
+			with self.lock():
+				return func(self, *args, **kwargs)
 		except TimeoutError:
 			return None
-		finally:
-			self.unlock()
 	return wrapper
 
 
@@ -1586,10 +1757,7 @@ def _fetch_existing_indexes(db_node, table_name):
 		return None
 
 
-_loading_errors = []
-
-
-def initialize_model(model_cls):
+def initialize_model(model_cls, create_tables=None):
 	"""
 	Scan the class MRO for Attribute definitions, parse INDEX() declarations,
 	derive _pk_attrs_ from the first unique index, and compare against existing
@@ -1622,7 +1790,7 @@ def initialize_model(model_cls):
 
 	db_node = model_cls._db_node_
 	if isinstance(db_node, str):
-		db_node = _DB_NODES_.get(db_node)
+		db_node = _DB_NODES_[db_node]
 		model_cls._db_node_ = db_node
 
 	# ── 1. Collect Attribute definitions ────────────────────────────────────
@@ -1752,16 +1920,16 @@ def initialize_model(model_cls):
 		return  # DB unreachable — skip checks silently
 
 	if not exists:
-		if IS_TEST:
+		if (IS_TEST if create_tables is None else create_tables):
 			model_cls.create_table()
 			# indexes were just created; nothing left to compare
 		else:
 			create_sql = model_cls._build_create_table_sql()
 			index_sqls = "\n".join(spec['sql'] + ";" for spec in indexes)
-			_loading_errors.append(MissingTableError(
+			raise MissingTableError(
 				f"-- Table '{table}' does not exist. Create it with:\n\n"
 				f"{create_sql};\n\n{index_sqls}"
-			))
+			)
 	else:
 		existing = _fetch_existing_indexes(model_cls._db_node_, table)
 		if existing is not None:
@@ -1818,43 +1986,34 @@ def initialize_model(model_cls):
 					)
 
 
-def initialize_postgres(db_nodes):
+def _model_subclasses(base):
+	seen = set()
+	def visit(cls):
+		for child in cls.__subclasses__():
+			if child not in seen:
+				seen.add(child)
+				yield child
+				yield from visit(child)
+	return visit(base)
 
-	# initialize control db
-	if(isinstance(db_nodes, dict)):
-		db_nodes = [DatabaseNode(**db_nodes)]
-	elif(isinstance(db_nodes, list)):
-		db_nodes = [DatabaseNode(**db_node) for db_node in db_nodes]
-	else:
-		raise Exception(
-			f"argument must be a list of dicts, or a single dict, not {type(db_nodes)}"
-		)
-	# set default db node for each class;
 
-	def __iter_subclasses(cls, seen, reverse) -> iter:
-		if(cls in seen):
-			return
-		seen.add(cls)
-		if(not reverse):
-			yield cls
-		for sub_class in cls.__subclasses__():
-			yield from __iter_subclasses(sub_class, seen, reverse)
-		if(reverse):
-			yield cls
-
-	def all_subclasses(cls, reverse=False, ignore_initial=True) -> iter:
-		_iter = __iter_subclasses(cls, set(), reverse)
-		if(ignore_initial):
-			next(_iter)
-		return _iter
-
-	for cls in all_subclasses(Model):
-		if not getattr(cls, "_db_node_", None):
-			cls._db_node_ = db_nodes[0]
-		initialize_model(cls)
-
-	if(_loading_errors):
-		for _loading_error in _loading_errors:
-			print(str(_loading_error))
-			print("---------")
-		raise Exception("initialize_postgres has errors: Check error logs: ")
+def initialize_postgres(db_nodes, create_tables=None):
+	"""Initialize blocking models; accept nodes, dicts or a list of either."""
+	if not isinstance(db_nodes, (list, tuple)):
+		db_nodes = [db_nodes]
+	nodes = [node if isinstance(node, DatabaseNode) else DatabaseNode(**node) for node in db_nodes]
+	if not nodes:
+		raise TypeError('Supply at least one blocking DatabaseNode')
+	errors = []
+	for cls in _model_subclasses(Model):
+		if not (cls._table_name_ or getattr(cls, '_collection_name_', None)):
+			continue
+		if cls._db_node_ is None:
+			cls._db_node_ = nodes[0]
+		try:
+			initialize_model(cls, create_tables=create_tables)
+		except MissingTableError as error:
+			errors.append(error)
+	if errors:
+		raise MissingTableError('\n'.join(map(str, errors)))
+	return nodes

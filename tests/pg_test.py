@@ -1,7 +1,13 @@
 import blaster  # gevent monkey-patch must happen first
 
 import unittest
+import os
 import time
+
+# Consumer-owned I/O patching; the synchronous ORM installs no runtime hooks.
+from psycopg2.extensions import set_wait_callback
+from psycopg2.extras import wait_select
+set_wait_callback(wait_select)
 
 from blaster.pg_orm import (
 	Model, Attribute, INDEX,
@@ -105,11 +111,11 @@ class ChannelUser(Model):
 
 initialize_postgres(
 	dict(
-		host="localhost",
-		port=5499,
-		user="postgres",
-		password="postgres",
-		db_name="postgres"
+		host=os.environ.get("PG_TEST_HOST", "localhost"),
+		port=int(os.environ.get("PG_TEST_PORT", "5499")),
+		user=os.environ.get("PG_TEST_USER", "postgres"),
+		password=os.environ.get("PG_TEST_PASSWORD", "postgres"),
+		db_name=os.environ.get("PG_TEST_DB", "postgres")
 	)
 )
 
