@@ -1,1 +1,2019 @@
-../blaster/pg_orm.py
+"""Synchronous PostgreSQL ORM with no asyncio or gevent runtime dependencies.
+
+Use orms.pg for standalone imports; orms/pg.py links to this source. The older
+orms.pg_orm path is retained. Use one core import path consistently per process,
+because registries and descriptors belong to their module.
+
+    from orms.pg import Model, Attribute, DatabaseNode, initialize_model
+    db = DatabaseNode(host="localhost", port=5432, user="postgres",
+        password="postgres", db_name="app")
+    class SyncUser(Model):
+        _table_name_ = "users"
+        _db_node_ = db
+        _id = Attribute(str)
+        meta = Attribute(dict)
+    initialize_model(SyncUser, create_tables=True)
+    with db.transaction():
+        SyncUser(_id="alice").commit()
+    db.close()
+
+For asyncio, use the backend loader orms.pg_async.AsyncAdapter. Inside async code:
+
+    async with AsyncAdapter(create_tables=True) as adapter:
+        User = await adapter.initialize(SyncUser)  # cached/generated once
+        user = await User.get("alice")
+        await user.update({"$inc": {"meta.visits": 1}})
+        async for user in User.query():
+            print(user.to_dict())
+        await adapter.transaction(db, synchronous_transaction_body)
+        await adapter.run(db.close)
+
+The shared async_wrapper runs complete sync operations on bounded native workers.
+The core owns SQL, pooling, change tracking, savepoints and rollback. Callbacks
+and transaction bodies stay synchronous; use User.sync_model/user.sync there.
+
+threading.local/RLock/BoundedSemaphore and time.sleep are ordinary patchable
+stdlib primitives. Consumers needing cooperative scheduling must configure their
+runtime and psycopg2 wait hook themselves. The core never imports gevent, sets a
+wait callback, or patches the process. Importing the blaster server package still
+has its own startup behavior; standalone consumers should import orms.pg.
+
+Production initialization raises MissingTableError for absent tables unless
+create_tables=True is supplied
+(IS_TEST=1 also enables creation). Schema changes are additive through create_table;
+type changes require migrations. Same-node nested writes share the outer scope,
+and failures restore nested model state. Cross-node work is not a distributed
+transaction. Queries materialize rows; close nodes explicitly before discarding.
+"""
+import functools
+import hashlib
+import logging
+import os
+import threading
+import inspect
+import json
+import re
+import time
+from contextlib import contextmanager
+from typing import TypeVar, Type, Iterator, Optional
+
+import psycopg2
+import psycopg2.pool
+import psycopg2.extras
+
+IS_TEST = os.environ.get('IS_TEST', '').lower() in ('1', 'true', 'yes')
+
+
+def LOG_WARN(event, **fields):
+	logging.getLogger(__name__).warning('%s %s', event, fields)
+
+
+def cur_ms():
+	return int(1000 * time.time())
+
+
+T = TypeVar("T", bound="Model")
+
+ASCENDING = 1
+DESCENDING = -1
+
+EVENT_BEFORE_DELETE = -2
+EVENT_AFTER_DELETE = -1
+EVENT_BEFORE_UPDATE = 1
+EVENT_AFTER_UPDATE = 2
+EVENT_BEFORE_CREATE = 3
+EVENT_AFTER_CREATE = 4
+EVENT_ROW_AFTER_UPDATE = 5
+
+_NOT_SET = object()
+
+# Postgres truncates any identifier longer than this (NAMEDATALEN - 1)
+_MAX_IDENTIFIER_LEN = 63
+
+_PG_IDENTIFIER_PATTERN = r'(?:"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*)'
+_RAW_INDEX_PATTERN = re.compile(
+	rf'^\s*CREATE\s+(?P<unique>UNIQUE\s+)?INDEX\s+'
+	rf'(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?'
+	rf'(?:{_PG_IDENTIFIER_PATTERN}\.)?(?P<name>{_PG_IDENTIFIER_PATTERN})\s+ON\b',
+	re.IGNORECASE | re.DOTALL,
+)
+
+# pg type map for create_table
+_PY_TO_PG_TYPE = {
+	str: "TEXT",
+	int: "BIGINT",
+	float: "DOUBLE PRECISION",
+	bool: "BOOLEAN",
+}
+
+# operator map for query()
+_MONGO_TO_PG_OP = {
+	"$gt": ">",
+	"$lt": "<",
+	"$gte": ">=",
+	"$lte": "<=",
+	"$ne": "!=",
+}
+
+# Declared indexes, keyed by _table_name_. Populated by INDEX() calls.
+IndexesToCreate = {}
+
+# Registry of named DatabaseNode instances.  Populated by DatabaseNode(name=...) or register_db_node().
+_DB_NODES_: dict = {}
+
+
+def SHARD_BY(*args, **kwargs):  # NO-OP
+	pass
+
+
+def _is_field_spec(item):
+	"""
+	True when `item` names a single indexed field, i.e. one of:
+		name_or_attr                      e.g. user_id
+		(name_or_attr, direction)         e.g. (user_id, ASCENDING)
+
+	False when it is a nested index declaration (mongo_orm style), i.e. a tuple
+	holding several fields and/or its own options dict:
+		(session_id, user_id)
+		((created_at, -1), {"unique": False})
+	"""
+	if not isinstance(item, tuple):
+		return True  # a bare field reference
+	if len(item) > 2 or not item:
+		return False  # more than (field, direction) => a nested declaration
+	if not isinstance(item[0], (Attribute, str)):
+		return False  # e.g. ((created_at, -1), ...) — first element is a field spec
+	# (field,) or (field, direction); anything else in slot 1 (an Attribute,
+	# a nested tuple, an options dict) means this is a nested declaration.
+	return len(item) == 1 or isinstance(item[1], int)
+
+
+def _is_raw_index_sql(item):
+	return (
+		isinstance(item, str)
+		and re.match(r'^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\b', item, re.IGNORECASE) is not None
+	)
+
+
+def INDEX(*indexes):
+	"""
+	Declare indexes for the enclosing Model class.
+	Must be called inside the class body, after _table_name_/_collection_name_ is set.
+
+	Three declaration styles are accepted, and may be mixed in one call.
+
+	raw PostgreSQL SQL — a string beginning with CREATE INDEX:
+
+		INDEX('''CREATE INDEX IF NOT EXISTS users_next_run_at_desc
+			ON users (((__ #>> '{next_scheduled_run,at}')::bigint) DESC)''')
+
+	pg_orm style — the whole call declares ONE (possibly compound) index, where
+	each positional arg is either a field spec or an options dict:
+
+		INDEX((id, ASCENDING), {'unique': True})
+		INDEX((city, ASCENDING), (sort_order, DESCENDING), {'unique': False})
+
+	mongo_orm style — each positional arg is itself a complete index, so one
+	call declares SEVERAL indexes. This keeps models written against
+	mongo_orm.INDEX working unchanged:
+
+		INDEX(
+			(session_id, user_id),
+			(user_id, _type, (updated_at, -1), {"unique": False}),
+		)
+	"""
+	locals_ = inspect.currentframe().f_back.f_locals
+	table_name = locals_.get("_table_name_") or locals_.get("_collection_name_")
+	if not table_name:
+		return  # not a pg model — silently ignore (e.g. mongo-only models)
+
+	declarations = []
+	own_index = []  # field specs/options belonging to this call itself (pg style)
+	for item in indexes:
+		if _is_raw_index_sql(item):
+			declarations.append(item)
+		elif isinstance(item, dict) or _is_field_spec(item):
+			own_index.append(item)
+		else:
+			declarations.append(item)  # a complete nested index (mongo style)
+	if any(not isinstance(item, dict) for item in own_index):
+		declarations.insert(0, tuple(own_index))
+
+	IndexesToCreate.setdefault(table_name, [])
+	IndexesToCreate[table_name].extend(declarations)
+
+
+def _json_default(obj):
+	if isinstance(obj, PgDict):
+		return dict(obj)
+	if isinstance(obj, PgList):
+		return list(obj)
+	raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PgDict — change-tracking dict
+# ──────────────────────────────────────────────────────────────────────────────
+
+class PgDict(dict):
+	"""
+	A dict that tracks mutations for diff-patching the __ JSONB column.
+
+	_is_local = True  → new object: mutations are NOT sent to DB (whole doc sent on INSERT)
+	_is_local = False → loaded object: each mutation notifies the parent model
+	Mirrors MongoDict's _is_local / _model_obj / path pattern.
+	"""
+	_is_local = True
+
+	def __init__(self, _parent, _path, initial_value=None):
+		super().__init__()
+		self._parent = _parent
+		self._path = _path  # list of strings from root, e.g. ["meta", "addr"]
+		self._is_local = True  # suppress notifications while processing initial_value
+		if initial_value:
+			for key, value in (initial_value.items() if isinstance(initial_value, dict) else initial_value):
+				dict.__setitem__(self, key, self._wrap(key, value))
+		# Mirror the model's create/load state:
+		# new objects stay local (whole doc sent on insert); loaded objects are not local
+		self._is_local = getattr(_parent, '_is_create_new_', True)
+
+	def _wrap(self, key, value):
+		"""Wrap nested dicts/lists so sub-mutations at any depth are tracked."""
+		child_path = self._path + [str(key)]
+		if isinstance(value, dict) and not isinstance(value, PgDict):
+			return PgDict(self._parent, child_path, value)
+		if isinstance(value, list) and not isinstance(value, PgList):
+			return PgList(self._parent, child_path, value)
+		return value
+
+	def __setitem__(self, key, value):
+		value = self._wrap(key, value)
+		dict.__setitem__(self, key, value)
+		if not self._is_local:
+			self._parent._add_set_update(self._path + [str(key)], value)
+
+	def __delitem__(self, key):
+		self.pop(key)
+
+	def pop(self, key, *args):
+		popped = dict.pop(self, key, _NOT_SET)
+		if popped is _NOT_SET:
+			if args:
+				return args[0]
+			raise KeyError(key)
+		if not self._is_local:
+			self._parent._add_unset_update(self._path + [str(key)])
+		# Return plain copies so callers get plain Python objects
+		if isinstance(popped, PgDict):
+			return dict(popped)
+		if isinstance(popped, PgList):
+			return list(popped)
+		return popped
+
+	def update(self, other=(), **kwargs):
+		for key, value in (other.items() if isinstance(other, dict) else other):
+			self[key] = value
+		for key, value in kwargs.items():
+			self[key] = value
+
+	def setdefault(self, key, default=None):
+		if key not in self:
+			self[key] = default
+		return self[key]
+
+	def clear(self):
+		dict.clear(self)
+		if not self._is_local:
+			# Keep the live value so additions before commit are included in the
+			# replacement, and keep tracking subsequent nested mutations.
+			self._parent._add_set_update(self._path, self)
+
+	def copy(self):
+		return json.loads(json.dumps(dict(self), default=_json_default))
+
+	def __reduce__(self):
+		return (dict, (self.copy(),))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PgList — change-tracking list
+# ──────────────────────────────────────────────────────────────────────────────
+
+class PgList(list):
+	"""
+	A list that tracks any mutation by replacing the whole value at its path.
+
+	_is_local = True  → new object: mutations are NOT sent to DB
+	_is_local = False → loaded object: any mutation notifies parent via _add_set_update
+	Mirrors MongoList's _is_local / _model_obj / path pattern.
+	"""
+	_is_local = True
+
+	def __init__(self, _parent, _path, initial_value=None):
+		super().__init__(initial_value or [])
+		self._parent = _parent
+		self._path = _path  # list of strings from root, e.g. ["tags"]
+		self._is_local = getattr(_parent, '_is_create_new_', True)
+
+	def _notify(self):
+		if not self._is_local:
+			self._parent._add_set_update(self._path, list(self))
+
+	def append(self, value):
+		super().append(value)
+		self._notify()
+
+	def extend(self, values):
+		super().extend(values)
+		self._notify()
+
+	def insert(self, index, value):
+		super().insert(index, value)
+		self._notify()
+
+	def remove(self, value):
+		super().remove(value)
+		self._notify()
+
+	def pop(self, index=-1):
+		result = super().pop(index)
+		self._notify()
+		return result
+
+	def clear(self):
+		super().clear()
+		self._notify()
+
+	def __setitem__(self, index, value):
+		super().__setitem__(index, value)
+		self._notify()
+
+	def __delitem__(self, index):
+		super().__delitem__(index)
+		self._notify()
+
+	def sort(self, **kwargs):
+		super().sort(**kwargs)
+		self._notify()
+
+	def reverse(self):
+		super().reverse()
+		self._notify()
+
+	def copy(self):
+		return json.loads(json.dumps(list(self), default=_json_default))
+
+	def __reduce__(self):
+		return (list, (self.copy(),))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Attribute
+# ──────────────────────────────────────────────────────────────────────────────
+
+class Attribute:
+	"""
+	Field descriptor for Model classes.
+
+	The primary key is no longer declared here — it is derived automatically
+	from the first unique INDEX() declaration on the model.
+	"""
+
+	def __init__(self, _type, default=_NOT_SET, column=_NOT_SET, auto_increment=False, **kwargs):
+		self.type = _type
+		self.default = default
+		if(column is _NOT_SET):
+			column = True if _type in (int, float, str, bool, bytes) else False
+		self.column = column or auto_increment  # True → stored as a real DB column instead of inside __
+		self.auto_increment = auto_increment  # True → BIGSERIAL; DB generates value on INSERT
+		self.kwargs = kwargs
+		# Set by __set_name__ when assigned inside a class body
+		self.attr_name = None
+		self.owner_cls = None
+
+	def __set_name__(self, owner, name):
+		self.attr_name = name
+		self.owner_cls = owner
+
+	def get_default(self):
+		if self.default is _NOT_SET:
+			return None
+		if callable(self.default):
+			return self.default()
+		if isinstance(self.default, dict):
+			return dict(self.default)
+		if isinstance(self.default, list):
+			return list(self.default)
+		return self.default
+
+	def coerce(self, value):
+		if value is None:
+			return None
+		if self.type in (int, float, str, bool, bytes):
+			try:
+				return self.type(value)
+			except (ValueError, TypeError):
+				return value
+		return value
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# DatabaseNode — connection pool
+# ──────────────────────────────────────────────────────────────────────────────
+
+class _ConnectionScope:
+	"""Defer commits to the outer use_conn and keep nested rollbacks scoped."""
+	def __init__(self, session, savepoint, mark):
+		self.session, self.savepoint, self.mark = session, savepoint, mark
+
+	def __getattr__(self, name):
+		return getattr(self.session.conn, name)
+
+	def commit(self):
+		pass  # the outermost use_conn owns the commit
+
+	def rollback(self):
+		if self.savepoint:
+			with self.session.conn.cursor() as cur:
+				cur.execute('ROLLBACK TO SAVEPOINT ' + self.savepoint)
+		else:
+			self.session.conn.rollback()
+		self.session.restore(self.mark)
+
+
+class _Session:
+	def __init__(self, node, conn):
+		self.node, self.conn = node, conn
+		self.depth = 0
+		self.undo = []
+
+	def restore(self, mark=0):
+		for obj, state in reversed(self.undo[mark:]):
+			obj.__dict__.clear()
+			obj.__dict__.update(state)
+		del self.undo[mark:]
+
+
+class DatabaseNode:
+	"""A synchronous bounded pool using patchable stdlib thread primitives.
+
+	use_conn() commits on success and rolls back on failure. Nested scopes use
+	one connection and savepoints; explicit commit() is deferred to the outer
+	context. transaction() groups whole synchronous bodies. close() drains
+	borrowed connections. Consumer code may patch threading/time and psycopg2's
+	I/O wait hook before constructing a node; this module installs no hooks.
+	"""
+	def __init__(self, host, port, user, password, db_name, min_conn=1, max_conn=20,
+				 name=None, replica=None, **connect_options):
+		if not 0 <= min_conn <= max_conn or max_conn < 1:
+			raise ValueError('Require 0 <= min_conn <= max_conn and max_conn >= 1')
+		self.host, self.port, self.user = host, port, user
+		self.password, self.db_name = password, db_name
+		self._min_conn, self._max_conn = min_conn, max_conn
+		self.replica = replica
+		self._connect_options = connect_options
+		self._pool = None
+		self._closed = False
+		self._sleep = time.sleep
+		self._local = threading.local()
+		self._pool_lock = threading.RLock()
+		self._slots = threading.BoundedSemaphore(max_conn)
+		if name:
+			_DB_NODES_[name] = self
+
+	def _get_replica(self):
+		return _DB_NODES_[self.replica] if isinstance(self.replica, str) else self.replica or self
+
+	def _get_pool(self):
+		with self._pool_lock:
+			if self._closed:
+				raise RuntimeError('DatabaseNode is closed')
+			if self._pool is None:
+				self._pool = psycopg2.pool.SimpleConnectionPool(
+					self._min_conn, self._max_conn, host=self.host, port=self.port,
+					user=self.user, password=self.password, dbname=self.db_name,
+					cursor_factory=psycopg2.extras.RealDictCursor, **self._connect_options)
+			return self._pool
+
+	def get_conn(self):
+		self._slots.acquire()
+		try:
+			with self._pool_lock:
+				return self._get_pool().getconn()
+		except BaseException:
+			self._slots.release()
+			raise
+
+	def put_conn(self, conn):
+		try:
+			with self._pool_lock:
+				self._pool.putconn(conn)
+		finally:
+			self._slots.release()
+
+	def _session(self):
+		return getattr(self._local, 'session', None)
+
+	def _in_worker(self):
+		return self._session() is not None
+
+	def _remember(self, obj):
+		if session := self._session():
+			state = dict(vars(obj))
+			for name in ('_set_updates', '_unset_updates', '_Model__locks'):
+				if state.get(name) is not None:
+					state[name] = state[name].copy()
+			session.undo.append((obj, state))
+
+	def _callback(self, callback, *args):
+		result = callback(*args)
+		if inspect.isawaitable(result):
+			if inspect.iscoroutine(result):
+				result.close()
+			raise TypeError('PostgreSQL callbacks must be synchronous; submit the whole transaction through AsyncAdapter')
+		return result
+
+	@contextmanager
+	def use_conn(self):
+		session = self._session()
+		outer = session is None
+		if outer:
+			session = self._local.session = _Session(self, self.get_conn())
+		session.depth += 1
+		mark = len(session.undo)
+		savepoint = None if outer else f'orm_scope_{session.depth}'
+		scope = _ConnectionScope(session, savepoint, mark)
+		try:
+			if savepoint:
+				with session.conn.cursor() as cur:
+					cur.execute('SAVEPOINT ' + savepoint)
+			try:
+				yield scope
+				if outer:
+					session.conn.commit()
+			except BaseException:
+				scope.rollback()
+				raise
+			finally:
+				if savepoint:
+					with session.conn.cursor() as cur:
+						cur.execute('RELEASE SAVEPOINT ' + savepoint)
+		finally:
+			session.depth -= 1
+			if outer:
+				self._local.session = None
+				self.put_conn(session.conn)
+
+	@contextmanager
+	def transaction(self):
+		"""Group a synchronous body on one pooled connection; nest with savepoints."""
+		with self.use_conn():
+			yield self
+
+	def write(self, operation):
+		"""Run a synchronous raw-SQL callable within a transaction."""
+		with self.use_conn() as conn:
+			return operation(conn)
+
+	def fetch_rows(self, sql, params=None, use_replica=False):
+		node = self._get_replica() if use_replica else self
+		with node.use_conn() as conn:
+			with conn.cursor() as cur:
+				cur.execute(sql, params)
+				rows = cur.fetchall() if cur.description else []
+		return iter(rows)
+
+	def close(self):
+		if self._session():
+			raise RuntimeError('Cannot close a node inside its transaction')
+		# Reserve every pool slot so outstanding operations finish first.
+		for _ in range(self._max_conn):
+			self._slots.acquire()
+		try:
+			with self._pool_lock:
+				if self._closed:
+					return
+				self._closed = True
+				if self._pool is not None:
+					self._pool.closeall()
+		finally:
+			for _ in range(self._max_conn):
+				self._slots.release()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Model
+# ──────────────────────────────────────────────────────────────────────────────
+
+class Model:
+	_table_name_: str = None
+	_db_node_: DatabaseNode = None
+	_attrs_: dict = {}
+	_pk_attrs_: list = []   # set by initialize_model from first unique INDEX
+	_col_attrs_: dict = {}  # {name: Attribute} for column=True non-pk fields
+	_indexes_: list = []    # parsed index specs, set by initialize_model
+	_event_listeners_: dict = {}
+
+	@classmethod
+	def on(cls, events, func):
+		"""Register func as a handler for one or more events on this model class."""
+		if not isinstance(events, list):
+			events = [events]
+		for event in events:
+			# Each class gets its own _event_listeners_ dict (not shared with base/siblings)
+			if "_event_listeners_" not in cls.__dict__:
+				cls._event_listeners_ = {}
+			handlers = cls._event_listeners_.setdefault(event, [])
+			handlers.append(func)
+
+	@classmethod
+	def _trigger_event(cls, event, *args):
+		if handlers := cls._event_listeners_.get(event):
+			for handler in handlers:
+				handler(*args)
+
+	def __init__(self, _is_create_new_=True, **kwargs):
+		object.__setattr__(self, '_is_create_new_', _is_create_new_)
+		object.__setattr__(self, '_initializing_', True)  # not initializing from db
+		object.__setattr__(self, '_', 0)  # this field is for optimistic locking; _update() checks that it matches the DB value before applying updates, and increments it on each update to cur_ms() for the next check
+		object.__setattr__(self, '_set_updates', {})
+		object.__setattr__(self, '_unset_updates', set())
+
+		for name, attr in self.__class__._attrs_.items():
+			if(name in kwargs):
+				val = kwargs[name]
+			else:
+				val = attr.get_default()
+			setattr(self, name, val)
+
+		object.__setattr__(self, '_initializing_', False)  # not initializing from db
+
+	def __setattr__(self, name, value):
+		_attr_obj = self.__class__._attrs_.get(name)
+		if _attr_obj:
+			_attr_obj_type = _attr_obj.type
+			# Always wrap dict/list so sub-mutations at any depth are tracked.
+			# _is_local on the wrapper mirrors _is_create_new_, so new-object
+			# mutations are suppressed while loaded-object mutations notify.
+			if _attr_obj_type is dict and not isinstance(value, PgDict):
+				value = PgDict(self, [name], value or {})
+			elif _attr_obj_type is list and not isinstance(value, PgList):
+				value = PgList(self, [name], value or [])
+			if object.__getattribute__(self, '_initializing_') is False:
+				self._add_set_update([name], value)
+		self.__dict__[name] = value
+
+	# ── Change tracking ──────────────────────────────────────────────────────
+
+	def _add_set_update(self, path, value):
+		path_tuple = tuple(path)
+		set_updates = object.__getattribute__(self, '_set_updates')
+		superseded = [
+			p for p in set_updates
+			if len(p) > len(path_tuple) and p[:len(path_tuple)] == path_tuple
+		]
+		for p in superseded:
+			del set_updates[p]
+		unset_updates = object.__getattribute__(self, '_unset_updates')
+		unset_updates.discard(path_tuple)
+		set_updates[path_tuple] = value
+
+	def _add_unset_update(self, path):
+		path_tuple = tuple(path)
+		set_updates = object.__getattribute__(self, '_set_updates')
+		unset_updates = object.__getattribute__(self, '_unset_updates')
+		set_updates.pop(path_tuple, None)
+		unset_updates.add(path_tuple)
+
+	# ── Serialization ────────────────────────────────────────────────────────
+
+	def to_dict(self):
+		"""
+		The record as a plain dict: every attribute that has a value, with
+		dicts/lists unwrapped from their change-tracking wrappers.
+
+		Mirrors mongo_orm.Model.to_dict so models shared between the two ORMs
+		can call it (and super() into it) either way.
+		"""
+		_json = {}
+		for name in self.__class__._attrs_:
+			value = getattr(self, name, None)
+			if value is None:
+				continue
+			if isinstance(value, PgDict):
+				value = value.copy()
+			elif isinstance(value, PgList):
+				value = value.copy()
+			_json[name] = value
+		if (_id := _json.get("_id")) is not None:
+			_json["_id"] = str(_id)
+		return _json
+
+	def _to_doc(self):
+		doc = {}
+		inst = vars(self)  # instance __dict__ only; avoids picking up class-level Attribute objects
+		col_attrs = self.__class__._col_attrs_
+		for name in self.__class__._attrs_:
+			if name in col_attrs:
+				continue  # stored as a real column, not in __
+			value = inst.get(name)
+			if value is None:
+				continue
+			if isinstance(value, (dict, list)) and not value:
+				continue  # skip empty containers (default {} / [])
+			doc[name] = json.loads(json.dumps(value, default=_json_default))
+		return doc
+
+	@property
+	def updated_at(self):
+		# get "_" attr
+		return getattr(self, '_', None)
+
+	def _from_doc(obj, row, partial=False) -> T:
+		# LOADING FROM DB
+		cls = obj.__class__
+		_val = row["_"]
+		object.__setattr__(obj, '_row_', row)
+		object.__setattr__(obj, '_initializing_', True)
+		object.__setattr__(obj, '_is_create_new_', False)
+		object.__setattr__(obj, '_', _val)
+		object.__setattr__(obj, '_set_updates', {})
+		object.__setattr__(obj, '_unset_updates', set())
+
+		col_attrs = cls._col_attrs_
+		for name, attr in cls._attrs_.items():
+			# Primary-key and column=True fields are read directly from the row,
+			# rather than from __.
+			if partial:
+				if name in cls._pk_attrs_ or name in col_attrs:
+					if name not in row: continue
+				else:
+					if "__" not in row: continue
+			source = row if name in cls._pk_attrs_ or name in col_attrs else row["__"]
+			value = source.get(name, _NOT_SET)
+			if value is not _NOT_SET:  # exists
+				value = attr.coerce(value)
+			elif attr.default is not _NOT_SET:  # has default
+				value = attr.get_default()
+
+			if value is not _NOT_SET:  # exists
+				path = [name]
+				if isinstance(value, dict) and not isinstance(value, PgDict):
+					value = PgDict(obj, path, value)
+				elif isinstance(value, list) and not isinstance(value, PgList):
+					value = PgList(obj, path, value)
+				object.__setattr__(obj, name, value)
+			else:  # does not exist in DB
+				if attr.type is dict:
+					object.__setattr__(obj, name, PgDict(obj, [name]))
+				elif attr.type is list:
+					object.__setattr__(obj, name, PgList(obj, [name]))
+
+		object.__setattr__(obj, '_initializing_', False)
+		return obj
+
+	# ── SQL helpers ──────────────────────────────────────────────────────────
+
+	@classmethod
+	def _pk_conditions(cls):
+		return " AND ".join(f"{pk} = %s" for pk in cls._pk_attrs_)
+
+	def _pk_values(self):
+		return [getattr(self, pk) for pk in self.__class__._pk_attrs_]
+
+	@classmethod
+	def _build_select_columns(cls, projections):
+		"""Return SELECT columns and parameters for an optional field projection.
+
+		Primary-key fields and the optimistic-lock version (``_``) are always
+		included so a projected result remains a usable Model instance. JSONB
+		fields are reconstructed into a small ``__`` document in PostgreSQL,
+		which avoids transferring unprojected JSONB fields to the client.
+		"""
+		all_column_names = list(cls._pk_attrs_) + list(cls._col_attrs_.keys())
+		if projections is None:
+			return "_, __" + (", " + ", ".join(all_column_names) if all_column_names else ""), []
+
+		if isinstance(projections, (str, Attribute)):
+			projections = [projections]
+
+		projection_names = []
+		for field in projections:
+			name = field.attr_name if isinstance(field, Attribute) else field
+			if not isinstance(name, str):
+				raise TypeError("projections must contain field names or Attribute objects")
+			if name not in cls._attrs_:
+				raise ValueError(f"{cls.__name__} has no field named {name!r}")
+			if name not in projection_names:
+				projection_names.append(name)
+
+		selected_columns = list(cls._pk_attrs_)
+		selected_columns.extend(
+			name for name in projection_names
+			if name in cls._col_attrs_ and name not in selected_columns
+		)
+		json_names = [name for name in projection_names if name not in all_column_names]
+
+		select_columns = ["_"] + selected_columns
+		if json_names:
+			select_columns.append(
+				"COALESCE((SELECT jsonb_object_agg(projection.field, __ -> projection.field) "
+				"FROM unnest(%s::text[]) AS projection(field) "
+				"WHERE __ ? projection.field), '{}'::jsonb) AS __"
+			)
+			return ", ".join(select_columns), [json_names]
+
+		# Keep the __ key present for _from_doc(), without reading the table's
+		# JSONB column when no JSONB fields were requested.
+		select_columns.append("'{}'::jsonb AS __")
+		return ", ".join(select_columns), []
+
+	@classmethod
+	def _build_conditions_sql(cls, _query):
+		"""
+		Parse a MongoDB-style query dict into (conditions, params).
+		Used by both query() and _update().
+
+		Supported: equality, $gt, $lt, $gte, $lte, $ne, $in
+		PK fields compare against real columns; others use JSONB (__->>'field').
+		"""
+		conditions = []
+		params = []
+		if not _query:
+			return conditions, params
+
+		for field, value in _query.items():
+			if field == "$or":
+				or_parts = []
+				for sub_query in value:
+					sub_conds, sub_params = cls._build_conditions_sql(sub_query)
+					if sub_conds:
+						or_parts.append("(" + " AND ".join(sub_conds) + ")")
+						params.extend(sub_params)
+				if or_parts:
+					conditions.append("(" + " OR ".join(or_parts) + ")")
+				continue
+
+			is_real_col = field in cls._pk_attrs_ or field in cls._col_attrs_
+			if is_real_col:
+				col_expr = field
+			elif "." in field:
+				# dotted path into the JSONB doc, as mongo spells it:
+				# "data.is_verified" → (__ #>> '{data,is_verified}')
+				path = ",".join(field.split("."))
+				col_expr = "(__ #>> '{%s}')" % path
+			else:
+				col_expr = f"(__->>'{field}')"
+			attr = cls._attrs_.get(field)
+			pg_type = _PY_TO_PG_TYPE.get(attr.type, "TEXT") if attr else "TEXT"
+
+			if value is None:
+				conditions.append(f"{col_expr} IS NULL")
+			elif isinstance(value, dict):
+				for op, op_val in value.items():
+					if op == "$in":
+						placeholders = ", ".join(["%s"] * len(op_val))
+						conditions.append(f"{col_expr} IN ({placeholders})")
+						if is_real_col:
+							params.extend(op_val)
+						else:
+							params.extend(str(v) for v in op_val)
+					elif op in _MONGO_TO_PG_OP:
+						pg_op = _MONGO_TO_PG_OP[op]
+						if is_real_col:
+							conditions.append(f"{col_expr} {pg_op} %s")
+							params.append(op_val)
+						else:
+							# infer numeric cast from value type when attr is unknown
+							if attr is None and isinstance(op_val, int):
+								cast = "BIGINT"
+							elif attr is None and isinstance(op_val, float):
+								cast = "DOUBLE PRECISION"
+							else:
+								cast = pg_type
+							conditions.append(f"({col_expr})::{cast} {pg_op} %s")
+							params.append(op_val)
+					else:
+						LOG_WARN("pg_orm_unknown_op", op=op, field=field)
+			else:
+				conditions.append(f"{col_expr} = %s")
+				if is_real_col:
+					params.append(value)
+				else:
+					params.append(str(value) if not isinstance(value, bool) else str(value).lower())
+
+		return conditions, params
+
+	@classmethod
+	def _build_update_expr(cls, updates):
+		"""
+		Build chained jsonb_set / #- / $inc / $push expression for patching the __ column.
+
+		updates: {
+			"$set":   {path_or_dotpath: value, ...},   e.g. {"name": "x", "addr.city": "LA"}
+			"$unset": {path_or_dotpath: 1, ...},
+			"$inc":   {path_or_dotpath: delta, ...},
+			"$push":  {path_or_dotpath: value, ...},   append value to a JSONB array
+		}
+
+		For $inc, the current value is always read from the original __ column so that
+		$set and $inc on different fields in the same call compose correctly.
+
+		For $push, the current array is always read from the original __ column and the
+		new element is appended via jsonb_insert / ||.
+
+		Returns (expr, params, has_inc).
+		"""
+		expr = "__"
+		params = []
+		has_inc = bool(updates.get("$inc"))
+
+		# jsonb_set(..., create_missing => true) only creates the LAST key of a
+		# path: when an ancestor is absent the call silently returns the document
+		# unchanged. Mongo instead creates the intermediate documents, and models
+		# rely on that — e.g. update({"$inc": {"data1.retries": 1}}) against a row
+		# that has no `data1` yet. So materialize every missing ancestor as {}
+		# first, shallowest first. Each step reads the ORIGINAL __ (never the
+		# running expr) so an existing ancestor is written back untouched and the
+		# expression stays linear in size.
+		ancestors = set()
+		for op in ("$set", "$inc", "$push"):
+			for field in updates.get(op, {}):
+				path = list(field) if isinstance(field, (list, tuple)) else field.split(".")
+				for depth in range(1, len(path)):
+					ancestors.add(tuple(path[:depth]))
+		for prefix in sorted(ancestors, key=len):
+			expr = (
+				f"jsonb_set({expr}, %s::text[], "
+				f"COALESCE(__ #> %s::text[], '{{}}'::jsonb), true)"
+			)
+			params.extend([list(prefix), list(prefix)])
+
+		for field, value in updates.get("$set", {}).items():
+			path = list(field) if isinstance(field, (list, tuple)) else field.split(".")
+			expr = f"jsonb_set({expr}, %s::text[], %s::jsonb, true)"
+			params.append(path)
+			params.append(json.dumps(value, default=_json_default))
+
+		for field in updates.get("$unset", {}):
+			path = list(field) if isinstance(field, (list, tuple)) else field.split(".")
+			expr = f"({expr} #- %s::text[])"
+			params.append(path)
+
+		for field, delta in updates.get("$inc", {}).items():
+			path = list(field) if isinstance(field, (list, tuple)) else field.split(".")
+			# Read from original __ (not expr) so $set and $inc on different fields compose cleanly
+			expr = (
+				f"jsonb_set({expr}, %s::text[], "
+				f"(COALESCE((__ #>> %s::text[])::numeric, 0) + %s)::text::jsonb, true)"
+			)
+			params.extend([path, path, delta])
+
+		for field, value in updates.get("$push", {}).items():
+			path = list(field) if isinstance(field, (list, tuple)) else field.split(".")
+			# Read from original __ so concurrent $set/$push on different fields compose cleanly
+			expr = (
+				f"jsonb_set({expr}, %s::text[], "
+				f"COALESCE(__ #> %s::text[], '[]'::jsonb) || %s::jsonb, true)"
+			)
+			params.extend([path, path, json.dumps([value], default=_json_default)])
+
+		return expr, params, has_inc
+
+	# ── CRUD ─────────────────────────────────────────────────────────────────
+
+	def commit(self, conditions=None, force=False):
+		"""
+		Persist this object: INSERT if new, UPDATE otherwise.
+
+		conditions: passed to update() for conditional commits (see update()).
+		force:      on INSERT duplicate-key conflict, load the existing row and
+					apply the new fields on top of it instead of raising.
+		"""
+		if object.__getattribute__(self, '_is_create_new_'):
+			self._insert(force=force)
+		else:
+			self.update(conditions=conditions)
+		return self
+
+	def _insert(self, force=False):
+		cls = self.__class__
+		cls._trigger_event(EVENT_BEFORE_CREATE, self)
+
+		doc = self._to_doc()
+		new_ts = cur_ms()
+		pk_attrs = cls._pk_attrs_
+		col_attrs = cls._col_attrs_
+
+		inst = dict(vars(self))
+		pk_values = [inst.get(pk) for pk in pk_attrs]
+		col_names = list(col_attrs.keys())
+		col_values = [inst.get(n) for n in col_names]
+
+		insert_names = pk_attrs + col_names
+		insert_values = pk_values + col_values
+		pairs = [(name, value) for name, value in zip(insert_names, insert_values)
+			if not (cls._attrs_[name].auto_increment and value is None)]
+		all_cols = ", ".join([name for name, _ in pairs] + ["_", "__"])
+		all_placeholders = ", ".join(["%s"] * len(pairs) + ["%s", "%s::jsonb"])
+		returning = ", ".join(["_", "__"] + pk_attrs + col_names)
+		sql = (f"INSERT INTO {cls._table_name_} ({all_cols}) "
+			f"VALUES ({all_placeholders}) RETURNING {returning}")
+
+		try:
+			with cls._db_node_.use_conn() as conn:
+				with conn.cursor() as cur:
+					cur.execute(sql, [value for _, value in pairs] + [new_ts, json.dumps(doc, default=_json_default)])
+					row = cur.fetchone()
+				conn.commit()
+		except psycopg2.errors.UniqueViolation:
+			if not force:
+				raise
+			# Load the conflicting row, then apply whatever fields this object had set
+			existing = cls.get(**{pk: inst.get(pk) for pk in pk_attrs})
+			if existing is None:
+				raise  # row vanished between INSERT and GET — re-raise original
+			cls._db_node_._remember(self)
+			self._from_doc(existing._row_)
+			# Build $set from the fields that were explicitly provided on this new object
+			set_payload = {}
+			for name, attr in cls._attrs_.items():
+				if name in pk_attrs:
+					continue
+				v = inst.get(name)
+				if v is None:
+					continue
+				if isinstance(v, (dict, list)) and not v:
+					continue
+				set_payload[name] = v
+			if set_payload:
+				self.update({"$set": set_payload})
+			return
+
+		cls._db_node_._remember(self)
+		self._from_doc(row)  # update local state with any DB defaults, coerced types, etc.
+		cls._trigger_event(EVENT_AFTER_CREATE, self)
+
+	@classmethod
+	def _split_updates(cls, updates):
+		"""
+		Partition updates into column-level (real DB column) and JSONB-level parts.
+		column=True fields and top-level-only paths route to column-level.
+		"""
+		col_attrs = cls._col_attrs_
+
+		def _top(field):
+			"""Return (top_field_name, is_top_level_only)."""
+			if isinstance(field, tuple):
+				return field[0], len(field) == 1
+			parts = field.split(".")
+			return parts[0], len(parts) == 1
+
+		col_set, col_inc, col_unset = {}, {}, set()
+		json_set, json_inc, json_unset, json_push = {}, {}, {}, {}
+
+		for field, value in updates.get("$set", {}).items():
+			top, is_top = _top(field)
+			if top in col_attrs and is_top:
+				col_set[top] = value
+			else:
+				json_set[field] = value
+
+		for field in updates.get("$unset", {}):
+			top, is_top = _top(field)
+			if top in col_attrs and is_top:
+				col_unset.add(top)
+			else:
+				json_unset[field] = 1
+
+		for field, delta in updates.get("$inc", {}).items():
+			top, is_top = _top(field)
+			if top in col_attrs and is_top:
+				col_inc[top] = delta
+			else:
+				json_inc[field] = delta
+
+		# $push always routes to JSONB (arrays live in the __ column)
+		for field, value in updates.get("$push", {}).items():
+			json_push[field] = value
+
+		json_updates = {}
+		if json_set:   json_updates["$set"]   = json_set
+		if json_unset: json_updates["$unset"] = json_unset
+		if json_inc:   json_updates["$inc"]   = json_inc
+		if json_push:  json_updates["$push"]  = json_push
+
+		return col_set, col_inc, col_unset, json_updates
+
+	def update(self, updates=None, conditions=None, callback=None):
+		"""
+		Apply updates to this record with optimistic locking on _.
+
+		updates: {
+			"$set":   {"field": value, "nested.field": value, ...},
+			"$unset": {"field": 1, ...},
+			"$inc":   {"field": delta, ...},
+			"$push":  {"field": value, ...},   # append value to a JSONB array
+		}
+		conditions: extra WHERE filters beyond pk + _ (same syntax as query())
+			e.g. {"status": "active", "score": {"$lt": 100}}
+		callback:   called with (self, result_row) after the UPDATE succeeds but
+					before COMMIT. If it raises, the transaction is rolled back
+					and the exception is re-raised.
+
+		When updates is None, tracked changes from attribute mutations are used.
+		column=True fields are updated via direct SQL columns; others via JSONB.
+		"""
+		# Build updates from tracked changes if not provided explicitly
+		if updates is None:
+			set_updates = object.__getattribute__(self, '_set_updates')
+			unset_updates = object.__getattribute__(self, '_unset_updates')
+			if not set_updates and not unset_updates:
+				return
+			updates = {}
+			if set_updates:
+				updates["$set"] = dict(set_updates)
+			if unset_updates:
+				updates["$unset"] = {path: 1 for path in unset_updates}
+
+		if not any(updates.get(op) for op in ("$set", "$unset", "$inc", "$push")):
+			return
+
+		cls = self.__class__
+		cls._trigger_event(EVENT_BEFORE_UPDATE, self)
+		col_attrs = cls._col_attrs_
+		col_set, col_inc, col_unset, json_updates = cls._split_updates(updates)
+
+		new_ts = cur_ms()
+		original_ts = self._
+
+		set_clauses = []
+		all_params = []
+
+		# JSONB expression (only when there are non-column updates)
+		has_jsonb_update = any(json_updates.get(op) for op in ("$set", "$unset", "$inc", "$push"))
+		if has_jsonb_update:
+			expr, jparams, _ = cls._build_update_expr(json_updates)
+			set_clauses.append(f"__ = {expr}")
+			all_params.extend(jparams)
+
+		# Direct column SET / NULL / INC
+		for field, value in col_set.items():
+			set_clauses.append(f"{field} = %s")
+			all_params.append(col_attrs[field].coerce(value))
+		for field in col_unset:
+			set_clauses.append(f"{field} = NULL")
+		for field, delta in col_inc.items():
+			set_clauses.append(f"{field} = COALESCE({field}, 0) + %s")
+			all_params.append(delta)
+
+		if not set_clauses:
+			return
+
+		set_clauses.append("_ = GREATEST(_ + 1, %s)")
+		all_params.append(new_ts)
+
+		pk_conditions = cls._pk_conditions()
+		pk_values = self._pk_values()
+		extra_conds, extra_params = cls._build_conditions_sql(conditions or {})
+		where_parts = [pk_conditions, "_ = %s"] + extra_conds
+		where = " AND ".join(where_parts)
+
+		# RETURNING keeps the in-memory object in step with the row that was
+		# actually written, so callers never have to re-read after an update.
+		# The whole __ document comes back for any JSONB write, not just $inc and
+		# $push: a $set/$unset lands inside __ too, and without it the object
+		# would still report the old value for anything stored there.
+		returning_cols = ["_"]
+		if has_jsonb_update:
+			returning_cols.append("__")
+		returning_cols.extend(col_attrs.keys())
+		returning = "RETURNING " + ", ".join(returning_cols)
+
+		sql = (
+			f"UPDATE {cls._table_name_} "
+			f"SET {', '.join(set_clauses)} "
+			f"WHERE {where} {returning}"
+		)
+		base_params = all_params + pk_values
+		fixed_extra = extra_params
+
+		_MAX_RETRIES = 3
+		for attempt in range(_MAX_RETRIES):
+			with cls._db_node_.use_conn() as conn:
+				with conn.cursor() as cur:
+					cur.execute(sql, base_params + [original_ts] + fixed_extra)
+					result = cur.fetchone()
+				if result is None:
+					if conditions:
+						return False
+					# optimistic lock conflict — refetch and retry
+					if attempt < _MAX_RETRIES - 1:
+						fresh = cls.get(**{pk: getattr(self, pk) for pk in cls._pk_attrs_})
+						if fresh is None:
+							raise OptimisticLockError(
+								f"{cls._table_name_}: record deleted during retry "
+								f"(pk={self._pk_values()})"
+							)
+						original_ts = fresh._
+						continue
+					raise OptimisticLockError(
+						f"{cls._table_name_}: update conflict after {_MAX_RETRIES} retries "
+						f"(pk={self._pk_values()}, _={self._})"
+					)
+				if callback:
+					try:
+						cls._db_node_._callback(callback, self, result)
+						with conn.cursor() as cur:
+							cur.execute(f"SELECT * FROM {cls._table_name_} WHERE {pk_conditions}", pk_values)
+							result = cur.fetchone()
+					except BaseException as ex:
+						conn.rollback()
+						raise ex
+				conn.commit()
+			original_row = dict(self._row_) if hasattr(self, '_row_') else None
+			cls._db_node_._remember(self)
+			self._from_doc(result, partial=True)
+			cls._trigger_event(EVENT_ROW_AFTER_UPDATE, self, original_row, result)
+			cls._trigger_event(EVENT_AFTER_UPDATE, self)
+			return True
+
+	# ── Locking ──────────────────────────────────────────────────────────────
+
+	__locks = None
+
+	class _LockHandle:
+		def __init__(self, model_obj, name, acquired):
+			self._model_obj = model_obj
+			self._name = name
+			self._acquired = acquired
+			self._released = False
+
+		def __bool__(self):
+			return self._acquired
+
+		def __enter__(self):
+			if not self._acquired:
+				raise TimeoutError("Lock not acquired")
+			return self._model_obj
+
+		def __exit__(self, exc_type, exc, tb):
+			if self._acquired and not self._released:
+				self._model_obj.unlock(name=self._name)
+				self._released = True
+			return False
+
+		def unlock(self, force=False):
+			if self._acquired and not self._released:
+				self._model_obj.unlock(name=self._name, force=force)
+				self._released = True
+
+	def lock(self, name="", timeout=5000, silent=False, can_hold_until=2 * 60 * 1000):
+		"""
+		Acquire a named lock on this record.
+
+		For new (not-yet-persisted) objects, uses an in-memory lock.
+		For DB-backed objects, atomically sets a _lock_<name> field in the __
+		JSONB column only if it is NULL or expired, with optimistic retries.
+
+		timeout:       max ms to wait before giving up (raises TimeoutError unless silent=True)
+		can_hold_until: how long (ms) from now the lock is considered valid by other callers
+		"""
+		self.__class__._db_node_._remember(self)
+		lock_name = f"_lock_{name}"
+		lock_handle = self._LockHandle(self, name, False)
+		start_timestamp = cur_ms()
+
+		if self.__locks is None:
+			self.__locks = {}
+
+		# in-memory lock for new (not-yet-persisted) objects
+		if object.__getattribute__(self, '_is_create_new_'):
+			while (
+				lock_name in self.__locks
+				and (cur_ms()) - start_timestamp < timeout
+			):
+				self.__class__._db_node_._sleep(0.001)
+			if lock_name in self.__locks:
+				if not silent:
+					raise TimeoutError(
+						"locking timedout on non-db new object {}:{}".format(
+							self.__class__,
+							self._pk_values()
+						)
+					)
+				return lock_handle
+			self.__locks[lock_name] = None
+			lock_handle._acquired = True
+			return lock_handle
+
+		# DB lock: atomically claim the lock field if absent or expired, via raw SQL
+		# (skips self.update()'s generic JSONB-diff/optimistic-lock machinery entirely)
+		count = 0
+		cls = self.__class__
+		pk_conditions = cls._pk_conditions()
+		pk_values = self._pk_values()
+		sql = (
+			f"UPDATE {cls._table_name_} "
+			f"SET __ = jsonb_set(__, %s::text[], %s::jsonb, true), _ = GREATEST(_ + 1, %s) "
+			f"WHERE {pk_conditions} AND "
+			f"((__->>%s::text) IS NULL OR (__->>%s::text)::bigint < %s) "
+			f"RETURNING _"
+		)
+		while cur_ms() - start_timestamp < timeout:
+			count += 1
+			cur_timestamp = cur_ms()
+			locked_until = cur_timestamp + can_hold_until
+			params = [
+				[lock_name], json.dumps(locked_until), cur_timestamp,
+				*pk_values,
+				lock_name, lock_name, cur_timestamp,
+			]
+			with cls._db_node_.use_conn() as conn:
+				with conn.cursor() as cur:
+					cur.execute(sql, params)
+					result = cur.fetchone()
+				conn.commit()
+			if result:
+				object.__setattr__(self, '_', result['_'])
+				self.__locks[lock_name] = locked_until
+				lock_handle._acquired = True
+				return lock_handle
+			# The optimistic _ check may have failed because another writer
+			# changed the row; refresh _ so the next attempt matches.
+			fresh = cls.get(**{pk: getattr(self, pk) for pk in cls._pk_attrs_})
+			if fresh is None:
+				break
+			object.__setattr__(self, '_', fresh._)
+			cls._db_node_._sleep(min(0.2 * count, max(0, timeout - (cur_ms() - start_timestamp)) / 1000))
+
+		if not silent:
+			raise TimeoutError(
+				"locking timedout {}:{}".format(
+					self.__class__,
+					self._pk_values()
+				)
+			)
+		return lock_handle
+
+	def unlock(self, name="", force=False):
+		self.__class__._db_node_._remember(self)
+		if self.__locks is None:
+			self.__locks = {}
+		lock_name = f"_lock_{name}"
+		if not force and lock_name not in self.__locks:
+			return
+		if not object.__getattribute__(self, '_is_create_new_'):
+			cls = self.__class__
+			pk_conditions = cls._pk_conditions()
+			pk_values = self._pk_values()
+			sql = f"UPDATE {cls._table_name_} SET __ = __ - %s::text, _ = GREATEST(_ + 1, %s) WHERE {pk_conditions}"
+			params = [lock_name, cur_ms(), *pk_values]
+			if not force:
+				sql += " AND (__->>%s::text) = %s"
+				params += [lock_name, str(self.__locks[lock_name])]
+			with cls._db_node_.use_conn() as conn:
+				with conn.cursor() as cur:
+					cur.execute(sql, params)
+				conn.commit()
+		self.__locks.pop(lock_name, None)
+
+	def delete(self):
+		cls = self.__class__
+		cls._trigger_event(EVENT_BEFORE_DELETE, self)
+		pk_conditions = cls._pk_conditions()
+		pk_values = self._pk_values()
+		sql = f"DELETE FROM {cls._table_name_} WHERE {pk_conditions}"
+		with cls._db_node_.use_conn() as conn:
+			with conn.cursor() as cur:
+				cur.execute(sql, pk_values)
+			conn.commit()
+		cls._trigger_event(EVENT_AFTER_DELETE, self)
+
+
+	def reload(self, projections=None, if_none=False):
+		"""Refresh this instance and return it, discarding changes to loaded fields.
+
+		Projections accept field names or Attribute objects, as in get().
+		if_none limits the refresh to missing/None values and empty strings or
+		containers; zero and False are preserved. A missing row raises LookupError.
+		"""
+		cls = self.__class__
+		if cls._db_node_ is not None:
+			cls._db_node_._remember(self)
+		if projections is not None:
+			if isinstance(projections, (str, Attribute)):
+				projections = [projections]
+			else:
+				projections = list(projections)
+			cls._build_select_columns(projections)  # validate before filtering
+			projections = list(dict.fromkeys(
+				field.attr_name if isinstance(field, Attribute) else field
+				for field in projections
+			))
+		if if_none:
+			fields = cls._attrs_ if projections is None else projections
+			projections = [
+				name for name in fields
+				if (value := self.__dict__.get(name)) is None
+				or (isinstance(value, (str, bytes, dict, list, tuple, set)) and not value)
+			]
+		if projections == []:
+			return self
+
+		fresh = cls.get(*self._pk_values(), projections=projections)
+		if fresh is None:
+			raise LookupError(f"{cls.__name__} {self._pk_values()!r} not found")
+		row = fresh._row_
+		if projections is None:
+			# Remove stale values for fields no longer present in the row.
+			for name in cls._attrs_:
+				self.__dict__.pop(name, None)
+			return self._from_doc(row)
+
+		object.__setattr__(self, '_initializing_', True)
+		object.__setattr__(self, '_is_create_new_', False)
+		try:
+			for name in projections:
+				attr = cls._attrs_[name]
+				source = row if name in cls._pk_attrs_ or name in cls._col_attrs_ else row['__']
+				value = attr.coerce(source[name]) if name in source else attr.get_default()
+				setattr(self, name, value)
+		finally:
+			object.__setattr__(self, '_initializing_', False)
+		for path in list(self._set_updates):
+			if path[0] in projections:
+				del self._set_updates[path]
+		self._unset_updates.difference_update(
+			path for path in list(self._unset_updates) if path[0] in projections
+		)
+		object.__setattr__(self, '_', row['_'])
+		previous_row = getattr(self, '_row_', {})
+		merged_row = {**previous_row, **row}
+		merged_json = dict(previous_row.get('__', {}))
+		for name in projections:
+			if name not in cls._pk_attrs_ and name not in cls._col_attrs_:
+				merged_json.pop(name, None)
+		merged_json.update(row['__'])
+		merged_row['__'] = merged_json
+		object.__setattr__(self, '_row_', merged_row)
+		return self
+
+	@classmethod
+	def get(
+		cls: Type[T], *pk_args, _replica: bool = False, projections=None, **pk_kwargs
+	) -> Optional[T]:
+		"""
+		Fetch a single record by primary key fields.
+
+		Primary-key values may be passed positionally in primary-key order, which
+		matches ``mongo_orm.Model.get`` for single-key models. When positional
+		values are provided, keyword arguments are ignored so Mongo-compatible
+		calls such as ``Model.get(id, use_cache=False)`` work. Keyword arguments
+		remain supported when no positional values are provided.
+
+		A single positional list/set fetches many records at once and returns a
+		list (again matching ``mongo_orm.Model.get``). Each element is either a
+		primary-key value (single-key models) or a dict of primary-key fields.
+		Missing rows are simply absent from the result, so the result is NOT
+		positionally aligned with the input.
+
+		_replica=True routes the read to the replica node (if configured on _db_node_).
+		projections optionally limits loaded fields, e.g. ``projections=[User.name, "meta"]``.
+		Primary-key fields and ``_`` are always loaded internally.
+		"""
+		pk_attrs = cls._pk_attrs_
+		many = len(pk_args) == 1 and isinstance(pk_args[0], (list, set))
+
+		if many:
+			params = []
+			if len(pk_attrs) == 1:
+				pk = pk_attrs[0]
+				values = [p[pk] if isinstance(p, dict) else p for p in pk_args[0] if p]
+				if not values:
+					return []
+				where = f"{pk} = ANY(%s)"
+				params.append(list(values))
+			else:
+				# composite key: OR together one (a = %s AND b = %s) group per entry
+				groups = []
+				for p in pk_args[0]:
+					if not p:
+						continue
+					groups.append("(" + " AND ".join(f"{a} = %s" for a in pk_attrs) + ")")
+					params.extend(p[a] for a in pk_attrs)
+				if not groups:
+					return []
+				where = " OR ".join(groups)
+			limit = ""
+		else:
+			if pk_args:
+				if len(pk_args) != len(pk_attrs):
+					raise TypeError(
+						f"{cls.__name__}.get() expected {len(pk_attrs)} primary-key value(s), "
+						f"got {len(pk_args)}"
+					)
+				params = list(pk_args)
+			else:
+				params = [pk_kwargs[pk] for pk in pk_attrs]
+			where, limit = cls._pk_conditions(), " LIMIT 1"
+
+		node = cls._db_node_._get_replica() if _replica else cls._db_node_
+		select_cols, select_params = cls._build_select_columns(projections)
+		sql = f"SELECT {select_cols} FROM {cls._table_name_} WHERE {where}{limit}"
+		with node.use_conn() as conn:
+			with conn.cursor() as cur:
+				cur.execute(sql, select_params + params)
+				rows = cur.fetchall() if many else cur.fetchone()
+		if many:
+			return [cls.__new__(cls)._from_doc(row) for row in rows]
+		return cls.__new__(cls)._from_doc(rows) if rows else None
+
+	@classmethod
+	def query(
+		cls: Type[T],
+		_query: dict = None,
+		sort=None,
+		limit: int = None,
+		offset: int = None,
+		_replica: bool = False,
+		projections=None,
+	) -> Iterator[T]:
+		"""
+		Query records with MongoDB-style filter syntax.
+
+		Supported operators: $gt, $lt, $gte, $lte, $ne, $in
+		PK fields are compared against real columns; all others via JSONB.
+
+		_replica=True routes the read to the replica node (if configured on _db_node_).
+		projections optionally limits loaded fields, e.g. ``projections=[User.name, "meta"]``.
+		Primary-key fields and ``_`` are always loaded internally.
+
+		Example:
+			User.query({'age': {'$gte': 18}}, sort=[('name', 1)], limit=10, _replica=True)
+		"""
+		node = cls._db_node_._get_replica() if _replica else cls._db_node_
+		conditions, params = cls._build_conditions_sql(_query)
+		where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+		order_parts = []
+		if sort:
+			for field, direction in sort:
+				dir_str = "ASC" if direction >= 0 else "DESC"
+				if field in cls._pk_attrs_ or field in cls._col_attrs_ or field == '_':
+					order_parts.append(f"{field} {dir_str}")
+				else:
+					order_parts.append(f"(__->>'{field}') {dir_str}")
+		order = f"ORDER BY {', '.join(order_parts)}" if order_parts else ""
+
+		limit_clause = f"LIMIT {int(limit)}" if limit is not None else ""
+		offset_clause = f"OFFSET {int(offset)}" if offset is not None else ""
+
+		select_cols, select_params = cls._build_select_columns(projections)
+		sql = f"SELECT {select_cols} FROM {cls._table_name_} {where} {order} {limit_clause} {offset_clause}".strip()
+
+		with node.use_conn() as conn:
+			with conn.cursor() as cur:
+				cur.execute(sql, select_params + params)
+				rows = cur.fetchall()
+
+		for row in rows:
+			yield cls.__new__(cls)._from_doc(row)
+
+	@classmethod
+	def _build_create_table_sql(cls):
+		"""Return the CREATE TABLE SQL string (does not execute it)."""
+		pk_attrs = cls._pk_attrs_
+		col_defs = []
+		for pk in pk_attrs:
+			attr = cls._attrs_[pk]
+			pg_type = "BIGSERIAL" if attr.auto_increment else _PY_TO_PG_TYPE.get(attr.type, "TEXT")
+			col_defs.append(f"    {pk} {pg_type}")
+		for name, attr in cls._col_attrs_.items():
+			pg_type = "BIGSERIAL" if attr.auto_increment else _PY_TO_PG_TYPE.get(attr.type, "TEXT")
+			col_defs.append(f"    {name} {pg_type}")
+		col_defs.append("    _ BIGINT NOT NULL DEFAULT 0")
+		col_defs.append("    __ JSONB NOT NULL DEFAULT '{}'")
+		col_defs.append(f"    PRIMARY KEY ({', '.join(pk_attrs)})")
+		return (
+			f"CREATE TABLE IF NOT EXISTS {cls._table_name_} (\n"
+			+ ",\n".join(col_defs)
+			+ "\n)"
+		)
+
+	@classmethod
+	def create_table(cls):
+		"""
+		Create the table and all declared indexes if they don't already exist,
+		and add any column=True attribute the table is missing.
+
+		initialize_model() must be called first so _pk_attrs_ is populated.
+
+		The ADD COLUMN pass is what makes adding an attribute to an existing
+		model work: CREATE TABLE IF NOT EXISTS is a no-op once the table is
+		there, so without it a new column=True field would be selected for and
+		never exist. Only ever additive — nothing is dropped or retyped, so an
+		attribute that was removed or whose type changed still needs a migration
+		written by hand.
+		"""
+		table_sql = cls._build_create_table_sql()
+		with cls._db_node_.use_conn() as conn:
+			with conn.cursor() as cur:
+				cur.execute(table_sql)
+				for name, attr in cls._col_attrs_.items():
+					pg_type = "BIGINT" if attr.auto_increment else _PY_TO_PG_TYPE.get(attr.type, "TEXT")
+					cur.execute(
+						f"ALTER TABLE {cls._table_name_} ADD COLUMN IF NOT EXISTS {name} {pg_type}"
+					)
+				for index_spec in cls._indexes_:
+					cur.execute(index_spec['sql'])
+			conn.commit()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# with_lock decorator
+# ──────────────────────────────────────────────────────────────────────────────
+
+def with_lock(func):
+	"""Acquire a record lease around a synchronous method."""
+	if inspect.iscoroutinefunction(func):
+		raise TypeError('with_lock requires a synchronous function; submit it through AsyncAdapter')
+	@functools.wraps(func)
+	def wrapper(self, *args, **kwargs):
+		try:
+			with self.lock():
+				return func(self, *args, **kwargs)
+		except TimeoutError:
+			return None
+	return wrapper
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Exceptions
+# ──────────────────────────────────────────────────────────────────────────────
+
+class OptimisticLockError(Exception):
+	pass
+
+
+class MissingTableError(Exception):
+	pass
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# initialize_model
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _parse_index_declaration(raw_index, attrs_to_name):
+	"""
+	Parse one INDEX() argument group into (fields, properties).
+
+	raw_index is a tuple of positional args passed to INDEX(), e.g.:
+		((user_id, ASCENDING), (created_at, DESCENDING), {'unique': True})
+
+	Returns:
+		fields: list of (field_name, direction)
+		props:  dict  e.g. {'unique': True}
+	"""
+	fields = []
+	props = {}
+	for item in raw_index:
+		if isinstance(item, dict):
+			props.update(item)
+			continue
+		# item is (field_or_attr, direction) or just field_or_attr
+		if isinstance(item, tuple):
+			field_ref, direction = item[0], item[1] if len(item) > 1 else ASCENDING
+		else:
+			field_ref, direction = item, ASCENDING
+
+		# Resolve Attribute object → name
+		if isinstance(field_ref, Attribute):
+			field_name = attrs_to_name.get(id(field_ref)) or field_ref.attr_name
+		else:
+			field_name = field_ref
+
+		if field_name:
+			fields.append((field_name, direction))
+
+	return fields, props
+
+
+def _parse_raw_index_sql(index_sql):
+	"""Return ORM index metadata extracted from a raw CREATE INDEX statement."""
+	match = _RAW_INDEX_PATTERN.match(index_sql)
+	if match is None:
+		raise ValueError("Raw index SQL must begin with a valid CREATE INDEX statement")
+	normalized_sql = re.sub(r'\n\s*', ' ', index_sql).strip()
+	index_name = match.group("name")
+	if index_name.startswith('"'):
+		index_name = index_name[1:-1].replace('""', '"')
+	return {
+		'fields': [],
+		'unique': bool(match.group("unique")),
+		'condition': None,
+		'name': index_name,
+		'sql': normalized_sql,
+		'raw': True,
+	}
+
+
+def _table_exists(db_node, table_name):
+	"""Return True/False if the table exists, or None if the DB is unreachable."""
+	try:
+		with db_node.use_conn() as conn:
+			with conn.cursor() as cur:
+				cur.execute(
+					"SELECT 1 FROM pg_class WHERE relname = %s AND relkind = 'r'",
+					[table_name],
+				)
+				return cur.fetchone() is not None
+	except Exception:
+		return None
+
+
+def _fetch_existing_indexes(db_node, table_name):
+	"""
+	Return a dict {indexname: is_unique} for all non-primary indexes on the table.
+	Returns None if the table doesn't exist yet.
+	"""
+	sql = """
+		SELECT i.relname AS indexname, ix.indisunique AS is_unique
+		FROM pg_class t
+		JOIN pg_index ix ON t.oid = ix.indrelid
+		JOIN pg_class i ON i.oid = ix.indexrelid
+		WHERE t.relname = %s
+		  AND t.relkind = 'r'
+		  AND NOT ix.indisprimary
+	"""
+	try:
+		with db_node.use_conn() as conn:
+			with conn.cursor() as cur:
+				cur.execute(sql, [table_name])
+				rows = cur.fetchall()
+		return {row['indexname']: row['is_unique'] for row in rows}
+	except Exception:
+		return None
+
+
+def initialize_model(model_cls, create_tables=None):
+	"""
+	Scan the class MRO for Attribute definitions, parse INDEX() declarations,
+	derive _pk_attrs_ from the first unique index, and compare against existing
+	DB indexes (printing warnings on drift).
+
+	Must be called once after the model class is defined.
+
+	Example:
+		class User(Model):
+			_table_name_ = "users"
+			_db_node_ = my_db_node
+
+			id         = Attribute(str)
+			name       = Attribute(str)
+			age        = Attribute(int, default=0)
+			meta       = Attribute(dict, default={})
+			tags       = Attribute(list, default=[])
+
+			INDEX((id,   ASCENDING), {'unique': True})
+			INDEX((name, ASCENDING))
+
+		initialize_model(User)
+	"""
+
+	# ── 0. Resolve the table name and _db_node_ ──────────────────────────────
+	# Models shared with mongo_orm name their table `_collection_name_`; accept
+	# either spelling so one model definition works against both ORMs.
+	if not model_cls._table_name_:
+		model_cls._table_name_ = getattr(model_cls, "_collection_name_", None)
+
+	db_node = model_cls._db_node_
+	if isinstance(db_node, str):
+		db_node = _DB_NODES_[db_node]
+		model_cls._db_node_ = db_node
+
+	# ── 1. Collect Attribute definitions ────────────────────────────────────
+	attrs = {}
+	for klass in reversed(model_cls.__mro__):
+		for name, value in klass.__dict__.items():
+			if isinstance(value, Attribute):
+				attrs[name] = value
+	model_cls._attrs_ = attrs
+
+	# Build a lookup from Attribute object id → field name (for INDEX resolution)
+	attrs_to_name = {id(attr): name for name, attr in attrs.items()}
+
+	# ── 2. Parse declared indexes ────────────────────────────────────────────
+	table = model_cls._table_name_
+	raw_indexes = IndexesToCreate.get(table, [])
+
+	parsed_indexes = []   # field-based index declarations awaiting SQL generation
+	raw_index_specs = []  # complete CREATE INDEX statements supplied by the model
+	pk_attrs = None
+
+	for raw_index in raw_indexes:
+		if _is_raw_index_sql(raw_index):
+			raw_index_specs.append(_parse_raw_index_sql(raw_index))
+			continue
+		fields, props = _parse_index_declaration(raw_index, attrs_to_name)
+		if not fields:
+			continue
+
+		# Unique by default; only non-unique when explicitly {"unique": False}
+		is_unique = props.get('unique', True)
+		# _uniq suffix only when unique=True is explicitly declared
+		condition = props.get('condition')  # optional WHERE clause for partial index
+
+		# Build SQL column expressions
+		# pk_attrs is not resolved yet here; we use a placeholder set and fix after
+		col_exprs = []
+		for field, direction in fields:
+			dir_str = "ASC" if direction >= 0 else "DESC"
+			# We don't know pk_attrs yet; treat all as JSONB initially.
+			# After pk_attrs is set we regenerate if needed (below).
+			col_exprs.append((field, direction, dir_str))
+
+		index_name = table + "_" + "_".join(f"{f}_{d}".lower() for f, _, d in col_exprs)
+		if len(index_name) > _MAX_IDENTIFIER_LEN:
+			# Postgres silently truncates identifiers to 63 bytes, which would make
+			# the declared name never match the stored one — reported as index
+			# drift on every boot. Truncate ourselves, keeping it unique.
+			digest = hashlib.md5(index_name.encode()).hexdigest()[:8]
+			index_name = index_name[:_MAX_IDENTIFIER_LEN - 9] + "_" + digest
+
+		# First unique index → pk_attrs
+		if is_unique and (pk_attrs is None or len(fields) < len(pk_attrs)):
+			pk_attrs = [f for f, _ in fields]
+
+		parsed_indexes.append({
+			'fields': fields,
+			'unique': is_unique,
+			'condition': condition,
+			'name': index_name,
+			'col_exprs': col_exprs,     # resolved to SQL below
+		})
+
+	# ── 3. Derive pk_attrs ───────────────────────────────────────────────────
+	if not pk_attrs:
+		if "_id" in attrs:
+			# mongo_orm falls back to the always-unique `_id` when no declared
+			# index qualifies as the primary key — which includes models whose
+			# only declarations are non-unique. Mirror that, keeping the
+			# Attribute the model declared rather than replacing it with a
+			# BIGSERIAL of our own.
+			pk_attrs = ["_id"]
+			parsed_indexes.insert(0, {
+				'fields': [("_id", ASCENDING)],
+				'unique': True,
+				'condition': None,
+				'name': table + "__id_asc",
+				'col_exprs': [("_id", ASCENDING, "ASC")],
+			})
+		else:
+			_id_attr = model_cls._attrs_["_id"] = Attribute(int, auto_increment=True)
+			attrs_to_name[id(_id_attr)] = "_id"
+			pk_attrs = ["_id"]
+
+	model_cls._pk_attrs_ = pk_attrs
+
+	# ── 3b. Collect column=True attrs (non-pk real columns) ──────────────────
+	model_cls._col_attrs_ = {
+		name: attr
+		for name, attr in attrs.items()
+		if attr.column and name not in pk_attrs
+	}
+
+	# ── 4. Build final index SQL now that pk_attrs is known ──────────────────
+	indexes = []
+	for spec in parsed_indexes:
+		col_parts = []
+		for field, direction, dir_str in spec['col_exprs']:
+			if field in pk_attrs or field in model_cls._col_attrs_ or field == '_':
+				col_parts.append(f"{field} {dir_str}")
+			else:
+				col_parts.append(f"(__->>'{field}') {dir_str}")
+
+		unique_clause = "UNIQUE " if spec['unique'] else ""
+		where_clause = f" WHERE {spec['condition']}" if spec.get('condition') else ""
+		index_sql = (
+			f"CREATE {unique_clause}INDEX IF NOT EXISTS {spec['name']} "
+			f"ON {table} ({', '.join(col_parts)}){where_clause}"
+		)
+		indexes.append({
+			'fields': spec['fields'],
+			'unique': spec['unique'],
+			'condition': spec.get('condition'),
+			'name': spec['name'],
+			'sql': index_sql,
+		})
+	indexes.extend(raw_index_specs)
+
+	model_cls._indexes_ = indexes
+
+	# ── 5. Ensure table exists; compare indexes ──────────────────────────────
+	if not model_cls._db_node_:
+		return
+
+	exists = _table_exists(model_cls._db_node_, table)
+	if exists is None:
+		return  # DB unreachable — skip checks silently
+
+	if not exists:
+		if (IS_TEST if create_tables is None else create_tables):
+			model_cls.create_table()
+			# indexes were just created; nothing left to compare
+		else:
+			create_sql = model_cls._build_create_table_sql()
+			index_sqls = "\n".join(spec['sql'] + ";" for spec in indexes)
+			raise MissingTableError(
+				f"-- Table '{table}' does not exist. Create it with:\n\n"
+				f"{create_sql};\n\n{index_sqls}"
+			)
+	else:
+		existing = _fetch_existing_indexes(model_cls._db_node_, table)
+		if existing is not None:
+			declared_names = {spec['name'] for spec in indexes}
+			existing_names = set(existing.keys())
+
+			# Indexes in DB but not declared → probably stale, warn
+			for name in existing_names - declared_names:
+				LOG_WARN(
+					"pg_orm_extra_index",
+					model=model_cls.__name__,
+					table=table,
+					index=name,
+					desc=(
+						f"Index '{name}' exists in DB but is not declared in the ORM. "
+						f"Drop it? DROP INDEX {name};"
+					)
+				)
+
+			# Declared but not in DB → missing, warn
+			for spec in indexes:
+				# Raw CREATE INDEX statements are user-managed SQL and may contain
+				# expressions that the ORM cannot meaningfully compare for drift.
+				if spec.get('raw'):
+					continue
+				if spec['name'] not in existing_names:
+					LOG_WARN(
+						"pg_orm_missing_index",
+						model=model_cls.__name__,
+						table=table,
+						index=spec['name'],
+						desc=(
+							f"Index '{spec['name']}' is declared but missing in DB. "
+							f"Create it? {spec['sql']}"
+						)
+					)
+					continue
+
+				# Check if unique flag drifted
+				db_is_unique = existing[spec['name']]
+				if bool(db_is_unique) != spec['unique']:
+					LOG_WARN(
+						"pg_orm_index_changed",
+						model=model_cls.__name__,
+						table=table,
+						index=spec['name'],
+						declared_unique=spec['unique'],
+						db_unique=db_is_unique,
+						desc=(
+							f"Index '{spec['name']}' unique flag differs "
+							f"(declared={spec['unique']}, db={db_is_unique}). "
+							f"Recreate: DROP INDEX {spec['name']}; {spec['sql']}"
+						)
+					)
+
+
+def _model_subclasses(base):
+	seen = set()
+	def visit(cls):
+		for child in cls.__subclasses__():
+			if child not in seen:
+				seen.add(child)
+				yield child
+				yield from visit(child)
+	return visit(base)
+
+
+def initialize_postgres(db_nodes, create_tables=None):
+	"""Initialize blocking models; accept nodes, dicts or a list of either."""
+	if not isinstance(db_nodes, (list, tuple)):
+		db_nodes = [db_nodes]
+	nodes = [node if isinstance(node, DatabaseNode) else DatabaseNode(**node) for node in db_nodes]
+	if not nodes:
+		raise TypeError('Supply at least one blocking DatabaseNode')
+	errors = []
+	for cls in _model_subclasses(Model):
+		if not (cls._table_name_ or getattr(cls, '_collection_name_', None)):
+			continue
+		if cls._db_node_ is None:
+			cls._db_node_ = nodes[0]
+		try:
+			initialize_model(cls, create_tables=create_tables)
+		except MissingTableError as error:
+			errors.append(error)
+	if errors:
+		raise MissingTableError('\n'.join(map(str, errors)))
+	return nodes
