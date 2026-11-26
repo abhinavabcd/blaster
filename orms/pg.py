@@ -1534,6 +1534,7 @@ class Model:
 		offset: int = None,
 		_replica: bool = False,
 		projections=None,
+		primary: bool = None,
 	) -> Iterator[T]:
 		"""
 		Query records with MongoDB-style filter syntax.
@@ -1542,6 +1543,8 @@ class Model:
 		PK fields are compared against real columns; all others via JSONB.
 
 		_replica=True routes the read to the replica node (if configured on _db_node_).
+		primary is accepted for call compatibility with the mongo orm and ignored:
+		reads here already go to the primary unless _replica=True.
 		projections optionally limits loaded fields, e.g. ``projections=[User.name, "meta"]``.
 		Primary-key fields and ``_`` are always loaded internally.
 

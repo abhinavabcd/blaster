@@ -809,7 +809,8 @@ class Model:
 		return next(cls.query(query, limit=1, projections=projections, _replica=_replica), None)
 
 	@classmethod
-	def query(cls, _query=None, sort=None, limit=None, offset=None, _replica=False, projections=None):
+	# primary: accepted for call compatibility with the mongo orm, ignored
+	def query(cls, _query=None, sort=None, limit=None, offset=None, _replica=False, projections=None, primary=None):
 		cls._build_select_columns(projections)
 		cond, params = cls._build_conditions_sql(_query)
 		sql = f'SELECT * FROM {_quote(cls._table_name_)}'
