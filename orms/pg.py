@@ -122,10 +122,6 @@ IndexesToCreate = {}
 _DB_NODES_: dict = {}
 
 
-def SHARD_BY(*args, **kwargs):  # NO-OP
-	pass
-
-
 def _is_field_spec(item):
 	"""
 	True when `item` names a single indexed field, i.e. one of:

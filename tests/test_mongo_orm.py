@@ -1,13 +1,5 @@
 # mongo orm
-# setup: 2 replica sets
-# intialize table with primary and multiple secondary shards
-
-# insert 10000 documents
-# 1. verify all 10000 are split to shards
-# 2. verify secondary shards are also updated for all 10000 documents
-
-# update 100 documents
-# 1. verify  updates are propagated to the secondary shards and are available for query
+# setup: a replica set (see test_with_mongo.sh)
 
 import blaster
 
@@ -15,7 +7,7 @@ import unittest
 import time
 import gevent
 import random
-from blaster.mongo_orm import Model, Attribute, INDEX, SHARD_BY, initialize_mongo
+from blaster.mongo_orm import Model, Attribute, INDEX, initialize_mongo
 from blaster.tools import get_random_id, get_str_id
 
 
@@ -33,12 +25,11 @@ class AModel(Model):
 
     INDEX(
         (a, b),
-        (b, c),
-        (c, d),
-        (c, d, e),
-        (c, e)
+        (b, c, {"unique": False}),
+        (c, d, {"unique": False}),
+        (c, d, e, {"unique": False}),
+        (c, e, {"unique": False})
     )
-    SHARD_BY(primary=a, secondary=[b, c])
 
 
 class BModel(Model):
@@ -53,12 +44,11 @@ class BModel(Model):
 
     INDEX(
         (a,),
-        (b, c),
-        (c, d),
-        (c, d, e),
-        (c, e)
+        (b, c, {"unique": False}),
+        (c, d, {"unique": False}),
+        (c, d, e, {"unique": False}),
+        (c, e, {"unique": False})
     )
-    SHARD_BY(primary=a, secondary=[b, c])
 
     def before_update(self):
         self.b = (self.b or "") + "0"
@@ -87,7 +77,6 @@ class TestConcurrentThreadUpdates(unittest.TestCase):
         item = AModel.get(a=0)
         item.b = (item.b or "") + _by
         item.f = (item.f or "") + _by
-        # this should propagate b to secondary shard correctly
         item.commit()
 
         for i in range(10):
@@ -119,19 +108,18 @@ class TestBasics(unittest.TestCase):
         a.c = None
         a.commit()
 
-        self.assertIsNone(
-            AModel._secondary_shards_["c"]._Model_.get_collection(None).find_one({"c": None})
-        )
+        self.assertIsNone(AModel.get(a=11, b="23", use_cache=False).c)
+        self.assertEqual(list(AModel.query({"c": "33", "d": "43"})), [])
 
     def test_commit_with_transaction(self):
         a = AModel(a=11, b="22", c="33").commit()
         try:
-            b = AModel(a=12, b="22", c="33").commit()  # should crash but should create entry in a shard
+            b = AModel(a=11, b="22", c="34").commit()  # duplicate (a, b), should crash
 
         except Exception:
             pass
         self.assertIsNone(
-            AModel.get_collection(11).find_one({"a": 12})
+            AModel.get_collection(11).find_one({"c": "34"})
         )
 
     def test_transaction_chain(self):

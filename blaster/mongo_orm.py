@@ -16,8 +16,9 @@ from collections import OrderedDict
 from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError, PyMongoError
 from pymongo import ReturnDocument
+from pymongo.read_preferences import ReadPreference
 from .tools import all_subclasses, \
-	cur_ms, list_diff2, batched_iter, _OBJ_END_, \
+	cur_ms, list_diff2, _OBJ_END_, \
 	get_by_key_path
 from .config import IS_DEV, MONGO_WARN_MAX_RESULTS_RATE, \
 	MONGO_MAX_RESULTS_AT_HIGH_SCAN_RATE, \
@@ -357,8 +358,6 @@ class Model(object):
 	_pk_attrs = None
 
 	_cache_ = None
-	# used to identify if it's a primary or secondary shard
-	_is_secondary_shard = False
 
 	# ###instance level###
 	_is_create_new_ = True
@@ -599,8 +598,8 @@ class Model(object):
 
 	def reload_from_db(self):
 		cls = self.__class__
-		primary_shard_collection = cls.get_collection(getattr(self, cls._shard_key_ or "_id"))
-		_doc_in_db = primary_shard_collection.find_one({"_id": self._id})
+		collection = cls.get_collection(getattr(self, cls._shard_key_ or "_id"))
+		_doc_in_db = collection.find_one({"_id": self._id})
 		if(not _doc_in_db):  # moved out of shard or pk changed
 			raise Exception(f"Document {self._id} pk:{self.pk()} not found")
 		# 2. update our local copy
@@ -710,29 +709,15 @@ class Model(object):
 	def get_collection_on_all_db_nodes(_Model):
 		return map(lambda db_node: db_node.get_collection(_Model), _Model._db_nodes_)
 
-	# give a shard key from query we return
-	# mongo collections list
+	# if the query pins the shard key, returns the collections (db nodes)
+	# it can live in, None when we cannot narrow it down
 	@classmethod
-	def get_collections_to_query(cls, _query, sort):
+	def get_collections_to_query(cls, _query):
+		if(cls._shard_key_ is None):
+			return None
 		shard_key = _query.get(cls._shard_key_, _OBJ_END_)
-
 		if(shard_key is _OBJ_END_):
 			return None
-
-		# if it's a secondary shard check if we can perform the query on this Model
-		if(cls._is_secondary_shard):
-			# check if we can construct a secondary shard query
-			for query_attr_name, query_attr_val in _query.items():
-				# if attr is not present in the secondary shard
-				if(query_attr_name not in cls._attrs_):
-					return None
-
-			if(sort):
-				# check if we can perform sort on the secondary index
-				for sort_key, sort_direction in sort:
-					if(sort_key not in cls._attrs_):
-						# cannot perform sort
-						return None
 
 		if(isinstance(shard_key, (str, int))):
 			return [cls.get_collection(shard_key)]
@@ -821,8 +806,8 @@ class Model(object):
 						_query.update(conditions)
 
 					# get the shard where current object is
-					primary_shard_key = original_doc[cls._shard_key_ or "_id"]
-					primary_shard_collection = cls.get_collection(primary_shard_key)
+					shard_key = original_doc[cls._shard_key_ or "_id"]
+					collection = cls.get_collection(shard_key)
 
 					#: VVIMPORTANT: set `_` -> to current timestamp
 					_to_set = _update_query.get("$set", _OBJ_END_)
@@ -839,17 +824,17 @@ class Model(object):
 						and DEBUG_PRINT_LEVEL > 8 \
 						and LOG_DEBUG(
 							"MONGO", description="update before and query",
-							model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
+							model=cls.__name__, collection=COLLECTION_NAME(collection),
 							query=str(_query), original_doc=str(original_doc),
 							update_query=str(_update_query)
 						)
 
 					# 1: try updating
-					updated_doc = primary_shard_collection.find_one_and_update(
+					updated_doc = collection.find_one_and_update(
 						_query,
 						_update_query,
 						return_document=ReturnDocument.AFTER,
-						session=_with_session(primary_shard_collection, _transaction, stack),
+						session=_with_session(collection, _transaction, stack),
 						**kwargs
 					)
 
@@ -857,7 +842,7 @@ class Model(object):
 						and DEBUG_PRINT_LEVEL > 8\
 						and LOG_DEBUG(
 							"MONGO", description="after update",
-							model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
+							model=cls.__name__, collection=COLLECTION_NAME(collection),
 							updated_doc=str(updated_doc)
 						)
 
@@ -866,7 +851,7 @@ class Model(object):
 						# is this concurrent update by someone else?
 						_update_retry_count and time.sleep(0.03 * _update_retry_count + random.random() / 10)  # 100 ms randomized delay
 						# 1. fetch from db again
-						_doc_in_db = primary_shard_collection.find_one({"_id": self._id})
+						_doc_in_db = collection.find_one({"_id": self._id})
 						if(not _doc_in_db):  # moved out of shard or pk changed
 							raise Exception(f"Document {self._id} pk:{self.pk()} not found")
 
@@ -884,88 +869,14 @@ class Model(object):
 					# doc successfully updated
 					# check if need to migrate to another shard if sharding is enabled
 					if(cls._shard_key_ is not None):
-						_new_primary_shard_key = updated_doc[cls._shard_key_]
-						if(_new_primary_shard_key != primary_shard_key):
-							new_primary_shard_collection = cls.get_collection(_new_primary_shard_key)
-							if(new_primary_shard_collection != primary_shard_collection):
+						new_shard_key = updated_doc[cls._shard_key_]
+						if(new_shard_key != shard_key):
+							new_collection = cls.get_collection(new_shard_key)
+							if(new_collection != collection):
 								# migrate to new shard
 								# will crash if duplicate _id key
-								new_primary_shard_collection.insert_one(updated_doc)
-								primary_shard_collection.delete_one({"_id": self._id})
-
-					# 1. propagate the updates to secondary shards
-					for _secondary_shard_key, _shard in cls._secondary_shards_.items():
-						_SecondayModel = _shard._Model_
-
-						_old_shard_key_val = original_doc.get(_secondary_shard_key)
-						_new_shard_key_val = updated_doc.get(_secondary_shard_key)
-						# 2. check if shard key has been changed
-						_old_secondary_collection = None
-						_new_secondary_collection = None
-
-						if(_old_shard_key_val is not None):
-							_old_secondary_collection = _SecondayModel\
-								.get_collection(_old_shard_key_val)
-						if(_new_shard_key_val is not None):
-							_new_secondary_collection = _SecondayModel\
-								.get_collection(_new_shard_key_val)
-
-						# 2.1. If old shard exists, delete that secondary doc
-						if(
-							_old_secondary_collection is not None
-							and (
-								_old_secondary_collection != _new_secondary_collection
-							)
-						):
-							_old_secondary_collection.delete_one({"_id": self._id})
-
-						# 2.2.  if new shard key exists insert into appropriate node
-						# insert only if non null
-						if(_new_secondary_collection is not None):
-							_to_insert = {}
-							is_shard_data_changed = False
-							for _k in _shard.attrs:
-								_v = updated_doc.get(_k, _OBJ_END_)
-								if(_v is not _OBJ_END_):
-									_to_insert[_k] = _v
-								if(_v != original_doc.get(_k, _OBJ_END_)):
-									# changed during update
-									is_shard_data_changed = True
-
-							# nothing changed in the shard
-							# don't replace/update
-							if(not is_shard_data_changed):
-								continue
-
-							_to_insert["_"] = updated_doc["_"]
-							# insert the doc in new collection
-							try:
-								_new_secondary_collection.replace_one(
-									{
-										"_id": self._id,
-										"_": {"$not": {"$gte": updated_doc["_"]}}
-									},
-									_to_insert,
-									upsert=True
-								)
-							except DuplicateKeyError as ex:
-								LOG_ERROR(
-									"MONGO",
-									desc="upserting failed(concurrent update)/duplicate entry on seconday shard",
-									ex=str(ex),
-									model=cls.__name__,
-									collection=COLLECTION_NAME(_new_secondary_collection),
-								)
-							except Exception as ex:
-								# updating to secondary failed
-								LOG_ERROR(
-									"MONGO",
-									desc="secondary not be propagated",
-									ex=str(ex),
-									model=cls.__name__,
-									collection=COLLECTION_NAME(_new_secondary_collection),
-									secondary_doc=str(_to_insert)
-								)
+								new_collection.insert_one(updated_doc)
+								collection.delete_one({"_id": self._id})
 
 					# call any explicit callback
 					callback and callback(
@@ -980,7 +891,6 @@ class Model(object):
 
 					# reset all values
 					self.reset_and_update_cache(updated_doc)
-					# waint on threads
 
 					is_new_transaction and _commit_transaction(_transaction)
 					is_updated = True
@@ -1030,9 +940,15 @@ class Model(object):
 		sort=None,
 		offset=None,
 		limit=None,
-		force_primary=False,
+		_replica=False,
 		**kwargs
 	) -> Iterator[ModelType]:
+		# _replica: route this read to replica set secondaries, so long scans
+		# (batch jobs) don't compete with online reads on the primary.
+		# True -> secondaryPreferred, or pass a pymongo read preference.
+		# Results can be slightly stale, so they never go into the model cache.
+		if(_replica is True):
+			_replica = ReadPreference.SECONDARY_PREFERRED
 		queries = None
 		# split or queries to separate it to shards
 		if(not isinstance(_query, list)):
@@ -1070,45 +986,18 @@ class Model(object):
 				_sort_keys.append((_sort_key_name, _ordering))
 			sort = _sort_keys
 
-		# collection: [_query,...]
+		# group queries by the collection (db node) they should run on
+		# id(collection): (collection, [_query,...])
 		collections_to_query = {}
 		for _query in queries:
-			# try checking if we can query primary
-			collection_shards = cls.get_collections_to_query(_query, sort)
-			if(collection_shards):
-				for collection_shard in collection_shards:
-					_key = id(collection_shard)
-					shard_and_queries = collections_to_query.get(_key)
-					if(shard_and_queries is None):
-						collections_to_query[_key]\
-							= shard_and_queries \
-							= (collection_shard, [], cls)
-					shard_and_queries[1].append(_query)
-
-			elif(not force_primary):  # try if we can query it on secondary shards
-				for _secondary_shard_key, _shard in cls._secondary_shards_.items():
-					secondary_collection_shards = _shard._Model_.get_collections_to_query(_query, sort)
-					if(not secondary_collection_shards):
-						continue
-					for collection_shard in secondary_collection_shards:
-						_key = id(collection_shard)
-						shard_and_queries = collections_to_query.get(_key)
-						if(shard_and_queries is None):
-							collections_to_query[_key] \
-								= shard_and_queries \
-								= (collection_shard, [], _shard._Model_)
-						shard_and_queries[1].append(_query)
-
-					break  # important
-
-		# if we did not find any possible shard to query
-		# we query all primary shards and assemble queries using chain
-		# which will be dead slow and possibly fucked up!
-		if(not collections_to_query):
-			collections_to_query = {
-				id(x): (x, queries, cls)
-				for x in cls.get_collection_on_all_db_nodes()
-			}
+			for _collection in (
+				cls.get_collections_to_query(_query)
+				or cls.get_collection_on_all_db_nodes()  # can't narrow down, ask every node
+			):
+				_key = id(_collection)
+				if(_key not in collections_to_query):
+					collections_to_query[_key] = (_collection, [])
+				collections_to_query[_key][1].append(_query)
 
 		def count_documents(_collection, _query, offset):
 			kwargs = {}
@@ -1212,17 +1101,19 @@ class Model(object):
 
 		multi_collection_query_result_iterator = MultiCollectionQueryResultIterator()
 
-		def query_collection(_Model, _collection, _query, offset=None):
+		def query_collection(_collection, _query, offset=None):
 			IS_DEV \
 				and DEBUG_PRINT_LEVEL > 8 \
 				and LOG_DEBUG(
 					"MONGO",
-					description="querying", model=_Model.__name__,
+					description="querying", model=cls.__name__,
 					collection=COLLECTION_NAME(_collection),
 					query=str(_query), sort=str(sort), offset=str(offset), limit=str(limit)
 				)
 
 			projection = kwargs.get("projection")
+			if(_replica):
+				_collection = _collection.with_options(read_preference=_replica)
 			ret = _collection.find(_query, **kwargs)
 			if(offset):  # from global arg
 				ret = ret.skip(offset)
@@ -1233,64 +1124,23 @@ class Model(object):
 
 			_cursor = ret  # keep track of this for distinct
 
-			# we queried from the secondary shard, will not have all fields
-			# requery again
-			if(_Model._is_secondary_shard):
-				# do a requery to fetch full document
-				# TODO: make it batch wise fetch
-				def batched_requery_iter(ret, n=200):
-					for docs in batched_iter(ret, n):
-						# use this to put them in the same order after or query
-						_ids_order = [_doc["_id"] for _doc in docs]
-
-						if(cls._shard_key_ != "_id"):
-							_query = {
-								"$or": [
-									{cls._shard_key_: _doc[cls._shard_key_], "_id": _doc["_id"]} for _doc in docs
-								]
-							}
-						else:
-							_query = {"$or": [{"_id": _doc["_id"]} for _doc in docs]}
-
-						IS_DEV\
-							and DEBUG_PRINT_LEVEL > 8\
-							and LOG_DEBUG(
-								"MONGO", description="requerying",
-								model=cls.__name__, query=str(_query)
-							)
-						_requeried_from_primary = {_doc._id: _doc for _doc in cls.query(_query, force_primary=True)}
-						for _id in _ids_order:
-							item = _requeried_from_primary.get(_id)
-							if(not item):
-								IS_DEV\
-									and DEBUG_PRINT_LEVEL > 8\
-									and LOG_DEBUG(
-										"MONGO", description="missing from primary",
-										model=cls.__name__, _id=str(_id)
-									)
-								continue
-							yield item
-				ret = batched_requery_iter(ret)
-			else:
-				def doc_to_obj(doc):
-					ret = cls(False)  # not a new item
-					if(projection is not None):
-						ret._reset(doc)
-					else:
-						ret.reset_and_update_cache(doc)
-					return ret
-
-				ret = map(doc_to_obj, ret)
+			def doc_to_obj(doc):
+				ret = cls(False)  # not a new item
+				if(projection is not None or _replica):
+					ret._reset(doc)  # partial or possibly stale, keep out of cache
+				else:
+					ret.reset_and_update_cache(doc)
+				return ret
 
 			multi_collection_query_result_iterator.add(
-				ret,
+				map(doc_to_obj, ret),
 				_cursor,
 				lambda: count_documents(_collection, _query, offset)  # query count func
 			)
 
 		threads = []
 		for _, shard_and_queries in collections_to_query.items():
-			_collection_shard, _queries, _Model = shard_and_queries
+			_collection_shard, _queries = shard_and_queries
 			new_query = None
 			if(len(_queries) == 1):
 				new_query = _queries[0]
@@ -1305,12 +1155,12 @@ class Model(object):
 						"Cannot use offset when query spans multiple collections shards, "
 						"rethink your query or change sharding"
 					),
-					model=_Model.__name__
+					model=cls.__name__
 				)
 
 			thread = Thread(
 				target=query_collection,
-				args=(_Model, _collection_shard, new_query),
+				args=(_collection_shard, new_query),
 				kwargs={"offset": offset}
 			)
 			thread.start()
@@ -1381,47 +1231,28 @@ class Model(object):
 
 			self._set_query_updates["_"] = int(time.time() * 1000)
 
-			primary_shard_collection = cls.get_collection(getattr(self, cls._shard_key_ or "_id"))
+			collection = cls.get_collection(getattr(self, cls._shard_key_ or "_id"))
 			IS_DEV \
 				and DEBUG_PRINT_LEVEL > 8 \
 				and LOG_DEBUG(
 					"MONGO", description="new object values",
-					model=cls.__name__, collection=COLLECTION_NAME(primary_shard_collection),
+					model=cls.__name__, collection=COLLECTION_NAME(collection),
 					set_query=str(self._set_query_updates)
 				)
-			if(cls._secondary_shards_ and _transaction is None):
-				_transaction = {}
-
 			is_new_transaction = (
 				_transaction is not None
 				and _transaction.get("transactions") is None
-			)				# find which shard we should insert
+			)
 			with ExitStack() as stack:
 				for _insert_retry_count in range(3):
 					try:
-						self._insert_result = primary_shard_collection.insert_one(
+						self._insert_result = collection.insert_one(
 							self._set_query_updates,
-							session=_with_session(primary_shard_collection, _transaction, stack)
+							session=_with_session(collection, _transaction, stack)
 						)
 
 						self._id = self._set_query_updates["_id"] = self._insert_result.inserted_id
 
-						# insert in secondary shards now
-						for _secondary_shard_key, _shard in cls._secondary_shards_.items():
-							_SecondaryModel = _shard._Model_
-							_shard_key_val = self._set_query_updates.get(_secondary_shard_key)
-							if(_shard_key_val is not None):
-								_to_insert = {}
-								for attr in _shard.attrs:
-									_attr_val = self._set_query_updates.get(attr, _OBJ_END_)
-									if(_attr_val is not _OBJ_END_):
-										_to_insert[attr] = _attr_val
-								secondary_collection = _SecondaryModel.get_collection(_shard_key_val)
-								if(_to_insert):
-									secondary_collection.insert_one(
-										_to_insert,
-										session=_with_session(secondary_collection, _transaction, stack)
-									)
 						# set _id updates
 						is_new_transaction and _commit_transaction(_transaction)
 						is_committed = True
@@ -1440,14 +1271,14 @@ class Model(object):
 							raise(ex)  # re reaise
 
 						# get original doc from mongo shard
-						doc_in_db = primary_shard_collection.find_one(ex.details["keyValue"])
+						doc_in_db = collection.find_one(ex.details["keyValue"])
 						self.reset_and_update_cache(doc_in_db)
 						IS_DEV \
 							and DEBUG_PRINT_LEVEL > 8 \
 							and LOG_DEBUG(
 								"MONGO", description="created a duplicate, refetching and updating",
 								model=cls.__name__,
-								collection=COLLECTION_NAME(primary_shard_collection),
+								collection=COLLECTION_NAME(collection),
 								pk=str(self.pk())
 							)
 
@@ -1490,29 +1321,16 @@ class Model(object):
 
 	def delete(self):
 		_Model = self.__class__
-		if(_Model._is_secondary_shard):
-			raise Exception("MONGO: Cannot delete secondary shard item")
-		# Note: when we know the _id and the shard we basically delete them by _id
-
 		_Model._trigger_event(EVENT_BEFORE_DELETE, self)
 
 		_delete_query = {"_id": self._id}
-		# delete from all secondary shards
-		for _shard_key_name, _shard in _Model._secondary_shards_.items():
-			_SecondaryModel = _shard._Model_
-			_shard_key_val = self._original_doc.get(_shard_key_name)
-			if(_shard_key_val):
-				_SecondaryModel\
-					.get_collection(_shard_key_val)\
-					.delete_one(_delete_query)
-
 		# find which pimary shard it belongs to and delete it there
 		collection_shard = _Model.get_collection(self._original_doc[_Model._shard_key_ or "_id"])
 		collection_shard.delete_one(_delete_query)
 		IS_DEV \
 			and DEBUG_PRINT_LEVEL > 8 \
 			and LOG_DEBUG(
-				"MONGO", description="deleting from primary",
+				"MONGO", description="deleting",
 				model=_Model.__name__, collection=COLLECTION_NAME(collection_shard),
 				delete_query=str(_delete_query)
 			)
@@ -1653,17 +1471,6 @@ def with_lock(func):
 	return wrapper
 
 
-class SecondaryShard:
-	attrs = None
-	indexes = None
-	collection_name = None
-	_Model_ = None
-
-	def __init__(self):
-		self.attrs = {}
-		self.indexes = []
-
-
 # control
 class CollectionTracker(Model):
 	_db_name_ = "control"
@@ -1671,22 +1478,10 @@ class CollectionTracker(Model):
 
 	_id = Attribute(str)  # db_name__collection_name
 	db_nodes = Attribute(list)
-	is_primary_shard = Attribute(int)
 	primary_shard_key = Attribute(str)
-	secondary_shard_keys = Attribute(list)
 	pk_attrs = Attribute(list)
 	attrs = Attribute(list)
 	created_at = Attribute(int, default=cur_ms)
-
-
-# tags shard keys to the attributes and use it when intializing the model
-def SHARD_BY(primary=None, secondary=None):
-	if(primary and isinstance(primary, Attribute)):
-		primary.is_primary_shard_key = True
-	if(secondary):
-		for secondary_shard_attr in secondary:
-			if(secondary_shard_attr and isinstance(secondary_shard_attr, Attribute)):
-				secondary_shard_attr.is_secondary_shard_key = True
 
 
 IndexesToCreate = {}
@@ -1777,8 +1572,8 @@ def initialize_model(_Model):
 		return
 
 	# defaults, do not change the code below
+	# optional: `_shard_key_ = "attr_name"` on the class spreads docs across db nodes
 	_Model._shard_key_ = getattr(_Model, "_shard_key_", None)
-	_Model._secondary_shards_ = {}
 
 	_Model._indexes_ = getattr(_Model, "_indexes_", None)\
 		or IndexesToCreate.get(_Model._collection_name_) or []
@@ -1799,7 +1594,6 @@ def initialize_model(_Model):
 		_Model._attrs_to_name_.update(_M._attrs_to_name_)
 		_Model._indexes_ += _M._indexes_
 		_Model._shard_key_ = _M._shard_key_
-		_Model._secondary_shards_ = {k: SecondaryShard() for k in _M._secondary_shards_}
 
 	for k, v in filter(
 		lambda kv: isinstance(kv[1], Attribute),
@@ -1809,25 +1603,12 @@ def initialize_model(_Model):
 		# helps convert string/attr to string
 		attrs_to_name[v] = k
 		attrs_to_name[k] = k
-		# track models this attr belongs to
-
-		# check if it has any shard, then extract indexes,
-		# shard key tagged to attributes
-		if(not _Model._is_secondary_shard):  # very important check
-			# check indexes_to_create
-			if(getattr(v, "is_primary_shard_key", False) is True):
-				delattr(v, "is_primary_shard_key")  # delete so that it's not used again after first time
-				_Model._shard_key_ = k
-			elif(getattr(v, "is_secondary_shard_key", False) is True):
-				delattr(v, "is_secondary_shard_key")
-				_Model._secondary_shards_[k] = SecondaryShard()
-				# because we don't need it again after first time
 
 	IS_DEV \
 		and DEBUG_PRINT_LEVEL > 8 \
 		and print(
 			"\n\n#MONGO: Initializing Model", _Model,
-			_Model._indexes_, _Model._shard_key_, _Model._secondary_shards_
+			_Model._indexes_, _Model._shard_key_
 		)
 
 	_Model._event_listeners_ = getattr(_Model, "_event_listeners_", {})
@@ -1884,19 +1665,7 @@ def initialize_model(_Model):
 		is_unique_index = _index_properties.get("unique", True) is not False
 		_index_shard_key = _index_keys[0][0]  # shard key is the first mentioned in index
 
-		# adjust the pk of the table accordingly, mostly useful for primary shard
-		if(_secondary_shard := _Model._secondary_shards_.get(_index_shard_key)):  # belongs to seconday index
-			for _attr_key, _ordering in _index_keys:
-				if("." in _attr_key):
-					_attr_key = _attr_key.split(".")[0]
-				_secondary_shard.attrs[_attr_key] = getattr(_Model, _attr_key)
-			# create _index_ for secondary shards
-			_secondary_shard.indexes.append({
-				"keys": _index_keys,
-				"properties": _index_properties
-			})
-		else:  # create it on main table
-			_pymongo_indexes_to_create[_index_keys] = _index_properties
+		_pymongo_indexes_to_create[_index_keys] = _index_properties
 
 		if(_Model._shard_key_ == _index_shard_key):   # set pk_attrs for caching
 			if(_Model._pk_attrs is None and is_unique_index):
@@ -1940,17 +1709,6 @@ def initialize_model(_Model):
 				DatabaseNode(**_db_node)
 					for _db_node in collection_tracker.db_nodes
 			)
-			if(
-				not _Model._is_secondary_shard
-				and _Model._secondary_shards_
-				and collection_tracker.primary_shard_key != _Model._shard_key_
-			):
-				raise Exception(
-					"\n\n#MONGO_EXCEPTION: Primary shard key changed for ",
-					_Model,
-					"It has secondary shards, that point to primary shard key. ",
-					"You will have to drop shard secondary shards and force reindex everything again. "
-				)
 		else:
 			# just single db node, initialize on the default db node given
 			init_db_node = CollectionTracker._db_nodes_[0]
@@ -1966,8 +1724,6 @@ def initialize_model(_Model):
 					}
 				),
 			)
-
-		# check if new attribute added to secondary shard
 
 	# TODO: create or delete index using control jobs
 	# list existing indexes
@@ -2062,46 +1818,6 @@ def initialize_model(_Model):
 					_loading_errors["index_options_changed"].append(index_options_changed)
 					break
 
-	# create secondary shards
-	for _secondary_shard_key in list(_Model._secondary_shards_.keys()):  # iterate on copy
-		_secondary_shard = _Model._secondary_shards_[_secondary_shard_key]
-		if(not _secondary_shard.attrs):
-			_Model._secondary_shards_.pop(_secondary_shard_key)
-			LOG_ERROR(
-				"MONGO", description="not creating secondary shards without any related index",
-				model=_Model.__name__,
-				secondary_shard_key=_secondary_shard_key
-			)
-			continue
-
-		class_attrs = {
-			"_db_name_": _Model._db_name_,  # same as from primary
-			"_indexes_": _secondary_shard.indexes,
-			"_shard_key_": _secondary_shard_key,
-			# collection name is same as from primary,
-			# it's updated accordingly when initializing
-			"_collection_name_": _Model._collection_name_,
-			"_is_secondary_shard": True,
-			"_db_nodes_": None,
-			"_primary_model_class_": _Model  # reference
-		}
-
-		# add primary shard key, _id to refer to the primary shard and _id of doc
-		_secondary_shard.attrs[_Model._shard_key_] = _Model._attrs_[_Model._shard_key_]
-		_secondary_shard.attrs['_id'] = _Model._attrs_["_id"]
-
-		class_attrs.update(_secondary_shard.attrs)
-		# also include the primary key of the primary shard
-		# into secondary shards
-
-		_secondary_shard._Model_ = type(
-			"{:s}_{:s}".format(_Model.__name__, _secondary_shard_key.upper()),
-			(Model,),  # base class
-			class_attrs
-		)
-		# initialize this new model
-		initialize_model(_secondary_shard._Model_)
-
 
 # initialize control Tr
 # initialize all other nodes
@@ -2132,31 +1848,20 @@ def initialize_mongo(control_db_nodes, default_db_name=None):
 		raise Exception("initialize_mongo has errors: Check error logs: " + str(_loading_errors))
 
 
-# Initially intended to be < 500 line and more for educating
-# about sharding
 # How this works:
-# - Create Collection by giving it a set of nodes to start with
-#   and a primary shard key and secondary shard keys
-# - Primary shards contain full document
-# - Secondary shard contain subset of attributes(that are used for querying) of the document
-#   all those attributes are indexed
-# - When you query(primary shard), it looks if we can narrow down to specific nodes
-#   and run query on them
-# - We return a combined cusor from all nodes we queried
-# - We analyse the query and sometimes we decide the query
-#   can run on a secondary shard, we query, get the cursor
-#   and batch fetch original docs from the primary when returning
-# - When you update document, we identify shard it belongs to
-#   and update that doc, then get the diff that has changed
-#   and apply that diff on all secondary shards
+# - A Model lives on one or more db nodes (DatabaseNode = server/replicaset)
+# - Optionally set `_shard_key_ = "attr_name"` on the Model, each doc is then
+#   placed on a db node based on the value of that attribute
+# - When you query, if the query pins the shard key we run it only on
+#   those nodes, otherwise on all nodes
+# - We return a combined cursor from all nodes we queried
 # - when you apply a sort param, and query spans multiple nodes
-# 	we create a small heap ( = number of nodes queried) and advance cusors accordingly
+# 	we create a small heap ( = number of nodes queried) and advance cursors accordingly
 
-
-# Optionally:
 # Limitations:
 # - when query spans multiple nodes, you cannot apply offset
 # - You can't update multiple documents at once
+# - unique indexes are enforced per db node
 
 # when we say collection it it's actual pymongo collection on db server
 # DbNode -> mongo server which contains collections

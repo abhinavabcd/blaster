@@ -82,10 +82,6 @@ _RAW_INDEX_PATTERN = re.compile(
 )
 
 
-def SHARD_BY(*args, **kwargs):
-	"""Compatibility no-op; each table belongs to a single dbnode."""
-
-
 def _quote(name):
 	return '"' + name.replace('"', '""') + '"'
 
