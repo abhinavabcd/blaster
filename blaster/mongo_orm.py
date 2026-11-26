@@ -357,7 +357,6 @@ class Model(object):
 	_attrs = None
 	_pk_attrs = None
 
-	_cache_ = None
 
 	# ###instance level###
 	_is_create_new_ = True
@@ -395,14 +394,21 @@ class Model(object):
 			setattr(self, k, v)
 
 	# Usage:
-	# YourTable.get(a=c, b=d)
-	# YourTable.get({"p": "q", "r": "s"}) # this will kick in cache use
-	# YourTable.get(SOMEID) # this will kick in cache use
+	# YourTable.get(a=c, b=d)  # single item
+	# YourTable.get({"p": "q", "r": "s"})  # single item by pk
+	# YourTable.get(SOMEID)  # single item by _id
+	# YourTable.get([SOMEID1, {"p": "q", "r": "s"}])  # list of items
+	# - single item is read from the primary, a list of items from replicas
+	# - there is no built in cache, pass use_cache=<your dict like object>
+	#   to look up / store docs in it, use_cache=True/False does nothing
 	@classmethod
 	def get(cls: Type[ModelType], _pk=None, use_cache=True, **kwargs) -> ModelType:
 		if(isinstance(_pk, dict) and any(k not in _pk for k in cls._pk_attrs)):
 			kwargs.update(_pk)
 			_pk = None
+
+		if(use_cache is True or use_cache is False):
+			use_cache = None  # only a user supplied dict like cache is used
 
 		if(_pk is not None):
 			is_single_item = False
@@ -439,11 +445,6 @@ class Model(object):
 
 				# check already in cache
 				_doc_in_cache = None
-				if(use_cache is True):
-					use_cache = cls._cache_
-				elif(use_cache is False):
-					use_cache = None
-
 				if(use_cache is not None):
 					# user supplied cache
 					_doc_in_cache = use_cache.get(_pk_tuple)
@@ -466,7 +467,8 @@ class Model(object):
 				to_fetch_pks.append({"_id": {"$in": to_fetch_ids}})
 
 			# query all items
-			ret = list(chain(from_cache, cls.query(_query)))
+			# single item from primary, list of items from replicas
+			ret = list(chain(from_cache, cls.query(_query, primary=is_single_item)))
 
 			# user supplied cache
 			if(use_cache is not None):
@@ -509,12 +511,12 @@ class Model(object):
 		elif(kwargs):
 			# assuming we want a single item
 			cache_key = None
-			if(use_cache and use_cache not in (True, False)):
+			if(use_cache is not None):
 				cache_key = tuple((k, str(v)) for k, v in sorted(kwargs.items()))
 			if(cache_key is not None and (ret := use_cache.get(cache_key))):
 				return ret
 
-			ret = list(cls.query(kwargs))
+			ret = list(cls.query(kwargs, primary=True))
 			if(ret):
 				if(cache_key is not None):
 					use_cache[cache_key] = ret[0]
@@ -603,7 +605,7 @@ class Model(object):
 		if(not _doc_in_db):  # moved out of shard or pk changed
 			raise Exception(f"Document {self._id} pk:{self.pk()} not found")
 		# 2. update our local copy
-		self.reset_and_update_cache(_doc_in_db)
+		self._reset(_doc_in_db)
 		return self
 
 	# check all defaults and see if not present in doc, set them on the object
@@ -643,18 +645,6 @@ class Model(object):
 		self._initializing_ = False
 		self._original_doc = doc
 		return self
-
-	def reset_and_update_cache(self, doc):
-		cls = self.__class__
-		# remove old pk_tuple in cache
-		if(cls._cache_):
-			del cls._cache_[self.pk_tuple()]
-
-		self._reset(doc)
-
-		# update in cache
-		if(cls._cache_):
-			cls._cache_[self.pk_tuple()] = doc
 
 	def _set_query_updates_with_no_conflicts(self, path, v):
 		# Mongo cannot apply two update operators to the same path or to a
@@ -856,7 +846,7 @@ class Model(object):
 							raise Exception(f"Document {self._id} pk:{self.pk()} not found")
 
 						# 2. update our local copy
-						self.reset_and_update_cache(_doc_in_db)
+						self._reset(_doc_in_db)
 
 						# 3. check if basic consistency between local and remote
 						if(_doc_in_db.get("_", _OBJ_END_) != original_doc.get("_", _OBJ_END_)):
@@ -890,7 +880,7 @@ class Model(object):
 					)
 
 					# reset all values
-					self.reset_and_update_cache(updated_doc)
+					self._reset(updated_doc)
 
 					is_new_transaction and _commit_transaction(_transaction)
 					is_updated = True
@@ -940,15 +930,15 @@ class Model(object):
 		sort=None,
 		offset=None,
 		limit=None,
-		_replica=False,
+		primary=False,
 		**kwargs
 	) -> Iterator[ModelType]:
-		# _replica: route this read to replica set secondaries, so long scans
-		# (batch jobs) don't compete with online reads on the primary.
-		# True -> secondaryPreferred, or pass a pymongo read preference.
-		# Results can be slightly stale, so they never go into the model cache.
-		if(_replica is True):
-			_replica = ReadPreference.SECONDARY_PREFERRED
+		# primary=False: reads go to replica set secondaries when available,
+		# so scans don't compete with the primary. Results can be slightly
+		# stale (may not see a write you just made).
+		# Pass primary=True when you need read-your-writes.
+		read_preference = ReadPreference.PRIMARY if primary \
+			else ReadPreference.SECONDARY_PREFERRED
 		queries = None
 		# split or queries to separate it to shards
 		if(not isinstance(_query, list)):
@@ -1111,9 +1101,8 @@ class Model(object):
 					query=str(_query), sort=str(sort), offset=str(offset), limit=str(limit)
 				)
 
-			projection = kwargs.get("projection")
-			if(_replica):
-				_collection = _collection.with_options(read_preference=_replica)
+			if(not primary):
+				_collection = _collection.with_options(read_preference=read_preference)
 			ret = _collection.find(_query, **kwargs)
 			if(offset):  # from global arg
 				ret = ret.skip(offset)
@@ -1124,16 +1113,8 @@ class Model(object):
 
 			_cursor = ret  # keep track of this for distinct
 
-			def doc_to_obj(doc):
-				ret = cls(False)  # not a new item
-				if(projection is not None or _replica):
-					ret._reset(doc)  # partial or possibly stale, keep out of cache
-				else:
-					ret.reset_and_update_cache(doc)
-				return ret
-
 			multi_collection_query_result_iterator.add(
-				map(doc_to_obj, ret),
+				map(cls.from_doc, ret),
 				_cursor,
 				lambda: count_documents(_collection, _query, offset)  # query count func
 			)
@@ -1258,7 +1239,7 @@ class Model(object):
 						is_committed = True
 						# set original doc and custom dict and set fields
 						# copy the dict to another
-						self.reset_and_update_cache(dict(self._set_query_updates))
+						self._reset(dict(self._set_query_updates))
 						# hook to do something for newly created db entries
 						cls._trigger_event(EVENT_AFTER_CREATE, self)
 						break
@@ -1272,7 +1253,7 @@ class Model(object):
 
 						# get original doc from mongo shard
 						doc_in_db = collection.find_one(ex.details["keyValue"])
-						self.reset_and_update_cache(doc_in_db)
+						self._reset(doc_in_db)
 						IS_DEV \
 							and DEBUG_PRINT_LEVEL > 8 \
 							and LOG_DEBUG(
@@ -1334,9 +1315,6 @@ class Model(object):
 				model=_Model.__name__, collection=COLLECTION_NAME(collection_shard),
 				delete_query=str(_delete_query)
 			)
-		if(_Model._cache_):
-			del _Model._cache_[self.pk_tuple()]
-
 		_Model._trigger_event(EVENT_AFTER_DELETE, self)
 
 	# utility to keep track of locks

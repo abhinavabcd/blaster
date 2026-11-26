@@ -109,7 +109,7 @@ class TestBasics(unittest.TestCase):
         a.commit()
 
         self.assertIsNone(AModel.get(a=11, b="23", use_cache=False).c)
-        self.assertEqual(list(AModel.query({"c": "33", "d": "43"})), [])
+        self.assertEqual(list(AModel.query({"c": "33", "d": "43"}, primary=True)), [])
 
     def test_commit_with_transaction(self):
         a = AModel(a=11, b="22", c="33").commit()
@@ -148,10 +148,10 @@ class TestBasics(unittest.TestCase):
         for i in range(101, 300, 1):
             CModel(_id=str(i), c=str(i)).commit()
 
-        CModel.query({}, limit=15)  # this should warn
+        CModel.query({}, limit=15, primary=True)  # this should warn
         raised_exception = False
         try:
-            l = list(CModel.query({}))  # this should warn
+            l = list(CModel.query({}, primary=True))  # this should warn
         except Exception as ex:
             raised_exception = True
             print(str(ex))
@@ -240,7 +240,7 @@ class TestUpdates(unittest.TestCase):
         b = BModel.get(a=0)
         b.update({"$set": {"c": "100"}})
 
-        b = list(b.query({"a": 0}))[0]
+        b = list(b.query({"a": 0}, primary=True))[0]
         self.assertTrue(b.c == "100")
 
     def test_list_insert(self):
@@ -263,7 +263,7 @@ class TestBugs(unittest.TestCase):
         for i in range(100):
             CModel(_id=str(i), c=str(i)).commit()
         CModel(_id="100").commit()
-        l = list(CModel.query({"_id": {"$in": ["1", "3", "5"]}, "$or": [{"c": "1"}, {"c": "5"}]}))
+        l = list(CModel.query({"_id": {"$in": ["1", "3", "5"]}, "$or": [{"c": "1"}, {"c": "5"}]}, primary=True))
         self.assertEqual(len(l), 2)
 
 
